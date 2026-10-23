@@ -1,0 +1,5 @@
+{
+  "name": "Den of Builders - Attendance & Participation Hub",
+  "description": "QR-powered attendance check-in, session kiosk, and monthly builder participation tracking.",
+  "requestFramePermissions": ["camera"]
+}

@@ -1,0 +1,290 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny-all catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // Security & Identity Helper Functions
+    // ==========================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSuper() {
+      return signedIn() &&
+             request.auth.token.email != null &&
+             request.auth.token.email.lower() == 'rahatmdmahadihasan@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSuper() || (
+        signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myMemberId() {
+      return me().memberId;
+    }
+
+    function isActiveMember() {
+      return signedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             me().status == 'active' &&
+             me().memberId is string &&
+             exists(/databases/$(database)/documents/members/$(me().memberId)) &&
+             get(/databases/$(database)/documents/members/$(me().memberId)).data.status != 'Inactive';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function sessionOpen(sid) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      return s.status != 'cancelled' && s.checkInMode != 'closed' && (
+        s.checkInMode == 'open' ||
+        (request.time >= s.startAt - duration.value(s.openMinutesBefore, 'm') &&
+         request.time <= s.endAt + duration.value(s.graceMinutesAfter, 'm'))
+      );
+    }
+
+    function tokenValid(sid, t) {
+      let k = get(/databases/$(database)/documents/sessionTokens/$(sid)).data;
+      return (t == k.token && request.time <= k.rotatedAt + duration.value(75, 's')) ||
+             (t == k.prevToken && request.time <= k.rotatedAt + duration.value(30, 's'));
+    }
+
+    // ==========================================
+    // Entity Schema Validators
+    // ==========================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email', 'displayName', 'status']) &&
+             data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'status', 'memberId', 'approvedMemberId', 'requestedNotes', 'readAnnouncementIds', 'notificationPrefs', 'createdAt', 'updatedAt', 'approvedAt', 'respondedAt', 'membershipRequestedAt']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.displayName is string && data.displayName.size() <= 100 &&
+             data.status in ['pending', 'approved_waiting_response', 'active', 'declined', 'suspended'];
+    }
+
+    function isValidMember(data) {
+      return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
+             data.keys().hasOnly(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'avatarUrl', 'bio', 'leaderboardOptOut', 'authUid', 'createdAt']) &&
+             data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50 &&
+             data.role in ['Member', 'Project Leader', 'Vice President', 'President', 'Founder', 'Lead', 'Builder', 'Apprentice'] &&
+             data.tracks is list && data.tracks.size() > 0 && data.tracks.size() <= 10 &&
+             data.status in ['Active', 'Probationary', 'Inactive'];
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location']) &&
+             data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'];
+    }
+
+    // ==========================================
+    // Rules Match Blocks
+    // ==========================================
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+
+      allow create: if signedIn() &&
+                       request.auth.uid == userId &&
+                       request.resource.data.id == userId &&
+                       request.resource.data.status == 'pending' &&
+                       !('memberId' in request.resource.data) &&
+                       isValidUser(request.resource.data);
+
+      allow update: if signedIn() && (
+        (isAdmin() && isValidUser(request.resource.data)) ||
+        (
+          request.auth.uid == userId &&
+          isValidUser(request.resource.data) &&
+          (
+            // Normal profile update without changing status or memberId
+            (
+              request.resource.data.status == resource.data.status &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'displayName', 'photoURL', 'requestedNotes', 'notificationPrefs', 'readAnnouncementIds', 'updatedAt'
+              ])
+            ) ||
+            // Applicant accepting an approved invitation
+            (
+              resource.data.status == 'approved_waiting_response' &&
+              request.resource.data.status == 'active' &&
+              'approvedMemberId' in resource.data &&
+              request.resource.data.memberId == resource.data.approvedMemberId &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'memberId', 'respondedAt', 'updatedAt'
+              ])
+            ) ||
+            // Applicant declining an approved invitation
+            (
+              resource.data.status == 'approved_waiting_response' &&
+              request.resource.data.status == 'declined' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'respondedAt', 'updatedAt'
+              ])
+            ) ||
+            // Re-request after being declined: declined -> pending transition only
+            (
+              resource.data.status == 'declined' &&
+              request.resource.data.status == 'pending' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt'
+              ])
+            )
+          )
+        )
+      );
+
+      allow delete: if isSuper();
+    }
+
+    // Admins Collection: Only super admin can grant/revoke
+    match /admins/{adminUid} {
+      allow read: if isAdmin();
+      allow write: if isSuper() && isValidId(adminUid);
+    }
+
+    // Members Collection
+    match /members/{memberId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow create, delete: if isAdmin() && isValidId(memberId);
+
+      allow update: if isAdmin() || (
+        signedIn() &&
+        request.auth.uid == request.resource.data.authUid &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved_waiting_response' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approvedMemberId == memberId &&
+        (!('authUid' in resource.data) || resource.data.authUid == null) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authUid'])
+      ) || (
+        isActiveMember() &&
+        resource.data.authUid == request.auth.uid &&
+        isValidMember(request.resource.data) &&
+        request.resource.data.authUid == resource.data.authUid &&
+        request.resource.data.handle == resource.data.handle &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut'
+        ])
+      );
+    }
+
+    // Member Private Details: isolated PII
+    match /memberPrivate/{memberId} {
+      allow read, write: if isAdmin() || (
+        isActiveMember() &&
+        exists(/databases/$(database)/documents/members/$(memberId)) &&
+        get(/databases/$(database)/documents/members/$(memberId)).data.authUid == request.auth.uid
+      );
+    }
+
+    // Sessions Collection
+    match /sessions/{sessionId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow write: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
+    }
+
+    // Session Tokens: Kiosk rotating tokens (admin-only)
+    match /sessionTokens/{sessionId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin() &&
+                      isValidId(sessionId) &&
+                      request.resource.data.rotatedAt == request.time &&
+                      request.resource.data.keys().hasAll(['token', 'prevToken', 'rotatedAt']);
+    }
+
+    // Check-Ins Collection
+    match /checkIns/{checkInId} {
+      allow read: if isAdmin() || (
+        isActiveMember() && resource.data.memberId == myMemberId()
+      );
+
+      allow create: if (
+        // Admin manual door check-in
+        (
+          isAdmin() &&
+          request.resource.data.id == checkInId &&
+          request.resource.data.method == 'manual_entry'
+        ) ||
+        // Member self check-in
+        (
+          isActiveMember() &&
+          checkInId == request.resource.data.sessionId + '_' + myMemberId() &&
+          request.resource.data.id == checkInId &&
+          request.resource.data.memberId == myMemberId() &&
+          request.resource.data.authUid == request.auth.uid &&
+          request.resource.data.checkedInAt == request.time &&
+          sessionOpen(request.resource.data.sessionId) &&
+          tokenValid(request.resource.data.sessionId, request.resource.data.token) &&
+          (
+            request.resource.data.status == (
+              request.time > get(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.startAt +
+              duration.value(get(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.lateAfterMinutes, 'm')
+              ? 'late'
+              : 'present'
+            )
+          )
+        )
+      );
+
+      allow update: if false; // Check-ins are immutable
+      allow delete: if isAdmin();
+    }
+
+    // Announcements
+    match /announcements/{announcementId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow write: if isAdmin() && isValidId(announcementId);
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read, update, delete: if signedIn() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow create: if signedIn() && (
+        request.resource.data.userId == request.auth.uid || isAdmin()
+      );
+    }
+
+    // Public Leaderboard: Public read
+    match /publicLeaderboard/{memberId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidId(memberId);
+    }
+
+    // Club Settings
+    match /settings/{settingId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow write: if isAdmin() && isValidId(settingId);
+    }
+
+    // Security Audit Logs: Append-only
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+                       isValidId(logId) &&
+                       request.resource.data.performedBy == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}

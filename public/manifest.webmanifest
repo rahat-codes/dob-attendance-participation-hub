@@ -1,0 +1,38 @@
+{
+  "id": "/",
+  "name": "Den of Builders - Attendance & Participation Hub",
+  "short_name": "DOB",
+  "description": "QR-powered attendance check-in, session kiosk, and monthly builder participation tracking for Den of Builders.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0a0b0e",
+  "background_color": "#0a0b0e",
+  "icons": [
+    {
+      "src": "/dob_logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/dob_logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/dob_logo-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/dob_logo-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

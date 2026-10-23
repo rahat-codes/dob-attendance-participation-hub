@@ -1,0 +1,238 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account information mapped from Firebase Auth Google Sign-in. Role is isolated in admins collection.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "displayName": { "type": "string", "maxLength": 100, "description": "Full display name" },
+        "photoURL": { "type": "string", "description": "Google avatar URL" },
+        "status": { "type": "string", "enum": ["pending", "active", "declined", "suspended"], "description": "Membership authorization status" },
+        "memberId": { "type": "string", "description": "Linked Member ID in members collection" },
+        "requestedNotes": { "type": "string", "maxLength": 200, "description": "Applicant handle or student ID submitted during sign-up" },
+        "readAnnouncementIds": { "type": "array", "description": "Array of announcement IDs read by user" },
+        "notificationPrefs": { "type": "object", "description": "User notification preferences" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account registration timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" }
+      },
+      "required": ["id", "email", "displayName", "status"]
+    },
+    "AdminDoc": {
+      "title": "AdminDoc",
+      "description": "Authoritative administrator identity document",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "description": "Administrator email address" },
+        "grantedBy": { "type": "string", "description": "UID of super administrator who granted privileges" },
+        "grantedAt": { "type": "string", "description": "Timestamp when admin role was granted" }
+      },
+      "required": ["email", "grantedBy", "grantedAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Roster profile visible to active members and admins. Private contact info is stored in memberPrivate.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique builder identifier" },
+        "name": { "type": "string", "maxLength": 100, "description": "Full name" },
+        "handle": { "type": "string", "maxLength": 50, "description": "Builder handle (e.g. @alex)" },
+        "role": { "type": "string", "enum": ["Member", "Project Leader", "Vice President", "President", "Founder", "Lead", "Builder", "Apprentice"], "description": "Guild rank or club role" },
+        "tracks": { "type": "array", "description": "Selected builder tracks" },
+        "avatarUrl": { "type": "string", "description": "Avatar image URL" },
+        "joinedDate": { "type": "string", "format": "date", "description": "Date joined (YYYY-MM-DD)" },
+        "status": { "type": "string", "enum": ["Active", "Probationary", "Inactive"], "description": "Membership status" },
+        "bio": { "type": "string", "maxLength": 500, "description": "Bio or technical focus" },
+        "leaderboardOptOut": { "type": "boolean", "description": "Flag to opt out of public leaderboard" },
+        "authUid": { "type": "string", "description": "Linked Firebase Auth UID" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Record creation timestamp" }
+      },
+      "required": ["id", "name", "handle", "role", "tracks", "joinedDate", "status"]
+    },
+    "MemberPrivate": {
+      "title": "MemberPrivate",
+      "description": "Sensitive personal information readable ONLY by the member owner and administrators",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Contact telephone number" },
+        "university": { "type": "string", "maxLength": 120, "description": "Enrolled university or college" },
+        "department": { "type": "string", "maxLength": 120, "description": "Academic department" },
+        "major": { "type": "string", "maxLength": 120, "description": "Academic major or concentration" },
+        "semester": { "type": "string", "maxLength": 50, "description": "Current semester or cohort term" }
+      }
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Workshop or build sprint session hosted by Den of Builders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique session ID" },
+        "title": { "type": "string", "maxLength": 150, "description": "Session title" },
+        "track": { "type": "string", "description": "Focus track category" },
+        "date": { "type": "string", "format": "date", "description": "Date in club timezone (YYYY-MM-DD)" },
+        "startAt": { "type": "string", "description": "Authoritative start Timestamp" },
+        "endAt": { "type": "string", "description": "Authoritative end Timestamp" },
+        "timezone": { "type": "string", "description": "Session time zone e.g. Asia/Seoul" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"], "description": "Lifecycle status" },
+        "checkInMode": { "type": "string", "enum": ["auto", "open", "closed"], "description": "Check-in mode override" },
+        "openMinutesBefore": { "type": "number", "description": "Minutes before startAt that check-in opens" },
+        "graceMinutesAfter": { "type": "number", "description": "Minutes after endAt that check-in closes" },
+        "lateAfterMinutes": { "type": "number", "description": "Minutes after startAt when check-in is considered late" },
+        "points": { "type": "number", "description": "Attendance reward points" },
+        "maxCapacity": { "type": "number", "description": "Soft attendee capacity limit" },
+        "location": { "type": "string", "maxLength": 150, "description": "Physical room or lab location" },
+        "description": { "type": "string", "maxLength": 1000, "description": "Agenda and details" },
+        "host": { "type": "string", "maxLength": 100, "description": "Session lead host name" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "createdBy": { "type": "string", "description": "Admin UID who created session" }
+      },
+      "required": ["id", "title", "track", "date", "startAt", "endAt", "timezone", "status", "checkInMode", "location", "host"]
+    },
+    "SessionToken": {
+      "title": "SessionToken",
+      "description": "Rotating cryptographic check-in token for the Kiosk screen. Admin-only read/write.",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string", "maxLength": 16, "description": "Current active 8-character token" },
+        "prevToken": { "type": "string", "maxLength": 16, "description": "Previous token valid for 30s grace period" },
+        "rotatedAt": { "type": "string", "description": "Server timestamp of rotation" }
+      },
+      "required": ["token", "prevToken", "rotatedAt"]
+    },
+    "CheckInRecord": {
+      "title": "CheckInRecord",
+      "description": "Immutable attendance confirmation record for a workshop session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Deterministic check-in record ID: sessionId_memberId" },
+        "sessionId": { "type": "string", "description": "Session document ID" },
+        "memberId": { "type": "string", "description": "Member document ID" },
+        "authUid": { "type": "string", "description": "Authenticated Firebase UID of attendee" },
+        "method": { "type": "string", "enum": ["camera_scan", "kiosk_scan", "manual_entry", "code_input"], "description": "Verification method" },
+        "token": { "type": "string", "maxLength": 16, "description": "Kiosk token supplied for self check-in" },
+        "checkedInAt": { "type": "string", "description": "Server timestamp of check-in" },
+        "status": { "type": "string", "enum": ["present", "late"], "description": "Punctuality status" },
+        "monthKey": { "type": "string", "pattern": "^\\d{4}-\\d{2}$", "description": "Year-Month key e.g. 2026-10" },
+        "notes": { "type": "string", "maxLength": 300, "description": "Optional notes" },
+        "verifiedBy": { "type": "string", "description": "Admin UID if manual or door verification" }
+      },
+      "required": ["id", "sessionId", "memberId", "authUid", "method", "checkedInAt", "status", "monthKey"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Broadcast announcement published by admins, replacing per-user notification fan-out",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique announcement ID" },
+        "type": { "type": "string", "enum": ["session_published", "session_rescheduled", "session_cancelled", "general"], "description": "Type of announcement" },
+        "sessionId": { "type": "string", "description": "Optional referenced session ID" },
+        "title": { "type": "string", "maxLength": 150, "description": "Announcement headline" },
+        "message": { "type": "string", "maxLength": 500, "description": "Announcement message" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Publication timestamp" },
+        "createdBy": { "type": "string", "description": "Admin UID who posted announcement" }
+      },
+      "required": ["id", "type", "title", "message", "createdAt", "createdBy"]
+    },
+    "PublicLeaderboardItem": {
+      "title": "PublicLeaderboardItem",
+      "description": "Sanitized publicly visible rankings readable without login. Admin write only.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Member document ID" },
+        "name": { "type": "string", "description": "Public name" },
+        "handle": { "type": "string", "description": "Public handle" },
+        "role": { "type": "string", "description": "Club rank / role" },
+        "avatarUrl": { "type": "string", "description": "Public avatar image URL" },
+        "tracks": { "type": "array", "description": "Track disciplines" },
+        "totalCheckIns": { "type": "number", "description": "Lifetime attendance count" },
+        "currentStreak": { "type": "number", "description": "Active streak count" },
+        "bestStreak": { "type": "number", "description": "Best streak record" },
+        "points": { "type": "number", "description": "Participation score points" }
+      },
+      "required": ["id", "name", "handle", "role", "totalCheckIns", "currentStreak", "bestStreak", "points"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Append-only security and role permission audit trail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique audit log ID" },
+        "action": {
+          "type": "string",
+          "enum": [
+            "create_session", "update_session", "delete_session", "cancel_session", "complete_session",
+            "session_open_close", "check_in_manual", "delete_check_in", "approve_user", "decline_user",
+            "suspend_user", "unsuspend_user", "grant_admin", "revoke_admin", "add_member", "update_member",
+            "delete_member", "update_settings", "recompute_leaderboard"
+          ],
+          "description": "Security action type"
+        },
+        "performedBy": { "type": "string", "description": "Admin UID who executed the action" },
+        "performedByEmail": { "type": "string", "format": "email", "description": "Admin email who executed the action" },
+        "details": { "type": "string", "maxLength": 500, "description": "Action details and changes" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "ISO timestamp of event" }
+      },
+      "required": ["id", "action", "performedBy", "performedByEmail", "timestamp", "details"]
+    },
+    "ClubSettings": {
+      "title": "ClubSettings",
+      "description": "Club configuration settings written by admins, readable by active members",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Club organization name" },
+        "timezone": { "type": "string", "description": "Timezone e.g. Asia/Seoul" },
+        "tracks": { "type": "array", "description": "Enabled builder tracks" },
+        "defaults": { "type": "object", "description": "Default session parameters" }
+      },
+      "required": ["name", "timezone", "tracks", "defaults"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Authenticated user accounts and authorization status"
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminDoc" },
+      "description": "Authoritative administrator identity documents"
+    },
+    "/members/{memberId}": {
+      "schema": { "$ref": "#/entities/Member" },
+      "description": "Roster profiles readable by active members and admins"
+    },
+    "/memberPrivate/{memberId}": {
+      "schema": { "$ref": "#/entities/MemberPrivate" },
+      "description": "Isolated private personal details accessible only by owner and admins"
+    },
+    "/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/Session" },
+      "description": "Workshop and sprint sessions"
+    },
+    "/sessionTokens/{sessionId}": {
+      "schema": { "$ref": "#/entities/SessionToken" },
+      "description": "Rotating cryptographic check-in tokens for Kiosk"
+    },
+    "/checkIns/{checkInId}": {
+      "schema": { "$ref": "#/entities/CheckInRecord" },
+      "description": "Deterministic verified attendance check-in records: sessionId_memberId"
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Broadcast announcements for published, rescheduled, and cancelled sessions"
+    },
+    "/publicLeaderboard/{memberId}": {
+      "schema": { "$ref": "#/entities/PublicLeaderboardItem" },
+      "description": "Publicly readable rankings without login"
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Append-only security audit trail"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/ClubSettings" },
+      "description": "Club settings readable by active members"
+    }
+  }
+}
