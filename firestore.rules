@@ -78,7 +78,7 @@ service cloud.firestore {
 
     function isValidMember(data) {
       return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
-             data.keys().hasOnly(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'avatarUrl', 'bio', 'leaderboardOptOut', 'authUid', 'createdAt']) &&
+             data.keys().hasOnly(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'avatarUrl', 'bio', 'leaderboardOptOut', 'authUid', 'createdAt', 'studentId', 'university']) &&
              data.id is string && isValidId(data.id) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50 &&
@@ -183,7 +183,7 @@ service cloud.firestore {
         request.resource.data.role == resource.data.role &&
         request.resource.data.status == resource.data.status &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut'
+          'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut', 'studentId', 'university'
         ])
       );
     }

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import {
   Member,
   Session,
@@ -246,6 +246,19 @@ export default function App() {
       handleSelectTab('home');
     }
   }, [isAdmin, activeTab, handleSelectTab]);
+
+  // Route user to appropriate view upon signing in (admin dashboard or member check-in)
+  const prevUserRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (user && !prevUserRef.current) {
+      if (isAdmin) {
+        handleSelectTab('sessions');
+      } else {
+        handleSelectTab('home');
+      }
+    }
+    prevUserRef.current = user ? user.uid : null;
+  }, [user, isAdmin, handleSelectTab]);
 
   // Real-time Public Leaderboard Sync (Available without login, 0 private information exposed)
   useEffect(() => {
@@ -801,57 +814,7 @@ export default function App() {
             </AnimatePresence>
           </main>
 
-          {/* Mobile Bottom Tab Bar for Guests */}
-          <nav
-            aria-label="Guest Navigation"
-            className="sm:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0c0e14]/95 backdrop-blur-2xl border-t border-white/[0.08] pb-safe shadow-[0_-8px_30px_rgba(0,0,0,0.7)]"
-          >
-            <div className="flex items-center justify-around h-14 max-w-md mx-auto px-2">
-              <button
-                type="button"
-                onClick={() => setGuestTab('leaderboard')}
-                className={`flex flex-col items-center justify-center flex-1 h-full min-w-11 min-h-11 py-1 transition-colors cursor-pointer ${
-                  guestTab === 'leaderboard' ? 'text-[#b5ff00]' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Trophy className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium tracking-tight mt-0.5 font-display">Leaderboard</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setGuestTab('sessions')}
-                className={`flex flex-col items-center justify-center flex-1 h-full min-w-11 min-h-11 py-1 transition-colors cursor-pointer ${
-                  guestTab === 'sessions' ? 'text-[#b5ff00]' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Calendar className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium tracking-tight mt-0.5 font-display">Meetings</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setGuestTab('guide')}
-                className={`flex flex-col items-center justify-center flex-1 h-full min-w-11 min-h-11 py-1 transition-colors cursor-pointer ${
-                  guestTab === 'guide' ? 'text-[#b5ff00]' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <Sparkles className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium tracking-tight mt-0.5 font-display">Guide</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowGuestLeaderboard(false)}
-                className="flex flex-col items-center justify-center flex-1 h-full min-w-11 min-h-11 py-1 text-zinc-400 hover:text-white transition-colors cursor-pointer"
-              >
-                <Lock className="w-5 h-5 shrink-0" />
-                <span className="text-xs font-medium tracking-tight mt-0.5 font-display">Sign In</span>
-              </button>
-            </div>
-          </nav>
-
-          <footer className="mt-auto border-t border-white/10 bg-black/80 py-6 text-center text-xs text-zinc-400 hidden sm:block">
+          <footer className="mt-auto border-t border-white/10 bg-black/80 py-6 text-center text-xs text-zinc-400">
             Den of Builders &copy; 2026 · Attendance &amp; Participation Hub
           </footer>
         </div>
@@ -921,45 +884,7 @@ export default function App() {
         }}
       />
 
-      {/* Access Level Strip (Hidden on mobile < sm; collapsed into Avatar Menu and More sheet) */}
-      <div className="hidden sm:block border-b border-zinc-800/80 bg-zinc-950/95 px-3 sm:px-4 py-2 text-xs">
-        <div className="mx-auto max-w-7xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          {isAdmin ? (
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <span className="flex h-2 w-2 rounded-full bg-[#b5ff00] animate-pulse shrink-0" />
-              <div className="flex items-center gap-1.5 font-semibold text-white shrink-0">
-                <ShieldCheck className="h-3.5 w-3.5 text-[#b5ff00]" />
-                <span className="text-xs">Administrator Active:</span>
-              </div>
-              <span className="text-zinc-400 font-mono text-xs truncate">
-                {user?.email}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-zinc-300 min-w-0 flex-1">
-              <span className="flex h-2 w-2 rounded-full bg-[#b5ff00] shrink-0" />
-              <span className="font-semibold text-zinc-200 shrink-0 text-xs">
-                {linkedMember ? `${linkedMember.name} (${linkedMember.handle})` : user.email}
-              </span>
-              <span className="text-zinc-400 text-xs truncate">
-                · Verified Guild Member
-              </span>
-            </div>
-          )}
 
-          <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
-            {isAdmin && members.length === 0 && (
-              <button
-                type="button"
-                onClick={handleSeedClubTemplate}
-                className="px-2.5 py-1 rounded-full bg-[#b5ff00]/20 hover:bg-[#b5ff00]/30 text-[#b5ff00] text-xs font-bold font-mono transition-colors cursor-pointer"
-              >
-                + Initialize First Meeting
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
 
       <AnimatePresence>
         {firestoreError && (

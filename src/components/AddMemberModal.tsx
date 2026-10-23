@@ -14,6 +14,8 @@ interface AddMemberModalProps {
     email?: string;
     handle?: string;
     authUid?: string;
+    studentId?: string;
+    university?: string;
   } | null;
 }
 
@@ -28,6 +30,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   const [name, setName] = useState('');
   const [handle, setHandle] = useState('');
   const [email, setEmail] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [university, setUniversity] = useState('Tongmyong University');
   const [role, setRole] = useState<BuilderRole>('Builder');
   const [bio, setBio] = useState('');
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(['Hardware & Robotics']);
@@ -40,6 +44,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setName(initialMember.name);
       setHandle(initialMember.handle);
       setEmail(initialMember.email || '');
+      setStudentId(initialMember.studentId || '');
+      setUniversity(initialMember.university || 'Tongmyong University');
       setRole(initialMember.role);
       setBio(initialMember.bio || '');
       setSelectedTracks(initialMember.tracks || ['Hardware & Robotics']);
@@ -49,6 +55,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setName(prefill.name || '');
       setHandle(prefill.handle || '');
       setEmail(prefill.email || '');
+      setStudentId(prefill.studentId || '');
+      setUniversity(prefill.university || 'Tongmyong University');
       setRole('Builder');
       setBio('');
       setSelectedTracks(['Hardware & Robotics']);
@@ -58,6 +66,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setName('');
       setHandle('');
       setEmail('');
+      setStudentId('');
+      setUniversity('Tongmyong University');
       setRole('Builder');
       setBio('');
       setSelectedTracks(['Hardware & Robotics']);
@@ -67,7 +77,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   }, [initialMember, prefill, isOpen]);
 
   const hasUnsavedChanges = Boolean(
-    name.trim() || handle.trim() || email.trim() || bio.trim()
+    name.trim() || handle.trim() || email.trim() || studentId.trim() || bio.trim() || (university !== 'Tongmyong University')
   );
 
   const toggleTrack = (track: BuilderTrack) => {
@@ -112,6 +122,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           name: cleanName,
           handle: formattedHandle,
           email: cleanEmail || initialMember.email,
+          studentId: studentId.trim() || undefined,
+          university: university.trim() || 'Tongmyong University',
           role,
           tracks: selectedTracks.length > 0 ? selectedTracks : ['Hardware & Robotics'],
           bio: bio.trim(),
@@ -124,6 +136,8 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           name: cleanName,
           handle: formattedHandle,
           email: cleanEmail || `${formattedHandle.replace('@', '')}@denofbuilders.org`,
+          studentId: studentId.trim() || undefined,
+          university: university.trim() || 'Tongmyong University',
           ...(prefill?.authUid ? { authUid: prefill.authUid } : {}),
           role,
           tracks: selectedTracks.length > 0 ? selectedTracks : ['Hardware & Robotics'],
@@ -268,6 +282,36 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             enterKeyHint="next"
             className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors disabled:opacity-50 min-h-11 text-base sm:text-xs"
           />
+        </div>
+
+        {/* Student ID & University */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Student ID</label>
+            <input
+              type="text"
+              disabled={isSubmitting}
+              value={studentId}
+              onChange={(e) => setStudentId(e.target.value)}
+              placeholder="e.g. 20241234"
+              enterKeyHint="next"
+              className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] font-mono transition-colors disabled:opacity-50 min-h-11 text-base sm:text-xs"
+            />
+          </div>
+
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">University</label>
+            <input
+              type="text"
+              required
+              disabled={isSubmitting}
+              value={university}
+              onChange={(e) => setUniversity(e.target.value)}
+              placeholder="Tongmyong University"
+              enterKeyHint="next"
+              className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors disabled:opacity-50 min-h-11 text-base sm:text-xs"
+            />
+          </div>
         </div>
 
         <div>

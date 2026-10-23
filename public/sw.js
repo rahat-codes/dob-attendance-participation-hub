@@ -9,12 +9,6 @@ self.addEventListener('activate', (event) => {
       return Promise.all(keys.map((key) => caches.delete(key)));
     }).then(() => {
       return self.registration.unregister();
-    }).then(() => {
-      return self.clients.matchAll({ type: 'window' });
-    }).then((clients) => {
-      for (const client of clients) {
-        client.navigate(client.url);
-      }
     })
   );
 });

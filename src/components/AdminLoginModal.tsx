@@ -18,7 +18,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   onClose,
   onOpenManageAdmins,
 }) => {
-  const { user, linkedMember, isAdmin, isSuperAdmin, signOutUser, signInWithGoogle, signingIn } = useAuth();
+  const { user, linkedMember, isAdmin, isSuperAdmin, signOutUser, handleSignIn, signingIn } = useAuth();
 
   return (
     <ModalSheet
@@ -96,12 +96,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             Sign in with your Google account to access attendance verification and club privileges.
           </p>
           <button
+            type="button"
             onClick={async () => {
-              const ok = await signInWithGoogle();
+              const ok = await handleSignIn();
               if (ok) onClose();
             }}
             disabled={signingIn}
-            className="w-full py-3.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-sm font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-11 flex items-center justify-center gap-2"
+            className="w-full py-3.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-sm font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-11 flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <span>{signingIn ? 'Connecting...' : 'Sign in with Google'}</span>
           </button>

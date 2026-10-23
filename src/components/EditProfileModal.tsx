@@ -36,7 +36,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [name, setName] = useState(member.name || '');
   const [email, setEmail] = useState(member.email || '');
   const [phone, setPhone] = useState(member.phone || '');
-  const [university, setUniversity] = useState(member.university || '');
+  const [studentId, setStudentId] = useState(member.studentId || '');
+  const [university, setUniversity] = useState(member.university || 'Tongmyong University');
   const [department, setDepartment] = useState(member.department || '');
   const [major, setMajor] = useState(member.major || '');
   const [semester, setSemester] = useState(member.semester || '');
@@ -52,6 +53,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     name !== member.name ||
     email !== (member.email || '') ||
     phone !== (member.phone || '') ||
+    studentId !== (member.studentId || '') ||
+    university !== (member.university || 'Tongmyong University') ||
     bio !== (member.bio || '')
   );
 
@@ -108,7 +111,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
-        university: university.trim(),
+        studentId: studentId.trim(),
+        university: university.trim() || 'Tongmyong University',
         department: department.trim(),
         major: major.trim(),
         semester: semester.trim(),
@@ -125,7 +129,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             name: cleanName,
             email: cleanEmail,
             phone: cleanPhone,
-            university: university.trim(),
+            studentId: studentId.trim(),
+            university: university.trim() || 'Tongmyong University',
             department: department.trim(),
             major: major.trim(),
             semester: semester.trim(),
@@ -272,8 +277,20 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </div>
         </div>
 
-        {/* Phone & Semester */}
+        {/* Student ID & Phone */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Student ID</label>
+            <input
+              type="text"
+              value={studentId}
+              onChange={(e) => setStudentId(e.target.value)}
+              placeholder="e.g. 20241234"
+              enterKeyHint="next"
+              className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 font-mono focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+            />
+          </div>
+
           <div>
             <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Phone Number</label>
             <div className="relative">
@@ -290,6 +307,21 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               />
             </div>
           </div>
+        </div>
+
+        {/* University & Semester */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">University</label>
+            <input
+              type="text"
+              value={university}
+              onChange={(e) => setUniversity(e.target.value)}
+              placeholder="Tongmyong University"
+              enterKeyHint="next"
+              className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+            />
+          </div>
 
           <div>
             <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Semester / Cohort Term</label>
@@ -304,20 +336,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </div>
         </div>
 
-        {/* University & Department & Major */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">University</label>
-            <input
-              type="text"
-              value={university}
-              onChange={(e) => setUniversity(e.target.value)}
-              placeholder="e.g. BRAC University"
-              enterKeyHint="next"
-              className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
-            />
-          </div>
-
+        {/* Department & Major */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Department</label>
             <input

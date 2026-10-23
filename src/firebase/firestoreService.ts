@@ -589,26 +589,28 @@ export async function addMemberToFirestore(
 
   const batch = writeBatch(db);
 
+  const defaultUni = publicData.university?.trim() || privateData?.university?.trim() || 'Tongmyong University';
   const finalPublic: Member = removeUndefinedFields({
     ...publicData,
     id: memberId,
     name: publicData.name.trim(),
     handle: cleanHandle,
+    studentId: publicData.studentId?.trim() || privateData?.studentId?.trim() || undefined,
+    university: defaultUni,
     createdAt: new Date().toISOString(),
   });
   batch.set(memberRef, finalPublic);
 
-  if (privateData) {
-    const finalPriv: MemberPrivate = removeUndefinedFields({
-      email: privateData.email?.trim().toLowerCase() || undefined,
-      phone: privateData.phone?.trim() || undefined,
-      university: privateData.university?.trim() || undefined,
-      department: privateData.department?.trim() || undefined,
-      major: privateData.major?.trim() || undefined,
-      semester: privateData.semester?.trim() || undefined,
-    });
-    batch.set(privRef, finalPriv);
-  }
+  const finalPriv: MemberPrivate = removeUndefinedFields({
+    email: (privateData?.email || publicData.email)?.trim().toLowerCase() || undefined,
+    phone: (privateData?.phone || publicData.phone)?.trim() || undefined,
+    studentId: (privateData?.studentId || publicData.studentId)?.trim() || undefined,
+    university: defaultUni,
+    department: (privateData?.department || publicData.department)?.trim() || undefined,
+    major: (privateData?.major || publicData.major)?.trim() || undefined,
+    semester: (privateData?.semester || publicData.semester)?.trim() || undefined,
+  });
+  batch.set(privRef, finalPriv);
 
   try {
     await batch.commit();
@@ -621,7 +623,7 @@ export async function addMemberToFirestore(
 
 export async function updateMemberProfile(
   memberId: string,
-  publicUpdates: Partial<Pick<Member, 'name' | 'avatarUrl' | 'bio' | 'tracks' | 'leaderboardOptOut'>>,
+  publicUpdates: Partial<Pick<Member, 'name' | 'avatarUrl' | 'bio' | 'tracks' | 'leaderboardOptOut' | 'studentId' | 'university'>>,
   privateUpdates?: MemberPrivate
 ): Promise<void> {
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);

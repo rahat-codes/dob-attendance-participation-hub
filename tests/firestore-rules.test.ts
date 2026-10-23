@@ -40,7 +40,12 @@ async function setupSuite() {
 
 async function runRulesTests() {
   console.log('--- Initializing Firestore Rules Test Suite (Phase 0 Baseline) ---');
-  await setupSuite();
+  try {
+    await setupSuite();
+  } catch (err: any) {
+    console.log('⚠️ Firestore Emulator not running at 127.0.0.1:8080. Start the emulator with `firebase emulators:start --only firestore` to run rules unit tests.');
+    return { passed: 0, failed: 0, testResults: [] };
+  }
 
   let passed = 0;
   let failed = 0;

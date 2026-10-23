@@ -43,6 +43,7 @@ export interface Member {
   // Optional convenience / joined fields
   email?: string;
   phone?: string;
+  studentId?: string;
   university?: string;
   department?: string;
   major?: string;
@@ -60,6 +61,7 @@ export interface Member {
 export interface MemberPrivate {
   email?: string;
   phone?: string;
+  studentId?: string;
   university?: string;
   department?: string;
   major?: string;

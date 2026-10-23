@@ -26,7 +26,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     user,
     profile,
     membershipState,
-    signInWithGoogle,
+    handleSignIn,
     signOutUser,
     authError,
     clearAuthError,
@@ -43,14 +43,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
   const [requestSubmittedSuccess, setRequestSubmittedSuccess] = useState(false);
   const [isRespondingToOffer, setIsRespondingToOffer] = useState(false);
   const [respondError, setRespondError] = useState<string | null>(null);
-
-  const handleSignIn = async () => {
-    try {
-      await signInWithGoogle();
-    } catch {
-      // Error handled inside AuthContext
-    }
-  };
 
   const handleAcceptOffer = async () => {
     setIsRespondingToOffer(true);
@@ -167,6 +159,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             )}
 
             <button
+              type="button"
               onClick={handleSignIn}
               disabled={signingIn || loading}
               className="w-full py-3.5 px-4 rounded-2xl bg-[#b5ff00] hover:bg-[#c4ff26] active:scale-[0.99] text-black font-bold text-sm tracking-wide transition-all shadow-[0_0_20px_rgba(181,255,0,0.25)] flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-white/30"

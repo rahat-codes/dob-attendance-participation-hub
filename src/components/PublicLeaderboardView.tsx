@@ -19,6 +19,8 @@ interface PublicLeaderboardViewProps {
   onOpenLogin: () => void;
   onRefreshLeaderboard?: () => void;
   isRefreshing?: boolean;
+  onOpenScanner?: () => void;
+  hasActiveSession?: boolean;
 }
 
 export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
@@ -26,6 +28,8 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
   onOpenLogin,
   onRefreshLeaderboard,
   isRefreshing = false,
+  onOpenScanner,
+  hasActiveSession,
 }) => {
   const { user, isAdmin } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -91,17 +95,19 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
           </div>
 
           <div className="shrink-0 flex items-center gap-3">
-            {!user ? (
+            {user && (hasActiveSession || onOpenScanner) ? (
               <button
-                onClick={onOpenLogin}
-                aria-label="Sign in to check in"
+                type="button"
+                onClick={onOpenScanner}
+                aria-label="Check in to active session"
                 className="px-5 py-3 rounded-2xl bg-[#b5ff00] hover:bg-[#c4ff26] active:scale-[0.98] text-black font-display font-black text-xs uppercase tracking-wider transition-all shadow-[0_0_20px_rgba(181,255,0,0.3)] flex items-center gap-2.5 cursor-pointer border border-white/20 min-h-[44px]"
               >
                 <LogIn className="h-4 w-4 text-black" />
-                <span>Sign In to Check In</span>
+                <span>Check In to Active Session</span>
               </button>
-            ) : isAdmin && onRefreshLeaderboard ? (
+            ) : user && isAdmin && onRefreshLeaderboard ? (
               <button
+                type="button"
                 onClick={onRefreshLeaderboard}
                 disabled={isRefreshing}
                 aria-label="Refresh leaderboard rankings"

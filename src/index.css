@@ -23,6 +23,16 @@
     --shadow-spatial-modal: 0 24px 60px -12px rgba(0, 0, 0, 0.95), 0 0 2px 1px rgba(255, 255, 255, 0.12);
   }
 
+  html,
+  body,
+  #root {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: var(--color-bg-deep);

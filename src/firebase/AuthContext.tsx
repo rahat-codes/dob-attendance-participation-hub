@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import {
   User,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
@@ -47,6 +49,7 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isApprovedMember: boolean;
+  handleSignIn: () => Promise<boolean>;
   signInWithGoogle: () => Promise<boolean>;
   signOutUser: () => Promise<void>;
   clearAuthError: () => void;
@@ -71,6 +74,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isSuperAdmin: false,
   isApprovedMember: false,
+  handleSignIn: async () => false,
   signInWithGoogle: async () => false,
   signOutUser: async () => {},
   clearAuthError: () => {},
@@ -193,8 +197,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [loadMemberData]
   );
 
-  // Authentication state watcher
+  // Authentication state watcher and redirect result handler
   useEffect(() => {
+    // Check if returning from a mobile redirect sign-in flow
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result?.user) {
+          await attachUserListeners(result.user);
+        }
+      })
+      .catch((err: any) => {
+        console.error('Redirect sign-in error:', err);
+        const code = err?.code || '';
+        if (code === 'auth/unauthorized-domain') {
+          setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
+        } else if (code !== 'auth/popup-closed-by-user') {
+          setAuthError(`Sign-in error (${code || 'auth/unknown'}): ${err?.message || 'Authentication failed'}`);
+        }
+      });
+
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       clearAuthError();
@@ -222,10 +243,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [attachUserListeners, clearAuthError]);
 
-  const signInWithGoogle = async (): Promise<boolean> => {
+  const handleSignIn = useCallback(async (): Promise<boolean> => {
     setSigningIn(true);
     setAuthError(null);
     try {
+      // Call signInWithPopup DIRECTLY with NO await or async work before it
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
         await attachUserListeners(result.user);
@@ -233,14 +255,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return false;
     } catch (err: any) {
-      if (err?.code !== 'auth/popup-closed-by-user') {
-        setAuthError(err?.message || 'Google sign-in failed.');
+      const code = err?.code || '';
+      console.error('Sign-in error:', code, err);
+
+      const isMobile =
+        typeof navigator !== 'undefined' &&
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+      if (
+        code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/cancelled-popup-request' ||
+        isMobile
+      ) {
+        // Fall back to redirect on mobile or when popup is blocked
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return true;
+        } catch (redirectErr: any) {
+          console.error('Redirect sign-in error:', redirectErr);
+          const redirectCode = redirectErr?.code || '';
+          if (redirectCode === 'auth/unauthorized-domain') {
+            setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
+          } else if (redirectCode !== 'auth/popup-closed-by-user') {
+            setAuthError(`Sign-in error (${redirectCode || 'failed'}): ${redirectErr?.message || 'Please retry.'}`);
+          }
+          return false;
+        }
+      } else if (code === 'auth/unauthorized-domain') {
+        setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
+      } else if (code === 'auth/popup-closed-by-user') {
+        // Do nothing silently
+      } else {
+        setAuthError(`Sign-in error (${code || 'auth/unknown'}): ${err?.message || 'Authentication failed'}`);
       }
       return false;
     } finally {
       setSigningIn(false);
     }
-  };
+  }, [attachUserListeners]);
 
   const signOutUser = async (): Promise<void> => {
     try {
@@ -355,7 +408,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAdmin,
         isSuperAdmin,
         isApprovedMember,
-        signInWithGoogle,
+        handleSignIn,
+        signInWithGoogle: handleSignIn,
         signOutUser,
         clearAuthError,
         refreshProfile,

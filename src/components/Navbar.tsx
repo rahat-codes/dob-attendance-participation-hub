@@ -11,6 +11,7 @@ import {
   Menu,
   QrCode,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
 import { Member } from '../types';
@@ -63,7 +64,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onViewPass,
   onToggleSidebar,
 }) => {
-  const { user, profile, linkedMember, isAdmin, signOutUser } = useAuth();
+  const { user, profile, linkedMember, isAdmin, signOutUser, handleSignIn, signingIn } = useAuth();
   const [isAvatarMenuOpen, setIsAvatarMenuOpen] = useState(false);
   const avatarMenuRef = useRef<HTMLDivElement>(null);
 
@@ -215,201 +216,155 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </nav>
 
-        {/* Right Section: Global Actions (Scan QR, New Meeting, Notifications, User Menu) */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {/* Global Action 1: Scan QR (Primary attendance action) - Hide label below 640px */}
-          <m.button
-            type="button"
-            whileTap={{ scale: 0.96 }}
-            onClick={onOpenQuickScan}
-            aria-label="Scan QR Code"
-            className="flex items-center justify-center gap-1.5 p-2 sm:px-3.5 sm:py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl transition-colors whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.3)] cursor-pointer uppercase tracking-wider font-mono border border-white/20 min-h-[44px] min-w-[44px] sm:min-w-0 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
-            title="Scan Meeting QR Code"
-          >
-            <Scan className="h-4 w-4 stroke-[2.5] shrink-0" />
-            <span className="hidden sm:inline">SCAN QR</span>
-          </m.button>
-
-          {/* Global Action 2: New Meeting (Admin Only) */}
-          {isAdmin && (
-            <m.button
-              type="button"
-              whileTap={{ scale: 0.96 }}
-              onClick={onOpenNewSession}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 sm:py-2 text-xs font-bold text-zinc-200 bg-[#141720] border border-white/10 neu-button rounded-xl hover:border-[#b5ff00]/50 hover:text-[#b5ff00] transition-colors whitespace-nowrap uppercase tracking-wider cursor-pointer font-mono min-h-10 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-              title="Create new workshop or meeting"
-            >
-              <Plus className="h-4 w-4 text-[#b5ff00]" />
-              <span>New Meeting</span>
-            </m.button>
-          )}
-
-          {/* Global Action 3: Notifications Bell */}
-          {user && onOpenNotifications && (
-            <button
-              type="button"
-              onClick={onOpenNotifications}
-              className="relative min-w-10 min-h-10 sm:min-w-11 sm:min-h-11 w-10 h-10 sm:w-11 sm:h-11 flex items-center justify-center rounded-xl text-zinc-300 hover:text-[#b5ff00] bg-[#141720] border border-white/10 neu-button transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-              title="Meeting notifications & reminders"
-              aria-label="View meeting notifications"
-            >
-              <Bell className="h-4 w-4" />
-              {unreadNotificationsCount > 0 && (
-                <m.span
-                  key={unreadNotificationsCount}
-                  initial={{ scale: 0.6 }}
-                  animate={{ scale: 1 }}
-                  transition={spring.pop}
-                  className="absolute top-1.5 right-1.5 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-[#b5ff00] text-black font-mono font-bold text-[10px] shadow-[0_0_10px_rgba(181,255,0,0.6)]"
-                >
-                  {unreadNotificationsCount}
-                </m.span>
-              )}
-            </button>
-          )}
-
-          {/* Global Action 4: User Profile & Account Menu */}
+        {/* Right Section: Global Actions (1 primary action + 1 avatar/menu button; or 1 Sign In button) */}
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 flex-nowrap">
           {user ? (
-            <div className="relative" ref={avatarMenuRef}>
-              <button
+            <>
+              {/* Primary Action: Scan QR (icon-only below 640px) */}
+              <m.button
                 type="button"
-                onClick={() => setIsAvatarMenuOpen(!isAvatarMenuOpen)}
-                className="flex items-center gap-2 p-1 rounded-xl bg-[#141720] border border-white/10 neu-button hover:border-white/20 transition-all cursor-pointer min-h-10 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-                aria-expanded={isAvatarMenuOpen}
-                aria-haspopup="true"
-                aria-label="Open user account menu"
+                whileTap={{ scale: 0.96 }}
+                onClick={onOpenQuickScan}
+                aria-label="Scan QR Code"
+                className="flex items-center justify-center gap-1.5 p-2 sm:px-3.5 sm:py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl transition-colors whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.3)] cursor-pointer uppercase tracking-wider font-mono border border-white/20 min-h-[44px] min-w-[44px] sm:min-w-0 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+                title="Scan Meeting QR Code"
               >
-                <div className="relative">
-                  {linkedMember?.avatarUrl || user.photoURL ? (
-                    <img
-                      src={linkedMember?.avatarUrl || user.photoURL || ''}
-                      alt="avatar"
-                      className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-[#b5ff00]/40 shrink-0"
-                      width={32}
-                      height={32}
-                    />
-                  ) : (
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[#b5ff00] shrink-0">
-                      <User className="h-4 w-4" />
-                    </div>
-                  )}
-                  <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#b5ff00] ring-2 ring-[#0c0e14]" />
-                </div>
-                <ChevronDown
-                  className={`h-3.5 w-3.5 text-zinc-400 transition-transform hidden sm:block ${
-                    isAvatarMenuOpen ? 'rotate-180' : ''
-                  }`}
-                />
-              </button>
+                <Scan className="h-4 w-4 stroke-[2.5] shrink-0" />
+                <span className="hidden sm:inline">SCAN QR</span>
+              </m.button>
 
-              {/* Avatar Dropdown Menu with scaleIn and top-right origin */}
-              <AnimatePresence>
-                {isAvatarMenuOpen && (
-                  <m.div
-                    role="menu"
-                    variants={scaleIn}
-                    initial="hidden"
-                    animate="show"
-                    exit="exit"
-                    style={{ transformOrigin: 'top right' }}
-                    className="absolute right-0 mt-2 w-64 rounded-2xl glass-modal p-2 shadow-2xl z-50 border border-white/10 neu-raised"
-                  >
-                    <div className="p-3 border-b border-white/5 mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs text-white truncate font-display">
-                          {linkedMember ? linkedMember.name : user.displayName || 'Club Builder'}
-                        </span>
-                        {isAdmin ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#b5ff00]/15 text-[#b5ff00] border border-[#b5ff00]/30 uppercase shrink-0">
-                            Admin
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 uppercase shrink-0">
-                            Member
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] text-zinc-400 font-mono truncate mt-0.5">
-                        {user.email}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      {linkedMember && onViewPass && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setIsAvatarMenuOpen(false);
-                            onViewPass();
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-                        >
-                          <QrCode className="h-4 w-4 text-[#b5ff00] shrink-0" />
-                          <span>Digital Member Pass</span>
-                        </button>
-                      )}
-
-                      {onOpenEditProfile && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setIsAvatarMenuOpen(false);
-                            onOpenEditProfile();
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-                        >
-                          <User className="h-4 w-4 text-zinc-400 shrink-0" />
-                          <span>Edit Builder Profile</span>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsAvatarMenuOpen(false);
-                          onOpenGuide();
-                        }}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
-                      >
-                        <Sparkles className="h-4 w-4 text-[#b5ff00] shrink-0" />
-                        <span>Guild Operational Guide</span>
-                      </button>
-
-                      <div className="pt-1 mt-1 border-t border-white/5">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setIsAvatarMenuOpen(false);
-                            signOutUser();
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"
-                        >
-                          <LogOut className="h-4 w-4 shrink-0" />
-                          <span>Sign Out</span>
-                        </button>
-                      </div>
-                    </div>
-                  </m.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              {onOpenAdminLogin && (
+              {/* Single Avatar/Menu Button */}
+              <div className="relative" ref={avatarMenuRef}>
                 <button
                   type="button"
-                  onClick={onOpenAdminLogin}
-                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl cursor-pointer min-h-11 font-mono uppercase tracking-wider shadow-[0_0_12px_rgba(181,255,0,0.3)] focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+                  onClick={() => setIsAvatarMenuOpen(!isAvatarMenuOpen)}
+                  className="flex items-center gap-1.5 p-1 rounded-xl bg-[#141720] border border-white/10 neu-button hover:border-white/20 transition-all cursor-pointer min-h-[44px] min-w-[44px] justify-center focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                  aria-expanded={isAvatarMenuOpen}
+                  aria-haspopup="true"
+                  aria-label="Open user account menu"
                 >
+                  <div className="relative">
+                    {linkedMember?.avatarUrl || user.photoURL ? (
+                      <img
+                        src={linkedMember?.avatarUrl || user.photoURL || ''}
+                        alt="avatar"
+                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-[#b5ff00]/40 shrink-0"
+                        width={32}
+                        height={32}
+                      />
+                    ) : (
+                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[#b5ff00] shrink-0">
+                        <User className="h-4 w-4" />
+                      </div>
+                    )}
+                    <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#b5ff00] ring-2 ring-[#0c0e14]" />
+                  </div>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-zinc-400 transition-transform hidden sm:block ${
+                      isAvatarMenuOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {/* Avatar Dropdown Menu */}
+                <AnimatePresence>
+                  {isAvatarMenuOpen && (
+                    <m.div
+                      role="menu"
+                      variants={scaleIn}
+                      initial="hidden"
+                      animate="show"
+                      exit="exit"
+                      style={{ transformOrigin: 'top right' }}
+                      className="absolute right-0 mt-2 w-56 rounded-2xl glass-modal p-2 shadow-2xl z-50 border border-white/10 neu-raised"
+                    >
+                      <div className="p-2.5 border-b border-white/5 mb-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs text-white truncate font-display">
+                            {linkedMember ? linkedMember.name : user.displayName || 'Club Builder'}
+                          </span>
+                          {isAdmin ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#b5ff00]/15 text-[#b5ff00] border border-[#b5ff00]/30 uppercase shrink-0">
+                              Admin
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 uppercase shrink-0">
+                              Member
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        {linkedMember && onViewPass && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsAvatarMenuOpen(false);
+                              onViewPass();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                          >
+                            <QrCode className="h-4 w-4 text-[#b5ff00] shrink-0" />
+                            <span>Digital Member Pass</span>
+                          </button>
+                        )}
+
+                        {onOpenEditProfile && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsAvatarMenuOpen(false);
+                              onOpenEditProfile();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                          >
+                            <User className="h-4 w-4 text-zinc-400 shrink-0" />
+                            <span>Edit Builder Profile</span>
+                          </button>
+                        )}
+
+                        <div className="pt-1 mt-1 border-t border-white/5">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsAvatarMenuOpen(false);
+                              signOutUser();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-bold text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"
+                          >
+                            <LogOut className="h-4 w-4 shrink-0" />
+                            <span>Sign Out</span>
+                          </button>
+                        </div>
+                      </div>
+                    </m.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSignIn}
+              disabled={signingIn}
+              className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] disabled:opacity-50 rounded-xl cursor-pointer min-h-[44px] min-w-[44px] font-mono uppercase tracking-wider shadow-[0_0_12px_rgba(181,255,0,0.3)] focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none shrink-0"
+            >
+              {signingIn ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span className="hidden sm:inline">Signing In...</span>
+                </>
+              ) : (
+                <>
                   <Lock className="h-3.5 w-3.5" />
                   <span>Sign In</span>
-                </button>
+                </>
               )}
-            </div>
+            </button>
           )}
         </div>
       </div>
