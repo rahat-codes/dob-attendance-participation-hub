@@ -154,11 +154,16 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
         </div>
 
         {/* Academic Profile Details Strip (if provided) */}
-        {(member.university || member.department || member.major || member.semester || member.phone) && (
+        {(member.university || member.studentId || member.department || member.major || member.semester || member.phone) && (
           <div className="mt-4 pt-3 border-t border-white/10 flex flex-wrap items-center gap-3 text-xs text-zinc-400 font-mono">
             {member.university && (
               <span className="text-zinc-300">
                 🏛️ {member.university}
+              </span>
+            )}
+            {member.studentId && (
+              <span className="text-zinc-300">
+                🪪 ID: {member.studentId}
               </span>
             )}
             {member.department && (

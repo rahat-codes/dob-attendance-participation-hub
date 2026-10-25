@@ -79,7 +79,8 @@ async function runTests() {
     email: 'samiul.alom@private-university.edu',
     phone: '+880 1711-223344',
     authUid: 'auth_uid_secure_99',
-    university: 'BRAC University',
+    studentId: '20241099',
+    university: 'Tongmyong University',
     department: 'CSE',
     major: 'Computer Science',
     semester: '7th Semester',
@@ -112,6 +113,7 @@ async function runTests() {
   assert(!('email' in publicProjection), 'Public leaderboard projection omits private email');
   assert(!('phone' in publicProjection), 'Public leaderboard projection omits private phone');
   assert(!('authUid' in publicProjection), 'Public leaderboard projection omits authUid');
+  assert(!('studentId' in publicProjection), 'Public leaderboard projection omits studentId detail');
   assert(!('university' in publicProjection), 'Public leaderboard projection omits university detail');
   assert(publicProjection.name === 'Samiul Alom', 'Public leaderboard correctly preserves public name');
   assert(publicProjection.totalCheckIns === 12, 'Public leaderboard preserves verified attendance total');

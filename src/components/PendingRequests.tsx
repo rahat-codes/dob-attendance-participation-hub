@@ -28,6 +28,8 @@ interface PendingRequestsProps {
     email?: string;
     handle?: string;
     authUid?: string;
+    studentId?: string;
+    university?: string;
   }) => void;
   // Optional external callback
   onStatusChange?: () => void;
@@ -119,6 +121,8 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
             ? user.requestedNotes
             : `@${user.requestedNotes || user.email?.split('@')[0] || 'builder'}`,
           authUid: user.id,
+          studentId: (/^\d+$/.test(user.requestedNotes?.trim() || '')) ? user.requestedNotes?.trim() : undefined,
+          university: 'Tongmyong University',
         });
       }
       return;

@@ -37,8 +37,29 @@ import {
 import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE, DEFAULT_CHECKIN_SETTINGS } from '../config/constants';
 import { buildPublicLeaderboardItems } from '../utils/stats';
 import { getSessionState, getSessionTemporalInfo, parseDateTimeInZone } from '../utils/sessionWindow';
+import { processProfilePhoto } from '../utils/imageUtils';
 
 export { SUPER_ADMIN_EMAIL };
+
+/**
+ * Ensures any avatar data URL is compressed and centered before writing to Firestore,
+ * staying far below Firestore's 1,048,576 bytes limit (~25KB).
+ */
+export async function ensureSafeAvatarUrl(url?: string): Promise<string | undefined> {
+  if (!url) return undefined;
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('data:image/') && trimmed.length > 70000) {
+    try {
+      if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        return await processProfilePhoto(trimmed, 256, 0.85);
+      }
+    } catch (err) {
+      console.warn('Failed to compress avatar before writing to Firestore:', err);
+    }
+  }
+  return trimmed;
+}
 
 const USERS_COLLECTION = 'users';
 const ADMINS_COLLECTION = 'admins';
@@ -302,8 +323,12 @@ export async function updateUserSelfProfile(
 ): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, uid);
   try {
+    const cleanUpdates = { ...updates };
+    if (cleanUpdates.photoURL) {
+      cleanUpdates.photoURL = await ensureSafeAvatarUrl(cleanUpdates.photoURL);
+    }
     await updateDoc(userRef, removeUndefinedFields({
-      ...updates,
+      ...cleanUpdates,
       updatedAt: new Date().toISOString(),
     }));
   } catch (err) {
@@ -590,8 +615,10 @@ export async function addMemberToFirestore(
   const batch = writeBatch(db);
 
   const defaultUni = publicData.university?.trim() || privateData?.university?.trim() || 'Tongmyong University';
+  const safeAvatar = await ensureSafeAvatarUrl(publicData.avatarUrl);
   const finalPublic: Member = removeUndefinedFields({
     ...publicData,
+    avatarUrl: safeAvatar,
     id: memberId,
     name: publicData.name.trim(),
     handle: cleanHandle,
@@ -632,7 +659,11 @@ export async function updateMemberProfile(
   const batch = writeBatch(db);
 
   if (Object.keys(publicUpdates).length > 0) {
-    batch.update(memberRef, removeUndefinedFields(publicUpdates));
+    const cleanPublicUpdates = { ...publicUpdates };
+    if (cleanPublicUpdates.avatarUrl) {
+      cleanPublicUpdates.avatarUrl = await ensureSafeAvatarUrl(cleanPublicUpdates.avatarUrl);
+    }
+    batch.update(memberRef, removeUndefinedFields(cleanPublicUpdates));
   }
 
   if (privateUpdates && Object.keys(privateUpdates).length > 0) {
@@ -1425,6 +1456,7 @@ export async function updateMemberSelfProfile(
     name: string;
     email?: string;
     phone?: string;
+    studentId?: string;
     university?: string;
     department?: string;
     major?: string;
@@ -1439,17 +1471,22 @@ export async function updateMemberSelfProfile(
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, memberId);
     const batch = writeBatch(db);
 
+    const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
+
     batch.update(memberRef, removeUndefinedFields({
       name: details.name,
-      avatarUrl: details.avatarUrl || '',
+      avatarUrl: safeAvatar || '',
       bio: details.bio || '',
       tracks: details.tracks,
+      studentId: details.studentId?.trim() || undefined,
+      university: details.university?.trim() || 'Tongmyong University',
     }));
 
     batch.set(privRef, removeUndefinedFields({
       email: details.email,
       phone: details.phone,
-      university: details.university,
+      studentId: details.studentId?.trim() || undefined,
+      university: details.university?.trim() || 'Tongmyong University',
       department: details.department,
       major: details.major,
       semester: details.semester,
@@ -1509,11 +1546,14 @@ export const updateMemberInFirestore = async (member: Member): Promise<void> => 
       bio: member.bio,
       tracks: member.tracks,
       leaderboardOptOut: member.leaderboardOptOut,
+      studentId: member.studentId?.trim() || undefined,
+      university: member.university?.trim() || 'Tongmyong University',
     },
     {
       email: member.email,
       phone: member.phone,
-      university: member.university,
+      studentId: member.studentId?.trim() || undefined,
+      university: member.university?.trim() || 'Tongmyong University',
       department: member.department,
       major: member.major,
       semester: member.semester,

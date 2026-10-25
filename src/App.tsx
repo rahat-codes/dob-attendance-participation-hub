@@ -182,6 +182,8 @@ export default function App() {
     email?: string;
     handle?: string;
     authUid?: string;
+    studentId?: string;
+    university?: string;
   } | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedPassMember, setSelectedPassMember] = useState<Member | null>(null);
@@ -477,7 +479,15 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can register builders.');
     }
     try {
-      await addMemberToFirestore(newMember);
+      await addMemberToFirestore(newMember, {
+        email: newMember.email,
+        phone: newMember.phone,
+        studentId: newMember.studentId,
+        university: newMember.university || 'Tongmyong University',
+        department: newMember.department,
+        major: newMember.major,
+        semester: newMember.semester,
+      });
       if (newMember.authUid) {
         await approveUserMembershipLink(newMember.authUid, newMember.id);
       }
@@ -504,6 +514,8 @@ export default function App() {
             ? req.requestedNotes
             : `@${req.requestedNotes || req.email?.split('@')[0]}`,
           authUid: req.id,
+          studentId: (/^\d+$/.test(req.requestedNotes?.trim() || '')) ? req.requestedNotes?.trim() : undefined,
+          university: 'Tongmyong University',
         });
         setIsAddMemberOpen(true);
       }
@@ -546,6 +558,7 @@ export default function App() {
       authUid: user.uid,
       role: 'President',
       tracks: ['Hardware & Robotics', 'AI & Embedded'],
+      university: 'Tongmyong University',
       joinedDate: todayStr,
       totalCheckIns: 0,
       currentStreak: 0,

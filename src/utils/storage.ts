@@ -129,7 +129,7 @@ export function generateMembersRosterCSV(
   ];
 
   if (privateDataMap) {
-    headers.push('Email', 'Phone', 'University', 'Department', 'Major', 'Semester');
+    headers.push('Email', 'Phone', 'Student ID', 'University', 'Department', 'Major', 'Semester');
   }
 
   const rows = members.map((m) => {
@@ -154,7 +154,8 @@ export function generateMembersRosterCSV(
       cols.push(
         sanitizeCSVCell(priv?.email || m.email || ''),
         sanitizeCSVCell(priv?.phone || m.phone || ''),
-        sanitizeCSVCell(priv?.university || m.university || ''),
+        sanitizeCSVCell(priv?.studentId || m.studentId || ''),
+        sanitizeCSVCell(priv?.university || m.university || 'Tongmyong University'),
         sanitizeCSVCell(priv?.department || m.department || ''),
         sanitizeCSVCell(priv?.major || m.major || ''),
         sanitizeCSVCell(priv?.semester || m.semester || '')

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { UserPlus, AlertCircle, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { UserPlus, AlertCircle, RefreshCw, CheckCircle2, Camera } from 'lucide-react';
 import { Member, BuilderRole, BuilderTrack } from '../types';
 import { ModalSheet } from './ModalSheet';
+import { processProfilePhoto } from '../utils/imageUtils';
 
 interface AddMemberModalProps {
   isOpen: boolean;
@@ -32,10 +33,12 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   const [email, setEmail] = useState('');
   const [studentId, setStudentId] = useState('');
   const [university, setUniversity] = useState('Tongmyong University');
+  const [avatarUrl, setAvatarUrl] = useState('');
   const [role, setRole] = useState<BuilderRole>('Builder');
   const [bio, setBio] = useState('');
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(['Hardware & Robotics']);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [processingImage, setProcessingImage] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
@@ -46,6 +49,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setEmail(initialMember.email || '');
       setStudentId(initialMember.studentId || '');
       setUniversity(initialMember.university || 'Tongmyong University');
+      setAvatarUrl(initialMember.avatarUrl || initialMember.photoURL || '');
       setRole(initialMember.role);
       setBio(initialMember.bio || '');
       setSelectedTracks(initialMember.tracks || ['Hardware & Robotics']);
@@ -57,6 +61,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setEmail(prefill.email || '');
       setStudentId(prefill.studentId || '');
       setUniversity(prefill.university || 'Tongmyong University');
+      setAvatarUrl('');
       setRole('Builder');
       setBio('');
       setSelectedTracks(['Hardware & Robotics']);
@@ -68,6 +73,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setEmail('');
       setStudentId('');
       setUniversity('Tongmyong University');
+      setAvatarUrl('');
       setRole('Builder');
       setBio('');
       setSelectedTracks(['Hardware & Robotics']);
@@ -77,7 +83,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
   }, [initialMember, prefill, isOpen]);
 
   const hasUnsavedChanges = Boolean(
-    name.trim() || handle.trim() || email.trim() || studentId.trim() || bio.trim() || (university !== 'Tongmyong University')
+    name.trim() || handle.trim() || email.trim() || studentId.trim() || bio.trim() || avatarUrl.trim() || (university !== 'Tongmyong University')
   );
 
   const toggleTrack = (track: BuilderTrack) => {
@@ -87,6 +93,25 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       }
     } else {
       setSelectedTracks([...selectedTracks, track]);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setProcessingImage(true);
+    setFormError(null);
+    try {
+      // Accepts any sized image file and auto-scales/center-crops to ~25KB JPEG
+      const optimized = await processProfilePhoto(file, 256, 0.85);
+      setAvatarUrl(optimized);
+    } catch (err: any) {
+      console.error('Image processing error:', err);
+      setFormError('Could not process this image. Please choose another image file.');
+    } finally {
+      setProcessingImage(false);
+      e.target.value = '';
     }
   };
 
@@ -116,6 +141,15 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      let finalAvatarUrl = avatarUrl.trim();
+      if (finalAvatarUrl.startsWith('data:image/') && finalAvatarUrl.length > 80000) {
+        try {
+          finalAvatarUrl = await processProfilePhoto(finalAvatarUrl, 256, 0.85);
+        } catch (imgErr) {
+          console.warn('Could not re-compress data URL, continuing with original:', imgErr);
+        }
+      }
+
       if (initialMember && onUpdateMember) {
         const updated: Member = {
           ...initialMember,
@@ -124,6 +158,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           email: cleanEmail || initialMember.email,
           studentId: studentId.trim() || undefined,
           university: university.trim() || 'Tongmyong University',
+          avatarUrl: finalAvatarUrl || initialMember.avatarUrl,
           role,
           tracks: selectedTracks.length > 0 ? selectedTracks : ['Hardware & Robotics'],
           bio: bio.trim(),
@@ -138,6 +173,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           email: cleanEmail || `${formattedHandle.replace('@', '')}@denofbuilders.org`,
           studentId: studentId.trim() || undefined,
           university: university.trim() || 'Tongmyong University',
+          avatarUrl: finalAvatarUrl || undefined,
           ...(prefill?.authUid ? { authUid: prefill.authUid } : {}),
           role,
           tracks: selectedTracks.length > 0 ? selectedTracks : ['Hardware & Robotics'],
@@ -218,6 +254,57 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             <span>{formSuccess}</span>
           </div>
         )}
+
+        {/* Photo & Identity Banner */}
+        <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-[#0d0f15] border border-white/10 neu-inset">
+          <div className="relative group shrink-0">
+            <div className="w-14 h-14 rounded-2xl bg-[#141720] border-2 border-[#b5ff00]/40 overflow-hidden flex items-center justify-center font-display font-black text-lg text-[#b5ff00] neu-raised-sm relative">
+              {processingImage ? (
+                <RefreshCw className="h-6 w-6 text-[#b5ff00] animate-spin" />
+              ) : avatarUrl ? (
+                <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                name.substring(0, 2).toUpperCase() || 'DB'
+              )}
+            </div>
+            <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+              <Camera className="h-5 w-5 text-white" />
+              <input
+                type="file"
+                accept="image/*"
+                disabled={processingImage}
+                onChange={handlePhotoUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <label className="block text-zinc-300 font-medium mb-1 text-xs">
+              Builder Photo (Any size, auto-centered)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={avatarUrl}
+                onChange={(e) => setAvatarUrl(e.target.value)}
+                placeholder="Upload photo or paste URL"
+                className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+              />
+              <label className="shrink-0 px-3 py-2 rounded-xl bg-[#1f2330] hover:bg-[#282d3e] text-zinc-200 border border-white/10 text-xs font-semibold cursor-pointer flex items-center gap-1.5 transition-colors min-h-11">
+                <Camera className="w-4 h-4 text-[#b5ff00]" />
+                <span>Upload</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={processingImage}
+                  onChange={handlePhotoUpload}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
 
         <div>
           <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Builder Full Name</label>

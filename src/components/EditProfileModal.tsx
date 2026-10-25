@@ -12,6 +12,7 @@ import {
 import { Member, BuilderTrack } from '../types';
 import { updateMemberSelfProfile } from '../firebase/firestoreService';
 import { ModalSheet } from './ModalSheet';
+import { processProfilePhoto } from '../utils/imageUtils';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -46,6 +47,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
 
   const [saving, setSaving] = useState(false);
+  const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -55,6 +57,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     phone !== (member.phone || '') ||
     studentId !== (member.studentId || '') ||
     university !== (member.university || 'Tongmyong University') ||
+    avatarUrl !== (member.avatarUrl || member.photoURL || '') ||
     bio !== (member.bio || '')
   );
 
@@ -64,22 +67,23 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     );
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      setError('Please choose an image under 2MB.');
-      return;
+    setProcessingImage(true);
+    setError(null);
+    try {
+      // Accepts any sized photo, center-crops to square, and scales/compresses to ~25KB
+      const optimized = await processProfilePhoto(file, 256, 0.85);
+      setAvatarUrl(optimized);
+    } catch (err: any) {
+      console.error('Image processing error:', err);
+      setError('Could not process this image. Please choose another image file.');
+    } finally {
+      setProcessingImage(false);
+      e.target.value = '';
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setAvatarUrl(reader.result);
-      }
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -107,6 +111,16 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
     setSaving(true);
     try {
+      let finalAvatarUrl = avatarUrl.trim();
+      // Ensure any large pasted base64 data URLs are compressed to fit Firestore easily
+      if (finalAvatarUrl.startsWith('data:image/') && finalAvatarUrl.length > 80000) {
+        try {
+          finalAvatarUrl = await processProfilePhoto(finalAvatarUrl, 256, 0.85);
+        } catch (imgErr) {
+          console.warn('Could not re-compress data URL, continuing with original:', imgErr);
+        }
+      }
+
       const res = await updateMemberSelfProfile(member.id, {
         name: cleanName,
         email: cleanEmail,
@@ -116,7 +130,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         department: department.trim(),
         major: major.trim(),
         semester: semester.trim(),
-        avatarUrl: avatarUrl.trim(),
+        avatarUrl: finalAvatarUrl,
         bio: bio.trim(),
         tracks: selectedTracks,
       });
@@ -134,7 +148,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             department: department.trim(),
             major: major.trim(),
             semester: semester.trim(),
-            avatarUrl: avatarUrl.trim(),
+            avatarUrl: finalAvatarUrl,
             bio: bio.trim(),
             tracks: selectedTracks,
           });
@@ -213,8 +227,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         {/* Photo & Identity Banner */}
         <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-[#0d0f15] border border-white/10 neu-inset">
           <div className="relative group shrink-0">
-            <div className="w-14 h-14 rounded-2xl bg-[#141720] border-2 border-[#b5ff00]/40 overflow-hidden flex items-center justify-center font-display font-black text-lg text-[#b5ff00] neu-raised-sm">
-              {avatarUrl ? (
+            <div className="w-14 h-14 rounded-2xl bg-[#141720] border-2 border-[#b5ff00]/40 overflow-hidden flex items-center justify-center font-display font-black text-lg text-[#b5ff00] neu-raised-sm relative">
+              {processingImage ? (
+                <RefreshCw className="h-6 w-6 text-[#b5ff00] animate-spin" />
+              ) : avatarUrl ? (
                 <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
               ) : (
                 name.substring(0, 2).toUpperCase() || 'DB'
@@ -225,6 +241,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               <input
                 type="file"
                 accept="image/*"
+                disabled={processingImage}
                 onChange={handlePhotoUpload}
                 className="hidden"
               />
