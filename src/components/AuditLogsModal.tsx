@@ -105,8 +105,7 @@ export const AuditLogsModal: React.FC<AuditLogsModalProps> = ({ isOpen, onClose 
       icon={<History className="w-5 h-5 text-[#b5ff00]" />}
       maxWidth="3xl"
       footer={
-        <div className="flex items-center justify-between w-full text-xs text-zinc-400 font-mono">
-          <span className="hidden sm:inline">Protected by Firestore Rules (Append-only)</span>
+        <div className="flex items-center justify-end w-full">
           <button
             type="button"
             onClick={onClose}

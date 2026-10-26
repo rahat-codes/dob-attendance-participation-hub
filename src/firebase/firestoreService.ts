@@ -72,6 +72,7 @@ const ANNOUNCEMENTS_COLLECTION = 'announcements';
 const PUBLIC_LEADERBOARD_COLLECTION = 'publicLeaderboard';
 const AUDIT_LOGS_COLLECTION = 'auditLogs';
 const SETTINGS_COLLECTION = 'settings';
+const NOTIFICATIONS_COLLECTION = 'notifications';
 
 /**
  * Strips undefined fields recursively so Firestore mutations never fail.
@@ -1223,6 +1224,94 @@ export async function saveClubSettings(settings: ClubSettings): Promise<void> {
   }
 }
 
+/**
+ * Super-Admin Database JSON Backup Exporter
+ * Downloads a complete JSON snapshot.
+ * - Restricted strictly to Super Administrator (SUPER_ADMIN_EMAIL)
+ * - Ephemeral sessionTokens are ALWAYS excluded
+ * - Sensitive memberPrivate and users collections are included ONLY when includePII is confirmed true
+ * - Emits an authoritative audit trail entry
+ */
+export async function exportFullBackupJSON(options?: { includePII?: boolean }): Promise<void> {
+  const currentUserEmail = auth.currentUser?.email?.toLowerCase().trim();
+  const superAdminEmail = SUPER_ADMIN_EMAIL.toLowerCase().trim();
+
+  if (!currentUserEmail || currentUserEmail !== superAdminEmail) {
+    throw new Error(
+      `Permission denied: Only the Super Administrator (${SUPER_ADMIN_EMAIL}) may export database backups.`
+    );
+  }
+
+  const includePII = !!options?.includePII;
+
+  // Base collections: sessionTokens is strictly excluded
+  const baseCollections = [
+    MEMBERS_COLLECTION,
+    SESSIONS_COLLECTION,
+    CHECKINS_COLLECTION,
+    ANNOUNCEMENTS_COLLECTION,
+    NOTIFICATIONS_COLLECTION,
+    AUDIT_LOGS_COLLECTION,
+    SETTINGS_COLLECTION,
+    PUBLIC_LEADERBOARD_COLLECTION,
+  ];
+
+  const collectionsToExport = [...baseCollections];
+  if (includePII) {
+    collectionsToExport.push(MEMBER_PRIVATE_COLLECTION, USERS_COLLECTION);
+  }
+
+  const backupData: Record<string, any[]> = {
+    _metadata: [
+      {
+        exportedAt: new Date().toISOString(),
+        exportedBy: currentUserEmail,
+        schemaVersion: '2.0.0',
+        club: 'Den of Builders',
+        includesPII: includePII,
+        excludedCollections: ['sessionTokens', ...(includePII ? [] : ['memberPrivate', 'users'])],
+        note: 'For managed automated backups and point-in-time recovery (PITR), check the Google Cloud Console / Firebase Console under Cloud Firestore Backups.',
+      },
+    ],
+  };
+
+  for (const colName of collectionsToExport) {
+    try {
+      const snap = await getDocs(collection(db, colName));
+      backupData[colName] = snap.docs.map((d) => ({
+        _docId: d.id,
+        ...d.data(),
+      }));
+    } catch (err) {
+      console.warn(`Full backup: notice reading collection ${colName}:`, err);
+      backupData[colName] = [];
+    }
+  }
+
+  const jsonString = JSON.stringify(backupData, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().split('T')[0];
+  const piiTag = includePII ? '-with-pii' : '-sanitized';
+  a.href = url;
+  a.download = `dob-hub-backup-${dateStr}${piiTag}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  try {
+    await createAuditLog(
+      'update_settings',
+      `Super Admin (${currentUserEmail}) generated JSON database backup (${includePII ? 'Full including memberPrivate & users PII' : 'Sanitized without PII'})`
+    );
+  } catch {
+    // Non-fatal audit log
+  }
+}
+
+
 export async function setupSuperAdminInitialRoster(
   clubName: string,
   timezone: string,
@@ -1561,8 +1650,6 @@ export const updateMemberInFirestore = async (member: Member): Promise<void> => 
   );
 };
 
-export const addSessionToFirestore = createSessionInFirestore;
-
 export const adminDeleteSession = async (sessionId: string, _title?: string, _permanent?: boolean): Promise<void> => {
   await deleteSession(sessionId);
 };
@@ -1578,8 +1665,6 @@ export const adminDeleteMember = async (memberId: string, _name?: string, perman
 export const adminDeleteCheckIn = async (checkInId: string, _memberName?: string, _sessionTitle?: string): Promise<void> => {
   await deleteCheckInRecord(checkInId);
 };
-
-export const deleteCheckInFromFirestore = deleteCheckInRecord;
 
 export const initializeFirestoreWithDefaults = async (
   founder: Member,

@@ -15,9 +15,11 @@ import {
   LogOut,
   ChevronRight,
   ExternalLink,
+  Database,
 } from 'lucide-react';
 import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
+import { SUPER_ADMIN_EMAIL } from '../config/constants';
 
 interface SidebarProps {
   activeTab: NavigationTab;
@@ -25,6 +27,7 @@ interface SidebarProps {
   pendingRequestsCount?: number;
   onOpenGuide: () => void;
   onOpenAuditLogs?: () => void;
+  onOpenBackup?: () => void;
   onViewPass?: () => void;
   onOpenEditProfile?: () => void;
   className?: string;
@@ -38,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingRequestsCount = 0,
   onOpenGuide,
   onOpenAuditLogs,
+  onOpenBackup,
   onViewPass,
   onOpenEditProfile,
   className = '',
@@ -256,6 +260,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="min-w-0 flex-1">
                     <div className="text-xs font-display uppercase tracking-wide truncate">
                       Security Audit Log
+                    </div>
+                  </div>
+                </button>
+              )}
+
+              {onOpenBackup && user?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenBackup();
+                    if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                  }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                >
+                  <Database className="h-4 w-4 shrink-0 text-[#b5ff00]/80 group-hover:text-[#b5ff00]" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-display uppercase tracking-wide truncate">
+                      Database Backup
                     </div>
                   </div>
                 </button>

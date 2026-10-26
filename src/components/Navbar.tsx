@@ -12,10 +12,12 @@ import {
   QrCode,
   Sparkles,
   RefreshCw,
+  Database,
 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
 import { Member } from '../types';
 import { useAuth } from '../firebase/AuthContext';
+import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { scaleIn, spring } from '../motion/presets';
 
 export type NavigationTab =
@@ -41,6 +43,7 @@ interface NavbarProps {
   unreadNotificationsCount?: number;
   onOpenNotifications?: () => void;
   onOpenAuditLogs?: () => void;
+  onOpenBackup?: () => void;
   onOpenMore?: () => void;
   onOpenEditProfile?: () => void;
   onViewPass?: () => void;
@@ -59,6 +62,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   unreadNotificationsCount = 0,
   onOpenNotifications,
   onOpenAuditLogs,
+  onOpenBackup,
   onOpenMore,
   onOpenEditProfile,
   onViewPass,
@@ -140,10 +144,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* Center Section: Top Navigation for 768px and up (md:flex) */}
+        {/* Center Section: Top Navigation for 1024px and up (lg:flex) */}
         <nav
           aria-label="Desktop Primary Navigation"
-          className="hidden md:flex items-center gap-1 lg:gap-1.5 bg-[#141720]/80 p-1 rounded-xl border border-white/5 neu-inset"
+          className="hidden lg:flex items-center gap-1 lg:gap-1.5 bg-[#141720]/80 p-1 rounded-xl border border-white/5 neu-inset"
         >
           <button
             type="button"
@@ -323,6 +327,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                           >
                             <User className="h-4 w-4 text-zinc-400 shrink-0" />
                             <span>Edit Builder Profile</span>
+                          </button>
+                        )}
+
+                        {onOpenBackup && user?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim() && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setIsAvatarMenuOpen(false);
+                              onOpenBackup();
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-[#b5ff00] hover:bg-[#b5ff00]/10 rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                          >
+                            <Database className="h-4 w-4 text-[#b5ff00] shrink-0" />
+                            <span>Database Backup</span>
                           </button>
                         )}
 

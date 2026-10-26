@@ -241,7 +241,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
     currentSession?.maxCapacity && sessionCheckIns.length > currentSession.maxCapacity;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full min-w-0">
       {/* Fullscreen Overlay Exit Kiosk Button (always reachable in fullscreen mode) */}
       {isFullscreen && onExitKiosk && (
         <div className="fixed top-4 left-4 z-50 flex items-center gap-2">

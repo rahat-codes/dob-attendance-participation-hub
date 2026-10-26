@@ -36,13 +36,12 @@ import {
   rejectUserMembershipLink,
   addMemberToFirestore,
   updateMemberInFirestore,
-  addSessionToFirestore,
+  createSessionInFirestore,
   updateSessionInFirestore,
   recordCheckInAtomic,
   adminDeleteMember,
   adminDeleteSession,
   adminDeleteCheckIn,
-  deleteCheckInFromFirestore,
   initializeFirestoreWithDefaults,
 } from './firebase/firestoreService';
 import { Navbar, NavigationTab } from './components/Navbar';
@@ -55,19 +54,8 @@ import { LoginView } from './components/LoginView';
 import { MemberHomeView } from './components/MemberHomeView';
 import { PublicLeaderboardView } from './components/PublicLeaderboardView';
 import { PendingRequests } from './components/PendingRequests';
-import { MemberPassModal } from './components/MemberPassModal';
-import { NewSessionModal } from './components/NewSessionModal';
-import { AddMemberModal } from './components/AddMemberModal';
-import { EditProfileModal } from './components/EditProfileModal';
-import { GuideModal } from './components/GuideModal';
-import { AdminLoginModal } from './components/AdminLoginModal';
-import { ConfirmModal } from './components/ConfirmModal';
-import { RecordDeleteModal, DeleteRecordTarget } from './components/RecordDeleteModal';
-import { NotificationsModal } from './components/NotificationsModal';
-import {
-  AttendanceConfirmationModal,
-  AttendanceConfirmationData,
-} from './components/AttendanceConfirmationModal';
+import type { DeleteRecordTarget } from './components/RecordDeleteModal';
+import type { AttendanceConfirmationData } from './components/AttendanceConfirmationModal';
 import { useAuth } from './firebase/AuthContext';
 import { todayInClubTz } from './utils/sessionWindow';
 import { DEFAULT_CLUB_TIMEZONE } from './config/constants';
@@ -90,6 +78,36 @@ const SessionsView = lazy(() =>
 );
 const AuditLogsModal = lazy(() =>
   import('./components/AuditLogsModal').then((m) => ({ default: m.AuditLogsModal }))
+);
+const MemberPassModal = lazy(() =>
+  import('./components/MemberPassModal').then((m) => ({ default: m.MemberPassModal }))
+);
+const NewSessionModal = lazy(() =>
+  import('./components/NewSessionModal').then((m) => ({ default: m.NewSessionModal }))
+);
+const AddMemberModal = lazy(() =>
+  import('./components/AddMemberModal').then((m) => ({ default: m.AddMemberModal }))
+);
+const EditProfileModal = lazy(() =>
+  import('./components/EditProfileModal').then((m) => ({ default: m.EditProfileModal }))
+);
+const GuideModal = lazy(() =>
+  import('./components/GuideModal').then((m) => ({ default: m.GuideModal }))
+);
+const AdminLoginModal = lazy(() =>
+  import('./components/AdminLoginModal').then((m) => ({ default: m.AdminLoginModal }))
+);
+const AdminBackupModal = lazy(() =>
+  import('./components/AdminBackupModal').then((m) => ({ default: m.AdminBackupModal }))
+);
+const RecordDeleteModal = lazy(() =>
+  import('./components/RecordDeleteModal').then((m) => ({ default: m.RecordDeleteModal }))
+);
+const NotificationsModal = lazy(() =>
+  import('./components/NotificationsModal').then((m) => ({ default: m.NotificationsModal }))
+);
+const AttendanceConfirmationModal = lazy(() =>
+  import('./components/AttendanceConfirmationModal').then((m) => ({ default: m.AttendanceConfirmationModal }))
 );
 import {
   RotateCcw,
@@ -133,6 +151,7 @@ export default function App() {
     membershipState,
     isAdmin,
     isApprovedMember,
+    signInWithGoogle,
     signOutUser,
   } = useAuth();
 
@@ -189,6 +208,7 @@ export default function App() {
   const [selectedPassMember, setSelectedPassMember] = useState<Member | null>(null);
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [attendanceConfirmation, setAttendanceConfirmation] = useState<AttendanceConfirmationData | null>(null);
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
 
   // Synchronize tab selection with History API (pushState) & LocalStorage
   const handleSelectTab = useCallback(
@@ -447,7 +467,7 @@ export default function App() {
         );
         await updateSessionInFirestore(sessionPayload, undefined, isRescheduled);
       } else {
-        await addSessionToFirestore(sessionPayload);
+        await createSessionInFirestore(sessionPayload);
       }
       setEditingSession(null);
     } catch (err: any) {
@@ -858,6 +878,7 @@ export default function App() {
     !!deleteTarget ||
     isNotificationsOpen ||
     isAuditLogsOpen ||
+    isBackupOpen ||
     !!selectedPassMember ||
     !!attendanceConfirmation ||
     isMoreOpen;
@@ -889,6 +910,7 @@ export default function App() {
         unreadNotificationsCount={unreadNotificationsCount}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
+        onOpenBackup={() => setIsBackupOpen(true)}
         onOpenMore={() => setIsMoreOpen(true)}
         onToggleSidebar={() => setIsMoreOpen((prev) => !prev)}
         onOpenEditProfile={() => setIsEditProfileOpen(true)}
@@ -934,6 +956,7 @@ export default function App() {
           pendingRequestsCount={pendingRequestsCount}
           onOpenGuide={() => setIsGuideOpen(true)}
           onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
+          onOpenBackup={() => setIsBackupOpen(true)}
           onViewPass={() => {
             if (linkedMember) setSelectedPassMember(linkedMember);
           }}
@@ -961,7 +984,7 @@ export default function App() {
         >
           <AnimatePresence mode="popLayout" initial={false}>
             {activeTab === 'home' && (
-              <m.div key="home" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="home" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <MemberHomeView
                   member={
                     linkedMember || {
@@ -992,16 +1015,16 @@ export default function App() {
             )}
 
             {activeTab === 'leaderboard' && (
-              <m.div key="leaderboard" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="leaderboard" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <PublicLeaderboardView
                   items={safePublicLeaderboardItems}
-                  onOpenLogin={() => {}}
+                  onOpenLogin={signInWithGoogle}
                 />
               </m.div>
             )}
 
             {activeTab === 'kiosk' && (
-              <m.div key="kiosk" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="kiosk" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <QRKioskView
                   sessions={sessions}
                   members={members}
@@ -1018,7 +1041,7 @@ export default function App() {
             )}
 
             {activeTab === 'sessions' && (
-              <m.div key="sessions" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="sessions" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <SessionsView
                   sessions={sessions}
                   members={members}
@@ -1060,7 +1083,7 @@ export default function App() {
             )}
 
             {activeTab === 'participation' && (
-              <m.div key="participation" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="participation" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <MonthlyParticipationView
                   members={members}
                   sessions={sessions}
@@ -1074,7 +1097,7 @@ export default function App() {
             )}
 
             {activeTab === 'members' && (
-              <m.div key="members" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+              <m.div key="members" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <MembersView
                   members={members}
                   checkIns={checkIns}
@@ -1360,6 +1383,12 @@ export default function App() {
       <AuditLogsModal
         isOpen={isAuditLogsOpen}
         onClose={() => setIsAuditLogsOpen(false)}
+      />
+
+      {/* Super-Admin Database Backup & Recovery Modal */}
+      <AdminBackupModal
+        isOpen={isBackupOpen}
+        onClose={() => setIsBackupOpen(false)}
       />
       </Suspense>
     </div>

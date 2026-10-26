@@ -157,7 +157,7 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 w-full min-w-0">
       {/* Header and Month Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
         <div>
