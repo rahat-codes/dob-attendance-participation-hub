@@ -13,6 +13,7 @@ import {
   Sparkles,
   RefreshCw,
   Database,
+  BookOpen,
 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
 import { Member } from '../types';
@@ -224,18 +225,20 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 flex-nowrap">
           {user ? (
             <>
-              {/* Primary Action: Scan QR (icon-only below 640px) */}
-              <m.button
-                type="button"
-                whileTap={{ scale: 0.96 }}
-                onClick={onOpenQuickScan}
-                aria-label="Scan QR Code"
-                className="flex items-center justify-center gap-1.5 p-2 sm:px-3.5 sm:py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl transition-colors whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.3)] cursor-pointer uppercase tracking-wider font-mono border border-white/20 min-h-[44px] min-w-[44px] sm:min-w-0 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
-                title="Scan Meeting QR Code"
-              >
-                <Scan className="h-4 w-4 stroke-[2.5] shrink-0" />
-                <span className="hidden sm:inline">SCAN QR</span>
-              </m.button>
+              {/* Primary Action: Scan QR (hidden on Home tab where Hero scan action is prominent) */}
+              {activeTab !== 'home' && (
+                <m.button
+                  type="button"
+                  whileTap={{ scale: 0.96 }}
+                  onClick={onOpenQuickScan}
+                  aria-label="Scan QR Code"
+                  className="flex items-center justify-center gap-1.5 p-2 sm:px-3.5 sm:py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl transition-colors whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.3)] cursor-pointer uppercase tracking-wider font-mono border border-white/20 min-h-[44px] min-w-[44px] sm:min-w-0 sm:min-h-11 focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none"
+                  title="Scan Meeting QR Code"
+                >
+                  <Scan className="h-4 w-4 stroke-[2.5] shrink-0" />
+                  <span className="hidden sm:inline">SCAN QR</span>
+                </m.button>
+              )}
 
               {/* Single Avatar/Menu Button */}
               <div className="relative" ref={avatarMenuRef}>
@@ -345,6 +348,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                           </button>
                         )}
 
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setIsAvatarMenuOpen(false);
+                            onOpenGuide();
+                          }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-zinc-300 hover:text-white hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+                        >
+                          <BookOpen className="h-4 w-4 text-zinc-400 shrink-0" />
+                          <span>Hub Guide &amp; Rules</span>
+                        </button>
+
                         <div className="pt-1 mt-1 border-t border-white/5">
                           <button
                             type="button"
@@ -366,24 +382,36 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={handleSignIn}
-              disabled={signingIn}
-              className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] disabled:opacity-50 rounded-xl cursor-pointer min-h-[44px] min-w-[44px] font-mono uppercase tracking-wider shadow-[0_0_12px_rgba(181,255,0,0.3)] focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none shrink-0"
-            >
-              {signingIn ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  <span className="hidden sm:inline">Signing In...</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="h-3.5 w-3.5" />
-                  <span>Sign In</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onOpenGuide}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-mono text-zinc-300 hover:text-white bg-[#141720] hover:bg-zinc-800 border border-white/10 rounded-xl transition-colors cursor-pointer min-h-[44px]"
+                title="Hub Guide &amp; Documentation"
+                aria-label="Attendance Guide"
+              >
+                <BookOpen className="h-4 w-4 text-[#b5ff00] shrink-0" />
+                <span className="hidden sm:inline">Guide</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSignIn}
+                disabled={signingIn}
+                className="flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] disabled:opacity-50 rounded-xl cursor-pointer min-h-[44px] min-w-[44px] font-mono uppercase tracking-wider shadow-[0_0_12px_rgba(181,255,0,0.3)] focus-visible:ring-2 focus-visible:ring-white focus-visible:outline-none shrink-0"
+              >
+                {signingIn ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span className="hidden sm:inline">Signing In...</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-3.5 w-3.5" />
+                    <span>Sign In</span>
+                  </>
+                )}
+              </button>
+            </div>
           )}
         </div>
       </div>

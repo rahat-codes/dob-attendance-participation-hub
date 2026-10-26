@@ -4,7 +4,6 @@ import {
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../firebase/AuthContext';
-import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { ModalSheet } from './ModalSheet';
 
 interface AdminLoginModalProps {
@@ -58,7 +57,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             <div className="p-3.5 rounded-2xl bg-zinc-950 border border-white/5 text-xs text-zinc-400 space-y-1">
               <p className="font-semibold text-zinc-200">Standard Member Permissions</p>
               <p className="text-xs leading-relaxed text-zinc-400">
-                You can scan kiosk QR codes to check in, view digital passes, and access personal statistics. Administrator privileges are strictly granted and managed by the Super Administrator (<span className="font-mono text-zinc-300">{SUPER_ADMIN_EMAIL}</span>).
+                You can scan kiosk QR codes to check in, view digital passes, and access personal statistics. Administrator privileges are granted and managed by the Super Administrator.
               </p>
             </div>
           )}

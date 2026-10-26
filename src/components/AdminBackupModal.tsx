@@ -76,16 +76,19 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
       }
     >
       <div className="space-y-5 py-1">
-        {/* Managed Backups Notice */}
+        {/* Managed Backups & Access Policy Notice */}
         <div className="p-4 rounded-xl bg-blue-950/30 border border-blue-500/30 text-xs text-blue-200 space-y-2">
           <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-blue-400 font-mono">
             <ExternalLink className="w-4 h-4" />
-            <span>Cloud Firestore Managed Backups</span>
+            <span>Cloud Firestore Managed Backups &amp; Enforcement</span>
           </div>
           <p className="leading-relaxed">
-            For automated daily/weekly disaster recovery and Point-in-Time Recovery (PITR), please check and configure your backup schedules directly in the{' '}
-            <strong className="text-white">Firebase Console</strong> or Google Cloud Console under{' '}
+            For automated daily/weekly disaster recovery and Point-in-Time Recovery (PITR), please check and configure backup schedules directly in the{' '}
+            <strong className="text-white">Firebase Console</strong> under{' '}
             <span className="font-mono text-zinc-300">Firestore &gt; Backups</span>.
+          </p>
+          <p className="text-[11px] text-blue-300/80 leading-relaxed border-t border-blue-500/20 pt-2 font-mono">
+            Notice: Super Administrator restriction for JSON backup export is enforced in application UI logic. In Firestore Security Rules, all administrators currently hold read permissions on these collections.
           </p>
         </div>
 

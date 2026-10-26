@@ -1184,14 +1184,6 @@ export default function App() {
               <Trophy className="h-3.5 w-3.5 text-[#b5ff00]" />
               <span>Public Leaderboard</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setIsGuideOpen(true)}
-              className="inline-flex items-center gap-1.5 text-zinc-400 hover:text-[#b5ff00] transition-colors cursor-pointer"
-            >
-              <Sparkles className="h-3.5 w-3.5 text-[#b5ff00]" />
-              <span>Guild Operational Guide</span>
-            </button>
           </div>
         </div>
       </footer>
@@ -1203,6 +1195,7 @@ export default function App() {
         onOpenQuickScan={() => setIsScannerOpen(true)}
         onOpenMore={() => setIsMoreOpen(true)}
         onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
+        onOpenGuide={() => setIsGuideOpen(true)}
         pendingRequestsCount={pendingRequestsCount}
         unreadNotificationsCount={unreadNotificationsCount}
         isModalOpen={isAnyModalOpen}

@@ -207,12 +207,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       })
       .catch((err: any) => {
-        console.error('Redirect sign-in error:', err);
+        console.error('Redirect sign-in error detail:', err);
         const code = err?.code || '';
-        if (code === 'auth/unauthorized-domain') {
-          setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
-        } else if (code !== 'auth/popup-closed-by-user') {
-          setAuthError(`Sign-in error (${code || 'auth/unknown'}): ${err?.message || 'Authentication failed'}`);
+        if (code === 'auth/popup-closed-by-user') {
+          return;
+        }
+        if (code === 'auth/network-request-failed') {
+          setAuthError('Network error connecting to sign-in service. Please check your connection.');
+        } else if (code === 'auth/unauthorized-domain') {
+          setAuthError('This domain is not authorized for authentication. Please contact an admin.');
+        } else {
+          setAuthError("Sign-in isn't available on this address; contact an admin");
         }
       });
 
@@ -256,38 +261,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return false;
     } catch (err: any) {
       const code = err?.code || '';
-      console.error('Sign-in error:', code, err);
+      console.error('Sign-in error detail:', code, err);
 
-      const isMobile =
-        typeof navigator !== 'undefined' &&
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (code === 'auth/popup-closed-by-user') {
+        // User closed the popup window; never trigger redirect
+        return false;
+      }
 
       if (
         code === 'auth/popup-blocked' ||
-        code === 'auth/operation-not-supported-in-this-environment' ||
-        code === 'auth/cancelled-popup-request' ||
-        isMobile
+        code === 'auth/operation-not-supported-in-this-environment'
       ) {
-        // Fall back to redirect on mobile or when popup is blocked
+        // Fall back to redirect ONLY when popup is blocked or unsupported
         try {
           await signInWithRedirect(auth, googleProvider);
           return true;
         } catch (redirectErr: any) {
-          console.error('Redirect sign-in error:', redirectErr);
+          console.error('Redirect sign-in error detail:', redirectErr);
           const redirectCode = redirectErr?.code || '';
-          if (redirectCode === 'auth/unauthorized-domain') {
-            setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
-          } else if (redirectCode !== 'auth/popup-closed-by-user') {
-            setAuthError(`Sign-in error (${redirectCode || 'failed'}): ${redirectErr?.message || 'Please retry.'}`);
+          if (redirectCode === 'auth/popup-closed-by-user') {
+            return false;
+          }
+          if (redirectCode === 'auth/network-request-failed') {
+            setAuthError('Network error connecting to sign-in service. Please check your connection.');
+          } else if (redirectCode === 'auth/unauthorized-domain') {
+            setAuthError('This domain is not authorized for authentication. Please contact an admin.');
+          } else {
+            setAuthError("Sign-in isn't available on this address; contact an admin");
           }
           return false;
         }
+      }
+
+      if (code === 'auth/network-request-failed') {
+        setAuthError('Network error connecting to sign-in service. Please check your connection.');
       } else if (code === 'auth/unauthorized-domain') {
-        setAuthError('This domain is not authorized in Firebase. Add it under Authentication > Settings > Authorized domains.');
-      } else if (code === 'auth/popup-closed-by-user') {
-        // Do nothing silently
+        setAuthError('This domain is not authorized for authentication. Please contact an admin.');
       } else {
-        setAuthError(`Sign-in error (${code || 'auth/unknown'}): ${err?.message || 'Authentication failed'}`);
+        setAuthError("Sign-in isn't available on this address; contact an admin");
       }
       return false;
     } finally {

@@ -5,6 +5,10 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    mode: 'production',
+    define: {
+      'process.env.NODE_ENV': JSON.stringify('production'),
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

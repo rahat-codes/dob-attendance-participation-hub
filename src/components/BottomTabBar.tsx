@@ -13,6 +13,7 @@ import {
   Trophy,
   LogIn,
   RefreshCw,
+  BookOpen,
 } from 'lucide-react';
 import { m } from 'motion/react';
 import { NavigationTab } from './Navbar';
@@ -24,6 +25,7 @@ interface BottomTabBarProps {
   onOpenQuickScan: () => void;
   onOpenMore?: () => void;
   onOpenAdminLogin?: () => void;
+  onOpenGuide?: () => void;
   pendingRequestsCount?: number;
   unreadNotificationsCount?: number;
   isModalOpen?: boolean;
@@ -35,6 +37,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   onOpenQuickScan,
   onOpenMore,
   onOpenAdminLogin,
+  onOpenGuide,
   pendingRequestsCount = 0,
   isModalOpen = false,
 }) => {
@@ -119,25 +122,10 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
       className="lg:hidden fixed bottom-0 inset-x-0 z-50 bg-[#0c0e14]/95 backdrop-blur-2xl border-t border-white/[0.12] pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_30px_rgba(0,0,0,0.8)] pointer-events-auto"
     >
       <div className="flex items-center justify-around h-14 landscape:h-12 sm:h-16 max-w-lg mx-auto px-2">
-        {/* For Unauthenticated Guests: Sessions, Leaderboard, Sign In */}
+        {/* For Unauthenticated Guests: Leaderboard, Sign In */}
         {!user ? (
           <>
-            {/* Guest Tab 1: Sessions */}
-            <m.button
-              type="button"
-              whileTap={{ scale: 0.94 }}
-              onClick={() => onSelectTab('sessions')}
-              aria-label="Sessions"
-              aria-current={isSessionsActive ? 'page' : undefined}
-              className={`flex flex-col items-center justify-center flex-1 h-full min-w-[44px] min-h-[44px] py-1 transition-colors cursor-pointer rounded-xl focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none ${
-                isSessionsActive ? 'text-[#b5ff00] font-bold' : 'text-zinc-400 hover:text-zinc-200'
-              }`}
-            >
-              <Calendar className={`w-5 h-5 shrink-0 ${isSessionsActive ? 'text-[#b5ff00]' : 'text-zinc-400'}`} />
-              <span className="text-[11px] font-medium tracking-tight mt-0.5 font-display">Sessions</span>
-            </m.button>
-
-            {/* Guest Tab 2: Leaderboard */}
+            {/* Guest Tab 1: Leaderboard */}
             <m.button
               type="button"
               whileTap={{ scale: 0.94 }}
@@ -150,6 +138,17 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
             >
               <Trophy className={`w-5 h-5 shrink-0 ${isLeaderboardActive ? 'text-[#b5ff00]' : 'text-zinc-400'}`} />
               <span className="text-[11px] font-medium tracking-tight mt-0.5 font-display">Leaderboard</span>
+            </m.button>
+            {/* Guest Tab 2: Guide */}
+            <m.button
+              type="button"
+              whileTap={{ scale: 0.94 }}
+              onClick={onOpenGuide}
+              aria-label="Attendance Guide"
+              className="flex flex-col items-center justify-center flex-1 h-full min-w-[44px] min-h-[44px] py-1 transition-colors cursor-pointer rounded-xl text-zinc-400 hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+            >
+              <BookOpen className="w-5 h-5 shrink-0 text-zinc-400" />
+              <span className="text-[11px] font-medium tracking-tight mt-0.5 font-display">Guide</span>
             </m.button>
 
             {/* Guest Tab 3: Sign In */}
