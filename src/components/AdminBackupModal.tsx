@@ -100,7 +100,7 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
               <span>Restricted Access</span>
             </div>
             <p>
-              Database backups are restricted to the Super Administrator (<span className="font-mono text-white">{SUPER_ADMIN_EMAIL}</span>).
+              Database backups are restricted to the Super Administrator.
               Your current logged-in account does not hold database export privileges.
             </p>
           </div>

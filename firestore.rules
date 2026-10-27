@@ -266,10 +266,18 @@ service cloud.firestore {
       );
     }
 
-    // Public Leaderboard: Public read
+    // Public Leaderboard: Public read, admin write & active member display-only self-sync
     match /publicLeaderboard/{memberId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidId(memberId);
+      allow create: if isAdmin() && isValidId(memberId);
+      allow delete: if isAdmin() || (isActiveMember() && memberId == myMemberId());
+      allow update: if (isAdmin() && isValidId(memberId)) || (
+        isActiveMember() &&
+        memberId == myMemberId() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'name', 'avatar', 'avatarUrl', 'handle', 'lastUpdated'
+        ])
+      );
     }
 
     // Club Settings

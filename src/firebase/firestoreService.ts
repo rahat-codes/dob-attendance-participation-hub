@@ -1036,6 +1036,7 @@ export async function recordSelfCheckIn(
 
   try {
     await setDoc(checkInRef, newRecord);
+    syncMemberCheckInToPublicLeaderboard(memberId, monthKey, session.points ?? 10).catch(() => {});
     return {
       success: true,
       message: status === 'late' ? 'Check-in recorded (marked late).' : 'Check-in verified successfully!',
@@ -1109,6 +1110,7 @@ export async function recordAdminManualCheckIn(
 
   try {
     await setDoc(checkInRef, removeUndefinedFields(newRecord));
+    syncMemberCheckInToPublicLeaderboard(memberId, monthKey, session?.points ?? 10).catch(() => {});
     await createAuditLog('check_in_manual', `Admin checked in member ${memberId} for session ${sessionId}`);
     return {
       success: true,
@@ -1179,6 +1181,124 @@ export function subscribeToPublicLeaderboard(
   );
 }
 
+export async function syncMemberCheckInToPublicLeaderboard(
+  memberId: string,
+  monthKey: string,
+  pointsAwarded: number = 10
+): Promise<void> {
+  try {
+    const memberDoc = await getDoc(doc(db, MEMBERS_COLLECTION, memberId));
+    if (!memberDoc.exists()) return;
+    const member = memberDoc.data() as Member;
+    if (member.status === 'Inactive' || member.leaderboardOptOut) {
+      // Opted out or inactive: ensure not in publicLeaderboard
+      await deleteDoc(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId));
+      return;
+    }
+
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
+    const pubSnap = await getDoc(pubRef);
+    if (pubSnap.exists()) {
+      const existing = pubSnap.data() as PublicLeaderboardItem;
+      const currentMonthly = existing.monthlyCheckIns || {};
+      const newMonthly = {
+        ...currentMonthly,
+        [monthKey]: (currentMonthly[monthKey] || 0) + 1,
+      };
+      const newTotalPts = (existing.totalPoints || existing.points || 0) + pointsAwarded;
+      const newTotalCheckIns = (existing.totalCheckIns || 0) + 1;
+      const newStreak = (existing.currentStreak || 0) + 1;
+      const newBestStreak = Math.max(existing.bestStreak || 0, newStreak);
+
+      await updateDoc(pubRef, {
+        totalCheckIns: newTotalCheckIns,
+        points: newTotalPts,
+        totalPoints: newTotalPts,
+        currentStreak: newStreak,
+        bestStreak: newBestStreak,
+        monthlyCheckIns: newMonthly,
+        displayName: member.name,
+        name: member.name,
+        handle: member.handle,
+        avatar: member.avatarUrl || '',
+        avatarUrl: member.avatarUrl || '',
+        lastUpdated: new Date().toISOString(),
+      });
+    } else {
+      const newEntry: PublicLeaderboardItem = {
+        id: memberId,
+        name: member.name,
+        displayName: member.name,
+        handle: member.handle,
+        role: member.role,
+        avatarUrl: member.avatarUrl || '',
+        avatar: member.avatarUrl || '',
+        tracks: member.tracks || [],
+        totalCheckIns: 1,
+        currentStreak: 1,
+        bestStreak: 1,
+        points: pointsAwarded,
+        totalPoints: pointsAwarded,
+        monthlyCheckIns: { [monthKey]: 1 },
+        lastUpdated: new Date().toISOString(),
+      };
+      await setDoc(pubRef, removeUndefinedFields(newEntry));
+    }
+  } catch (err) {
+    console.warn('Public leaderboard sync notice:', err);
+  }
+}
+
+export async function removeFromPublicLeaderboard(memberId: string): Promise<void> {
+  try {
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
+    await deleteDoc(pubRef);
+  } catch (err) {
+    console.warn('Remove from public leaderboard notice:', err);
+  }
+}
+
+export async function backfillPublicLeaderboard(): Promise<{ totalBackfilled: number; totalRemoved: number }> {
+  try {
+    const [membersSnap, sessionsSnap, checkInsSnap] = await Promise.all([
+      getDocs(collection(db, MEMBERS_COLLECTION)),
+      getDocs(collection(db, SESSIONS_COLLECTION)),
+      getDocs(collection(db, CHECKINS_COLLECTION)),
+    ]);
+
+    const members = membersSnap.docs.map((d) => d.data() as Member);
+    const sessions = sessionsSnap.docs.map((d) => d.data() as Session);
+    const checkIns = checkInsSnap.docs.map((d) => d.data() as CheckInRecord);
+
+    const items = buildPublicLeaderboardItems(members, sessions, checkIns);
+    const batch = writeBatch(db);
+
+    const activeOptedInIds = new Set<string>();
+    for (const item of items) {
+      activeOptedInIds.add(item.id);
+      const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, item.id);
+      batch.set(pubRef, removeUndefinedFields(item));
+    }
+
+    // Prune any member docs in publicLeaderboard who are inactive or opted out
+    const currentPubSnap = await getDocs(collection(db, PUBLIC_LEADERBOARD_COLLECTION));
+    let totalRemoved = 0;
+    currentPubSnap.docs.forEach((d) => {
+      if (!activeOptedInIds.has(d.id)) {
+        batch.delete(d.ref);
+        totalRemoved++;
+      }
+    });
+
+    await batch.commit();
+    await createAuditLog('recompute_leaderboard', `Backfilled ${items.length} builders and pruned ${totalRemoved} opted-out/inactive profiles`);
+    return { totalBackfilled: items.length, totalRemoved };
+  } catch (err) {
+    console.error('Failed to backfill public leaderboard:', err);
+    throw err;
+  }
+}
+
 export async function recomputeAndSaveLeaderboard(
   members: Member[],
   sessions: Session[],
@@ -1189,7 +1309,7 @@ export async function recomputeAndSaveLeaderboard(
 
   for (const item of items) {
     const itemRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, item.id);
-    batch.set(itemRef, item);
+    batch.set(itemRef, removeUndefinedFields(item));
   }
 
   try {
@@ -1553,11 +1673,13 @@ export async function updateMemberSelfProfile(
     avatarUrl?: string;
     bio?: string;
     tracks: BuilderTrack[];
+    leaderboardOptOut?: boolean;
   }
 ): Promise<{ success: boolean; message?: string }> {
   try {
     const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, memberId);
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
     const batch = writeBatch(db);
 
     const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
@@ -1567,6 +1689,7 @@ export async function updateMemberSelfProfile(
       avatarUrl: safeAvatar || '',
       bio: details.bio || '',
       tracks: details.tracks,
+      leaderboardOptOut: details.leaderboardOptOut ?? false,
       studentId: details.studentId?.trim() || undefined,
       university: details.university?.trim() || 'Tongmyong University',
     }));
@@ -1580,6 +1703,18 @@ export async function updateMemberSelfProfile(
       major: details.major,
       semester: details.semester,
     }), { merge: true });
+
+    if (details.leaderboardOptOut === true) {
+      batch.delete(pubRef);
+    } else {
+      batch.set(pubRef, removeUndefinedFields({
+        displayName: details.name,
+        name: details.name,
+        avatar: safeAvatar || '',
+        avatarUrl: safeAvatar || '',
+        lastUpdated: new Date().toISOString(),
+      }), { merge: true });
+    }
 
     await batch.commit();
     return { success: true };

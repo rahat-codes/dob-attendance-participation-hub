@@ -280,7 +280,7 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
 
           {!isSuperAdmin && (
             <p className="text-xs text-zinc-400 font-mono leading-normal">
-              Only the designated Super Administrator (<span className="text-zinc-300">{SUPER_ADMIN_EMAIL}</span>) can grant or revoke application admin permissions.
+              Only the designated Super Administrator can grant or revoke application admin permissions.
             </p>
           )}
         </div>

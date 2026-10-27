@@ -75,6 +75,37 @@ export function validateSessionData(session: Partial<Session>): Session {
     throw new Error('Session title cannot exceed 150 characters.');
   }
 
+  // startAt and endAt validation (Strictly required; no silent Date.now())
+  if (!session.startAt) {
+    throw new Error('Session startAt timestamp is required.');
+  }
+  if (!session.endAt) {
+    throw new Error('Session endAt timestamp is required.');
+  }
+
+  const startMs = (session.startAt as Timestamp).toMillis
+    ? (session.startAt as Timestamp).toMillis()
+    : (session.startAt as any)?.seconds
+    ? (session.startAt as any).seconds * 1000
+    : new Date(session.startAt as any).getTime();
+
+  const endMs = (session.endAt as Timestamp).toMillis
+    ? (session.endAt as Timestamp).toMillis()
+    : (session.endAt as any)?.seconds
+    ? (session.endAt as any).seconds * 1000
+    : new Date(session.endAt as any).getTime();
+
+  if (Number.isNaN(startMs)) {
+    throw new Error('Invalid startAt timestamp.');
+  }
+  if (Number.isNaN(endMs)) {
+    throw new Error('Invalid endAt timestamp.');
+  }
+
+  if (endMs <= startMs) {
+    throw new Error('Session endAt must be strictly after startAt.');
+  }
+
   // Location validation
   if (!session.location || typeof session.location !== 'string' || session.location.trim().length === 0) {
     throw new Error('Session location is required.');
@@ -107,37 +138,6 @@ export function validateSessionData(session: Partial<Session>): Session {
   // CheckInMode validation
   if (!session.checkInMode || !VALID_CHECK_IN_MODES.includes(session.checkInMode)) {
     throw new Error(`Session checkInMode must be one of: ${VALID_CHECK_IN_MODES.join(', ')}.`);
-  }
-
-  // startAt and endAt validation (Strictly required; no silent Date.now())
-  if (!session.startAt) {
-    throw new Error('Session startAt timestamp is required.');
-  }
-  if (!session.endAt) {
-    throw new Error('Session endAt timestamp is required.');
-  }
-
-  const startMs = (session.startAt as Timestamp).toMillis
-    ? (session.startAt as Timestamp).toMillis()
-    : (session.startAt as any)?.seconds
-    ? (session.startAt as any).seconds * 1000
-    : new Date(session.startAt as any).getTime();
-
-  const endMs = (session.endAt as Timestamp).toMillis
-    ? (session.endAt as Timestamp).toMillis()
-    : (session.endAt as any)?.seconds
-    ? (session.endAt as any).seconds * 1000
-    : new Date(session.endAt as any).getTime();
-
-  if (Number.isNaN(startMs)) {
-    throw new Error('Invalid startAt timestamp.');
-  }
-  if (Number.isNaN(endMs)) {
-    throw new Error('Invalid endAt timestamp.');
-  }
-
-  if (endMs <= startMs) {
-    throw new Error('Session endAt must be strictly after startAt.');
   }
 
   // openMinutesBefore validation

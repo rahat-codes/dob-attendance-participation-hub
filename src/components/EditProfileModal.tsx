@@ -8,6 +8,8 @@ import {
   AlertCircle,
   Save,
   RefreshCw,
+  Trophy,
+  Eye,
 } from 'lucide-react';
 import { Member, BuilderTrack } from '../types';
 import { updateMemberSelfProfile } from '../firebase/firestoreService';
@@ -45,6 +47,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [avatarUrl, setAvatarUrl] = useState(member.avatarUrl || member.photoURL || '');
   const [bio, setBio] = useState(member.bio || '');
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
+  const [showOnLeaderboard, setShowOnLeaderboard] = useState<boolean>(!member.leaderboardOptOut);
 
   const [saving, setSaving] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
@@ -58,7 +61,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     studentId !== (member.studentId || '') ||
     university !== (member.university || 'Tongmyong University') ||
     avatarUrl !== (member.avatarUrl || member.photoURL || '') ||
-    bio !== (member.bio || '')
+    bio !== (member.bio || '') ||
+    showOnLeaderboard !== !member.leaderboardOptOut
   );
 
   const handleTrackToggle = (track: BuilderTrack) => {
@@ -133,6 +137,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         avatarUrl: finalAvatarUrl,
         bio: bio.trim(),
         tracks: selectedTracks,
+        leaderboardOptOut: !showOnLeaderboard,
       });
 
       if (res.success) {
@@ -151,6 +156,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             avatarUrl: finalAvatarUrl,
             bio: bio.trim(),
             tracks: selectedTracks,
+            leaderboardOptOut: !showOnLeaderboard,
           });
         }
         setTimeout(() => {
@@ -415,6 +421,37 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               );
             })}
           </div>
+        </div>
+
+        {/* Public Leaderboard Privacy & Opt-Out Toggle */}
+        <div className="p-4 rounded-2xl bg-[#0d0f15] border border-white/10 neu-raised-sm flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Trophy className="h-4 w-4 text-[#FF6A00]" />
+              <label htmlFor="public-leaderboard-toggle" className="font-semibold text-zinc-200 text-xs cursor-pointer">
+                Show me on the public leaderboard
+              </label>
+            </div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              When enabled, your display name, builder rank, points, and tier appear on the public esports leaderboard. If turned off, you are completely omitted from the public collection.
+            </p>
+          </div>
+          <button
+            type="button"
+            id="public-leaderboard-toggle"
+            role="switch"
+            aria-checked={showOnLeaderboard}
+            onClick={() => setShowOnLeaderboard((prev) => !prev)}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#FF6A00] focus:ring-offset-2 focus:ring-offset-black ${
+              showOnLeaderboard ? 'bg-[#FF6A00]' : 'bg-zinc-800'
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                showOnLeaderboard ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
         </div>
 
         {/* Immutable Security Notice */}

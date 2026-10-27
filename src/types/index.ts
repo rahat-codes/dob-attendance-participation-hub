@@ -248,14 +248,20 @@ export interface Announcement {
 export interface PublicLeaderboardItem {
   id: string; // memberId
   name: string;
+  displayName?: string;
   handle: string;
   role: BuilderRole;
   avatarUrl?: string;
+  avatar?: string;
   tracks: BuilderTrack[];
   totalCheckIns: number;
   currentStreak: number;
   bestStreak: number;
   points: number;
+  totalPoints?: number;
+  monthlyCheckIns?: Record<string, number>;
+  recentSparkline?: number[];
+  lastUpdated?: string;
 }
 
 export type AuditAction =

@@ -43,6 +43,7 @@ import {
   adminDeleteSession,
   adminDeleteCheckIn,
   initializeFirestoreWithDefaults,
+  backfillPublicLeaderboard,
 } from './firebase/firestoreService';
 import { Navbar, NavigationTab } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -606,22 +607,19 @@ export default function App() {
     await initializeFirestoreWithDefaults(initialFounder, initialSession);
   };
 
-  // Compute fallback public items from members if publicLeaderboard collection is populating
-  const safePublicLeaderboardItems: PublicLeaderboardItem[] =
-    publicLeaderboard.length > 0
-      ? publicLeaderboard
-      : members.map((m) => ({
-          id: m.id,
-          name: m.name,
-          handle: m.handle,
-          role: m.role,
-          tracks: m.tracks,
-          avatarUrl: m.avatarUrl || m.photoURL || '',
-          totalCheckIns: m.totalCheckIns ?? 0,
-          currentStreak: m.currentStreak ?? 0,
-          bestStreak: m.bestStreak ?? 0,
-          points: (m.totalCheckIns ?? 0) * 10 + (m.currentStreak ?? 0) * 5,
-        }));
+  // Strict Privacy: Public leaderboard reads exclusively from publicLeaderboard collection
+  const safePublicLeaderboardItems: PublicLeaderboardItem[] = publicLeaderboard;
+
+  // Auto-backfill publicLeaderboard once when admin is logged in if collection is empty
+  const hasBackfilledRef = useRef(false);
+  useEffect(() => {
+    if (isAdmin && !hasBackfilledRef.current && publicLeaderboard.length === 0 && members.length > 0) {
+      hasBackfilledRef.current = true;
+      backfillPublicLeaderboard().catch((err) => {
+        console.warn('Auto backfill notice:', err);
+      });
+    }
+  }, [isAdmin, publicLeaderboard.length, members.length]);
 
   // 1. Unauthenticated or Unapproved View
   if (!user || (!isApprovedMember && !isAdmin)) {

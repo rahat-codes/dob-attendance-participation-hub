@@ -86,6 +86,7 @@ export function computeMemberStats(
 /**
  * Builds the public leaderboard projection from active members and live stats.
  * Excludes Inactive members and members with leaderboardOptOut === true.
+ * Holds only: displayName, handle (if not opted out), avatar, total points, and per-month check-in counts.
  */
 export function buildPublicLeaderboardItems(
   members: Member[],
@@ -93,21 +94,44 @@ export function buildPublicLeaderboardItems(
   checkIns: CheckInRecord[],
   now: Date = new Date()
 ): PublicLeaderboardItem[] {
+  const sessionDateMap = new Map<string, string>();
+  sessions.forEach((s) => {
+    if (s.date) {
+      sessionDateMap.set(s.id, s.date.substring(0, 7));
+    }
+  });
+
   return members
     .filter((m) => m.status !== 'Inactive' && !m.leaderboardOptOut)
     .map((member) => {
       const stats = computeMemberStats(member, sessions, checkIns, now);
+      const memberCheckIns = checkIns.filter((c) => c.memberId === member.id);
+
+      // Compute per-month check-in counts (e.g. { "2026-09": 3, "2026-10": 4 })
+      const monthlyCheckIns: Record<string, number> = {};
+      memberCheckIns.forEach((c) => {
+        const monthKey = c.monthKey || sessionDateMap.get(c.sessionId) || (c.date ? c.date.substring(0, 7) : undefined);
+        if (monthKey) {
+          monthlyCheckIns[monthKey] = (monthlyCheckIns[monthKey] || 0) + 1;
+        }
+      });
+
       return {
         id: member.id,
         name: member.name,
+        displayName: member.name,
         handle: member.handle,
         role: member.role,
-        avatarUrl: member.avatarUrl,
+        avatarUrl: member.avatarUrl || '',
+        avatar: member.avatarUrl || '',
         tracks: member.tracks || [],
         totalCheckIns: stats.total,
         currentStreak: stats.streak,
         bestStreak: stats.bestStreak,
         points: stats.points,
+        totalPoints: stats.points,
+        monthlyCheckIns,
+        lastUpdated: new Date().toISOString(),
       };
     })
     .sort((a, b) => {
