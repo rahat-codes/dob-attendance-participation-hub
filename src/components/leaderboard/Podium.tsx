@@ -3,6 +3,7 @@ import { PublicLeaderboardItem } from '../../types';
 import { TierBadge } from './TierBadge';
 import { Crown, Medal, Flame, Sparkles } from 'lucide-react';
 import { m } from 'motion/react';
+import { SecureAvatar } from '../common/SecureAvatar';
 
 interface PodiumProps {
   topItems: PublicLeaderboardItem[];
@@ -125,20 +126,13 @@ export const Podium: React.FC<PodiumProps> = ({
         {/* Builder Avatar */}
         <div className="mt-4 flex flex-col items-center">
           <div className="relative">
-            <div
-              className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden bg-black/40 flex items-center justify-center font-orbitron font-black text-2xl sm:text-3xl text-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] ${avatarRingStyle}`}
-            >
-              {item.avatarUrl || item.avatar ? (
-                <img
-                  src={item.avatarUrl || item.avatar}
-                  alt={displayName}
-                  className="w-full h-full object-cover"
-                  loading="lazy"
-                />
-              ) : (
-                <span>{initials}</span>
-              )}
-            </div>
+            <SecureAvatar
+              src={item.avatarUrl || item.avatar}
+              name={displayName}
+              alt={displayName}
+              className={`w-20 h-20 sm:w-24 sm:h-24 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] ${avatarRingStyle}`}
+              fallbackClassName="font-orbitron font-black text-2xl sm:text-3xl text-white/90"
+            />
 
             {/* Sparkle badge for #1 */}
             {isFirst && !disableAnimation && (

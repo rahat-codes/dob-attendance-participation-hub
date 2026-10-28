@@ -16,6 +16,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from './config';
+import { updateProfile } from 'firebase/auth';
 import {
   Member,
   MemberPrivate,
@@ -46,9 +47,26 @@ export { SUPER_ADMIN_EMAIL };
  * staying far below Firestore's 1,048,576 bytes limit (~25KB).
  */
 export async function ensureSafeAvatarUrl(url?: string): Promise<string | undefined> {
-  if (!url) return undefined;
+  if (!url || typeof url !== 'string') return undefined;
   const trimmed = url.trim();
   if (!trimmed) return '';
+
+  const lower = trimmed.toLowerCase();
+  // Strictly reject dangerous schemes
+  if (lower.startsWith('javascript:') || lower.startsWith('vbscript:') || lower.startsWith('data:text/html')) {
+    return '';
+  }
+
+  // Only allow valid web schemes or image data
+  if (
+    !lower.startsWith('https://') &&
+    !lower.startsWith('http://') &&
+    !lower.startsWith('data:image/') &&
+    !lower.startsWith('/')
+  ) {
+    return '';
+  }
+
   if (trimmed.startsWith('data:image/') && trimmed.length > 70000) {
     try {
       if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -229,15 +247,21 @@ export async function ensureUserProfile(uid: string, email: string, displayName:
   const userRef = doc(db, USERS_COLLECTION, uid);
   try {
     const snap = await getDoc(userRef);
+    const safePhoto = await ensureSafeAvatarUrl(photoURL);
     if (snap.exists()) {
-      return snap.data() as UserProfile;
+      const existing = snap.data() as UserProfile;
+      if (safePhoto && !existing.photoURL) {
+        updateDoc(userRef, { photoURL: safePhoto, updatedAt: new Date().toISOString() }).catch(() => {});
+        existing.photoURL = safePhoto;
+      }
+      return existing;
     }
 
     const newProfile: UserProfile = {
       id: uid,
       email: email.trim().toLowerCase(),
       displayName: displayName || 'Club Builder',
-      photoURL: photoURL || '',
+      photoURL: safePhoto || '',
       status: 'pending', // Initial state machine phase: always pending
       readAnnouncementIds: [],
       notificationPrefs: {
@@ -294,7 +318,11 @@ export function subscribeToPendingUsers(
       onUpdate(list);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+      try {
+        handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+      } catch {
+        // error already formatted and logged
+      }
       onError?.(err);
     }
   );
@@ -661,10 +689,28 @@ export async function updateMemberProfile(
 
   if (Object.keys(publicUpdates).length > 0) {
     const cleanPublicUpdates = { ...publicUpdates };
-    if (cleanPublicUpdates.avatarUrl) {
-      cleanPublicUpdates.avatarUrl = await ensureSafeAvatarUrl(cleanPublicUpdates.avatarUrl);
+    if (cleanPublicUpdates.avatarUrl !== undefined) {
+      cleanPublicUpdates.avatarUrl = (await ensureSafeAvatarUrl(cleanPublicUpdates.avatarUrl)) || '';
     }
     batch.update(memberRef, removeUndefinedFields(cleanPublicUpdates));
+
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
+    if (cleanPublicUpdates.leaderboardOptOut === true) {
+      batch.delete(pubRef);
+    } else if (cleanPublicUpdates.name || cleanPublicUpdates.avatarUrl !== undefined) {
+      const pubUpdates: Record<string, any> = {
+        lastUpdated: new Date().toISOString(),
+      };
+      if (cleanPublicUpdates.name) {
+        pubUpdates.displayName = cleanPublicUpdates.name;
+        pubUpdates.name = cleanPublicUpdates.name;
+      }
+      if (cleanPublicUpdates.avatarUrl !== undefined) {
+        pubUpdates.avatar = cleanPublicUpdates.avatarUrl || '';
+        pubUpdates.avatarUrl = cleanPublicUpdates.avatarUrl || '';
+      }
+      batch.set(pubRef, pubUpdates, { merge: true });
+    }
   }
 
   if (privateUpdates && Object.keys(privateUpdates).length > 0) {
@@ -1520,7 +1566,11 @@ export function subscribeToUsers(
       onData(users);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+      try {
+        handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+      } catch {
+        // error already formatted and logged
+      }
       onError?.(err);
     }
   );
@@ -1717,6 +1767,26 @@ export async function updateMemberSelfProfile(
     }
 
     await batch.commit();
+
+    if (auth.currentUser) {
+      try {
+        if (safeAvatar !== undefined) {
+          await updateProfile(auth.currentUser, {
+            displayName: details.name || auth.currentUser.displayName || undefined,
+            photoURL: safeAvatar || '',
+          }).catch(() => {});
+        }
+        const userRef = doc(db, USERS_COLLECTION, auth.currentUser.uid);
+        await updateDoc(userRef, {
+          photoURL: safeAvatar || '',
+          displayName: details.name,
+          updatedAt: new Date().toISOString(),
+        }).catch(() => {});
+      } catch (authErr) {
+        console.warn('Profile sync to auth/users completed with fallback:', authErr);
+      }
+    }
+
     return { success: true };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Failed to update profile' };

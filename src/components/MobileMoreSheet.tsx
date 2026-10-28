@@ -20,6 +20,8 @@ import {
 import { ModalSheet } from './ModalSheet';
 import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
+import { SUPER_ADMIN_EMAIL } from '../config/constants';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface MobileMoreSheetProps {
   isOpen: boolean;
@@ -60,25 +62,23 @@ export const MobileMoreSheet: React.FC<MobileMoreSheetProps> = ({
         {/* User Card / Access Level Summary */}
         <div className="p-3.5 rounded-2xl bg-zinc-900/80 border border-white/10 space-y-2">
           <div className="flex items-center gap-3">
-            {linkedMember?.avatarUrl || user?.photoURL ? (
-              <img
-                src={linkedMember?.avatarUrl || user?.photoURL || ''}
-                alt="avatar"
-                className="w-10 h-10 rounded-full object-cover border border-[#b5ff00]/40 shrink-0"
-                width={40}
-                height={40}
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[#b5ff00] shrink-0">
-                <User className="w-5 h-5" />
-              </div>
-            )}
+            <SecureAvatar
+              src={linkedMember?.avatarUrl || user?.photoURL}
+              name={linkedMember?.name || user?.displayName}
+              size={40}
+              className="border border-[#b5ff00]/40 shrink-0"
+              fallbackClassName="text-sm font-bold text-[#b5ff00]"
+            />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-white text-sm truncate font-display">
                   {linkedMember ? linkedMember.name : user?.displayName || 'Club Builder'}
                 </h3>
-                {isAdmin ? (
+                {user?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim() ? (
+                  <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-bold uppercase font-mono">
+                    Super Admin
+                  </span>
+                ) : isAdmin ? (
                   <span className="px-2 py-0.5 rounded-md bg-[#b5ff00]/15 text-[#b5ff00] border border-[#b5ff00]/30 text-[10px] font-bold uppercase font-mono">
                     Admin
                   </span>
@@ -90,6 +90,9 @@ export const MobileMoreSheet: React.FC<MobileMoreSheetProps> = ({
               </div>
               <p className="text-xs text-zinc-400 font-mono truncate">
                 {linkedMember ? linkedMember.handle : user?.email}
+              </p>
+              <p className="text-[10px] text-zinc-500 font-mono truncate select-all" title={user?.uid}>
+                UID: {user?.uid}
               </p>
             </div>
           </div>

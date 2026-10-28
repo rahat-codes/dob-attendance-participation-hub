@@ -15,6 +15,7 @@ import { Member, BuilderTrack } from '../types';
 import { updateMemberSelfProfile } from '../firebase/firestoreService';
 import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -233,13 +234,17 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         {/* Photo & Identity Banner */}
         <div className="flex items-center gap-3.5 p-3.5 rounded-2xl bg-[#0d0f15] border border-white/10 neu-inset">
           <div className="relative group shrink-0">
-            <div className="w-14 h-14 rounded-2xl bg-[#141720] border-2 border-[#b5ff00]/40 overflow-hidden flex items-center justify-center font-display font-black text-lg text-[#b5ff00] neu-raised-sm relative">
+            <div className="w-14 h-14 rounded-2xl border-2 border-[#b5ff00]/40 overflow-hidden flex items-center justify-center neu-raised-sm relative">
               {processingImage ? (
                 <RefreshCw className="h-6 w-6 text-[#b5ff00] animate-spin" />
-              ) : avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
               ) : (
-                name.substring(0, 2).toUpperCase() || 'DB'
+                <SecureAvatar
+                  src={avatarUrl}
+                  name={name}
+                  size={56}
+                  shape="rounded"
+                  fallbackClassName="font-display font-black text-lg text-[#b5ff00]"
+                />
               )}
             </div>
             <label className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">

@@ -20,6 +20,7 @@ import {
   approveUserMembershipLink,
   rejectUserMembershipLink,
 } from '../firebase/firestoreService';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface PendingRequestsProps {
   members: Member[];
@@ -67,9 +68,10 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
         setLoading(false);
         setError(null);
       },
-      (err) => {
+      (err: any) => {
         console.error('Failed to listen to pending users:', err);
-        setError('Could not sync pending requests: ' + err.message);
+        const code = err?.code ? `[${err.code}] ` : '';
+        setError(`Could not sync pending requests: ${code}${err?.message || 'Access denied or network error'}`);
         setLoading(false);
       }
     );
@@ -295,18 +297,15 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                   {/* Card Header: User Google Identity */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      {req.photoURL ? (
-                        <img
-                          src={req.photoURL}
-                          alt={req.displayName || 'Google User'}
-                          className="h-10 w-10 rounded-xl object-cover border border-white/10 shrink-0 neu-raised-sm"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="h-10 w-10 rounded-xl bg-[#141720] border border-white/10 flex items-center justify-center font-bold text-amber-400 text-sm shrink-0 neu-raised-sm">
-                          {req.displayName?.charAt(0) || 'U'}
-                        </div>
-                      )}
+                      <SecureAvatar
+                        src={req.photoURL}
+                        name={req.displayName}
+                        alt={req.displayName || 'Google User'}
+                        size={40}
+                        shape="rounded"
+                        className="border border-white/10 shrink-0 neu-raised-sm"
+                        fallbackClassName="font-bold text-amber-400 text-sm"
+                      />
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-bold text-white truncate">

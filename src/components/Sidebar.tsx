@@ -20,6 +20,7 @@ import {
 import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface SidebarProps {
   activeTab: NavigationTab;
@@ -340,19 +341,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {user && (
         <div className="p-3 border-t border-white/[0.08] bg-zinc-950/60">
           <div className="flex items-center gap-2.5 p-2 rounded-xl bg-zinc-900/60 border border-white/5 neu-inset">
-            {linkedMember?.avatarUrl || user.photoURL ? (
-              <img
-                src={linkedMember?.avatarUrl || user.photoURL || ''}
-                alt="avatar"
-                className="w-8 h-8 rounded-full object-cover border border-[#b5ff00]/40 shrink-0"
-                width={32}
-                height={32}
-              />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[#b5ff00] shrink-0">
-                <User className="w-4 h-4" />
-              </div>
-            )}
+            <SecureAvatar
+              src={linkedMember?.avatarUrl || user.photoURL}
+              name={linkedMember?.name || user.displayName}
+              size={32}
+              className="border border-[#b5ff00]/40 shrink-0"
+              fallbackClassName="text-xs font-bold text-[#b5ff00]"
+            />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-bold text-white truncate font-display">
                 {linkedMember ? linkedMember.name : user.displayName || 'Club Builder'}

@@ -11,6 +11,7 @@ import {
   Calendar,
 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
+import { SecureAvatar } from '../common/SecureAvatar';
 
 interface MemberProfileModalProps {
   item: PublicLeaderboardItem | null;
@@ -88,17 +89,14 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
             <div className="flex items-start gap-4">
               {/* Avatar */}
               <div className="relative shrink-0">
-                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/[0.04] border border-white/[0.12] overflow-hidden flex items-center justify-center font-orbitron font-black text-2xl text-white/92 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]">
-                  {item.avatarUrl || item.avatar ? (
-                    <img
-                      src={item.avatarUrl || item.avatar}
-                      alt={displayName}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span>{initials}</span>
-                  )}
-                </div>
+                <SecureAvatar
+                  src={item.avatarUrl || item.avatar}
+                  name={displayName}
+                  alt={displayName}
+                  shape="rounded"
+                  className="w-16 h-16 sm:w-20 sm:h-20 border border-white/[0.12] shadow-[inset_0_1px_0_rgba(255,255,255,0.15)]"
+                  fallbackClassName="font-orbitron font-black text-2xl text-white/92"
+                />
                 {rank && (
                   <span className="absolute -bottom-2 -right-2 px-2 py-0.5 rounded-lg bg-gradient-to-r from-[#FFB36B] to-[#FF4D2E] text-black font-orbitron font-black text-[10px] shadow-[0_0_12px_rgba(255,122,26,0.4)]">
                     #{rank}

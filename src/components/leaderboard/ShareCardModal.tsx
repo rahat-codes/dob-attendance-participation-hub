@@ -3,6 +3,7 @@ import { PublicLeaderboardItem } from '../../types';
 import { getTier } from '../../config/tierConfig';
 import { X, Download, Share2, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
+import { sanitizeAvatarUrl } from '../common/SecureAvatar';
 
 interface ShareCardModalProps {
   item: PublicLeaderboardItem | null;
@@ -138,7 +139,7 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({
     const avatarRadius = 110;
 
     let imageDrawn = false;
-    const avatarSrc = item.avatarUrl || item.avatar;
+    const avatarSrc = sanitizeAvatarUrl(item.avatarUrl || item.avatar);
     if (avatarSrc) {
       try {
         const img = new Image();

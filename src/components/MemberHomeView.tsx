@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { getSessionTemporalInfo, getTargetSession, formatTimeInClubTz, formatInClubTz } from '../utils/sessionWindow';
 import { computeMemberStats } from '../utils/stats';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface MemberHomeViewProps {
   member: Member;
@@ -91,17 +92,14 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
               aria-label="Edit profile & avatar photo"
               className="relative group cursor-pointer rounded-2xl focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none transition-transform active:scale-95 text-left"
             >
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-[#141720] border-2 border-[#b5ff00]/40 group-hover:border-[#b5ff00] flex items-center justify-center font-display font-black text-2xl text-[#b5ff00] neu-raised shadow-lg shadow-[#b5ff00]/10 overflow-hidden transition-colors">
-                {member.avatarUrl ? (
-                  <img
-                    src={member.avatarUrl}
-                    alt={member.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                  />
-                ) : (
-                  member.name.substring(0, 2).toUpperCase()
-                )}
-              </div>
+              <SecureAvatar
+                src={member.avatarUrl}
+                name={member.name}
+                alt={member.name}
+                shape="rounded"
+                className="w-16 h-16 sm:w-20 sm:h-20 border-2 border-[#b5ff00]/40 group-hover:border-[#b5ff00] neu-raised shadow-lg shadow-[#b5ff00]/10 transition-colors"
+                fallbackClassName="font-display font-black text-2xl text-[#b5ff00]"
+              />
               <span className="absolute -bottom-1 -right-1 flex h-4 w-4 rounded-full bg-[#b5ff00] border-2 border-[#141720] items-center justify-center shadow-[0_0_8px_rgba(181,255,0,0.8)]">
                 <span className="h-1.5 w-1.5 rounded-full bg-black" />
               </span>

@@ -20,6 +20,7 @@ import { Member } from '../types';
 import { useAuth } from '../firebase/AuthContext';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { scaleIn, spring } from '../motion/presets';
+import { SecureAvatar } from './common/SecureAvatar';
 
 export type NavigationTab =
   | 'home'
@@ -251,19 +252,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                   aria-label="Open user account menu"
                 >
                   <div className="relative">
-                    {linkedMember?.avatarUrl || user.photoURL ? (
-                      <img
-                        src={linkedMember?.avatarUrl || user.photoURL || ''}
-                        alt="avatar"
-                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-[#b5ff00]/40 shrink-0"
-                        width={32}
-                        height={32}
-                      />
-                    ) : (
-                      <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[#b5ff00] shrink-0">
-                        <User className="h-4 w-4" />
-                      </div>
-                    )}
+                    <SecureAvatar
+                      src={linkedMember?.avatarUrl || user.photoURL}
+                      name={linkedMember?.name || user.displayName}
+                      size={32}
+                      className="border border-[#b5ff00]/40 shrink-0"
+                      fallbackClassName="text-xs font-bold text-[#b5ff00]"
+                    />
                     <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#b5ff00] ring-2 ring-[#0c0e14]" />
                   </div>
                   <ChevronDown
@@ -290,7 +285,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                           <span className="font-bold text-xs text-white truncate font-display">
                             {linkedMember ? linkedMember.name : user.displayName || 'Club Builder'}
                           </span>
-                          {isAdmin ? (
+                          {user.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim() ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 uppercase shrink-0">
+                              Super Admin
+                            </span>
+                          ) : isAdmin ? (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#b5ff00]/15 text-[#b5ff00] border border-[#b5ff00]/30 uppercase shrink-0">
                               Admin
                             </span>
@@ -299,6 +298,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                               Member
                             </span>
                           )}
+                        </div>
+                        <div className="text-[10px] font-mono text-zinc-500 truncate mt-1 select-all" title={user.uid}>
+                          UID: {user.uid}
                         </div>
                       </div>
 

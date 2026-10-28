@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PublicLeaderboardItem } from '../../types';
 import { getSeoulMonthKey } from '../../config/tierConfig';
 import { Crown } from 'lucide-react';
+import { SecureAvatar } from '../common/SecureAvatar';
 
 interface HallOfFameProps {
   items: PublicLeaderboardItem[];
@@ -99,18 +100,15 @@ export const HallOfFame: React.FC<HallOfFameProps> = ({ items, onSelectMember })
               className="p-4 rounded-2xl bg-white/[0.025] hover:bg-white/[0.05] border border-white/[0.06] hover:border-[#F5C56B]/30 hover:shadow-[0_0_20px_rgba(245,197,107,0.12)] transition-all cursor-pointer flex items-center gap-3.5 group hover:-translate-y-0.5"
             >
               <div className="relative shrink-0">
-                <div className="w-12 h-12 rounded-xl bg-white/[0.04] border border-[#F5C56B]/40 overflow-hidden flex items-center justify-center font-orbitron font-black text-sm text-[#F5C56B] shadow-[0_0_12px_rgba(245,197,107,0.2)] group-hover:scale-105 transition-transform">
-                  {champ.avatarUrl || champ.avatar ? (
-                    <img
-                      src={champ.avatarUrl || champ.avatar}
-                      alt={displayName}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <span>{initials}</span>
-                  )}
-                </div>
+                <SecureAvatar
+                  src={champ.avatarUrl || champ.avatar}
+                  name={displayName}
+                  alt={displayName}
+                  size={48}
+                  shape="rounded"
+                  className="border border-[#F5C56B]/40 shadow-[0_0_12px_rgba(245,197,107,0.2)] group-hover:scale-105 transition-transform"
+                  fallbackClassName="font-orbitron font-black text-sm text-[#F5C56B]"
+                />
                 <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gradient-to-r from-[#F5C56B] to-[#FF9F1C] flex items-center justify-center text-black shadow-[0_0_6px_rgba(245,197,107,0.6)]">
                   <Crown className="w-3 h-3 fill-black text-black" />
                 </div>

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { m } from 'motion/react';
 import { fadeUp } from '../../motion/presets';
+import { SecureAvatar } from '../common/SecureAvatar';
 
 export type LeaderboardPeriod = 'this_month' | 'all_time' | 'semester';
 
@@ -301,18 +302,15 @@ export const RankingList: React.FC<RankingListProps> = ({
 
                 {/* Builder Info: Avatar, Name, Handle */}
                 <div className="flex items-center gap-3 w-full sm:col-span-5">
-                  <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/10 overflow-hidden flex items-center justify-center font-orbitron font-black text-xs text-[#2DE2E6] shrink-0">
-                    {item.avatarUrl || item.avatar ? (
-                      <img
-                        src={item.avatarUrl || item.avatar}
-                        alt={displayName}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span>{initials}</span>
-                    )}
-                  </div>
+                  <SecureAvatar
+                    src={item.avatarUrl || item.avatar}
+                    name={displayName}
+                    alt={displayName}
+                    size={40}
+                    shape="rounded"
+                    className="shrink-0 border border-white/10"
+                    fallbackClassName="font-orbitron font-black text-xs text-[#2DE2E6]"
+                  />
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">

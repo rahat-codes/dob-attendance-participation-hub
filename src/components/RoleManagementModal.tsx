@@ -244,6 +244,29 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
             <span className="text-xs font-mono text-amber-400">Super-Admin Protected</span>
           </div>
 
+          {!linkedUser ? (
+            <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-600/40 text-xs text-amber-200 flex items-start gap-2.5 neu-inset">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold text-amber-300 block">No Active Google Auth Account Linked</span>
+                <span className="text-amber-200/80 leading-normal block">
+                  This member roster entry is not linked to an active user ID. Admin permissions require an authoritative Firebase Auth UID in <code className="px-1 py-0.5 bg-black/60 rounded font-mono text-[10px]">admins/{'{uid}'}</code>. The builder must first sign in with Google and have their account linked before portal admin privileges can be granted.
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="px-3 py-2 rounded-xl bg-black/40 border border-white/5 text-[11px] font-mono text-zinc-400 space-y-1">
+              <div className="flex items-center justify-between">
+                <span>Target Auth UID:</span>
+                <span className="text-white font-bold select-all">{linkedUser.id}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Target Email:</span>
+                <span className="text-zinc-200 select-all">{linkedUser.email}</span>
+              </div>
+            </div>
+          )}
+
           <div className="p-3.5 rounded-2xl bg-[#0d0f15] border border-white/10 neu-inset flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <p className="font-bold text-white text-xs">
@@ -266,7 +289,7 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
                   isAdminPermission
                     ? 'bg-red-950/80 hover:bg-red-900 border border-red-700 text-red-300'
                     : 'bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold'
-                }`}
+                } ${!linkedUser ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {togglingAdmin ? 'Updating...' : isAdminPermission ? 'Revoke Admin' : 'Grant Admin'}
               </button>

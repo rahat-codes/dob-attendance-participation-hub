@@ -60,6 +60,11 @@ import type { AttendanceConfirmationData } from './components/AttendanceConfirma
 import { useAuth } from './firebase/AuthContext';
 import { todayInClubTz } from './utils/sessionWindow';
 import { DEFAULT_CLUB_TIMEZONE } from './config/constants';
+import {
+  PendingRequestDetector,
+  triggerBrowserNotification,
+  requestNotificationPermission,
+} from './utils/pendingAlerts';
 
 // Code-split heavy views and modals for sub-500KB bundle
 const MonthlyParticipationView = lazy(() =>
@@ -124,6 +129,8 @@ import {
   Trophy,
   ArrowLeft,
   Calendar,
+  UserCheck,
+  ArrowRight,
 } from 'lucide-react';
 
 function getTabFromHash(): NavigationTab | null {
@@ -170,6 +177,8 @@ export default function App() {
   const [publicLeaderboard, setPublicLeaderboard] = useState<PublicLeaderboardItem[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [newRequestToast, setNewRequestToast] = useState<UserProfile | null>(null);
+  const pendingDetectorRef = useRef<PendingRequestDetector>(new PendingRequestDetector());
 
   // Guest view toggle & active guest navigation tab
   const [showGuestLeaderboard, setShowGuestLeaderboard] = useState(false);
@@ -338,11 +347,23 @@ export default function App() {
       unsubUsers = subscribeToUsers(
         (remoteUsers) => {
           setAllUsers(remoteUsers);
+          const newAlerts = pendingDetectorRef.current.processUsers(remoteUsers);
+          if (newAlerts.length > 0) {
+            const latest = newAlerts[newAlerts.length - 1];
+            setNewRequestToast(latest);
+            newAlerts.forEach((u) => {
+              triggerBrowserNotification(u);
+            });
+          }
         },
-        () => {
-          // Non-blocking if admin permissions are resolving
+        (err: any) => {
+          const code = err?.code ? `[${err.code}] ` : '';
+          console.error('Failed to sync users directory:', err);
+          setFirestoreError(`User directory sync failed: ${code}${err?.message || 'Access denied'}`);
         }
       );
+    } else {
+      pendingDetectorRef.current.reset();
     }
 
     return () => {
@@ -352,6 +373,22 @@ export default function App() {
       if (unsubUsers) unsubUsers();
     };
   }, [user, isAdmin]);
+
+  // Request browser notification permission when an admin logs in
+  useEffect(() => {
+    if (isAdmin && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      requestNotificationPermission().catch(() => {});
+    }
+  }, [isAdmin]);
+
+  // Auto-dismiss new request in-app toast after 8 seconds
+  useEffect(() => {
+    if (!newRequestToast) return;
+    const t = setTimeout(() => {
+      setNewRequestToast(null);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [newRequestToast]);
 
   // Real-time Club Notifications subscription for logged in user
   useEffect(() => {
@@ -941,6 +978,57 @@ export default function App() {
             >
               ✕
             </button>
+          </m.div>
+        )}
+      </AnimatePresence>
+
+      {/* Real-time Admin Alert Toast for Incoming Pending Requests */}
+      <AnimatePresence>
+        {newRequestToast && (
+          <m.div
+            key={`toast-${newRequestToast.id}`}
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-50 max-w-sm w-[calc(100vw-2rem)] p-4 rounded-2xl bg-[#0c0e14]/95 border-2 border-[#b5ff00]/60 shadow-[0_0_30px_rgba(181,255,0,0.25)] backdrop-blur-xl flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/40 flex items-center justify-center text-[#b5ff00] shrink-0">
+              <UserCheck className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-[#b5ff00] font-bold">
+                  New Builder Request
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setNewRequestToast(null)}
+                  className="text-white/40 hover:text-white text-xs p-1 cursor-pointer"
+                  aria-label="Dismiss toast"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-sm font-bold text-white font-display truncate mt-0.5">
+                {newRequestToast.displayName || 'New Builder'}
+              </p>
+              <p className="text-xs text-zinc-400 font-mono truncate">
+                {newRequestToast.email}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewRequestToast(null);
+                  handleSelectTab('requests');
+                }}
+                className="mt-2.5 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Review Request</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </m.div>
         )}
       </AnimatePresence>

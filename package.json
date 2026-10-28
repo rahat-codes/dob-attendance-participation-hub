@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/attendance-hub.test.ts",
+    "test": "tsx tests/attendance-hub.test.ts && tsx tests/pending-alert.test.ts",
+    "test:alerts": "tsx tests/pending-alert.test.ts",
     "test:motion": "tsx tests/motion.test.ts",
     "test:rules": "tsx tests/firestore-rules.test.ts"
   },

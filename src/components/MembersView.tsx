@@ -37,6 +37,7 @@ import { computeMemberStats } from '../utils/stats';
 import { toJsDate } from '../utils/sessionWindow';
 import { m } from 'motion/react';
 import { fadeUp, stagger } from '../motion/presets';
+import { SecureAvatar } from './common/SecureAvatar';
 
 interface MembersViewProps {
   members: Member[];
@@ -416,9 +417,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
               {mostFrequentAttendee ? (
                 <div className="space-y-3">
                   <div className="flex items-start gap-3 pt-1">
-                    <div className="h-12 w-12 rounded-xl bg-zinc-900 border-2 border-[#b5ff00] flex items-center justify-center font-bold font-display text-lg text-[#b5ff00] shrink-0 shadow-[0_0_15px_rgba(181,255,0,0.25)]">
-                      {mostFrequentAttendee.name.charAt(0)}
-                    </div>
+                    <SecureAvatar
+                      src={mostFrequentAttendee.avatarUrl}
+                      name={mostFrequentAttendee.name}
+                      size={48}
+                      shape="rounded"
+                      className="border-2 border-[#b5ff00] shadow-[0_0_15px_rgba(181,255,0,0.25)] shrink-0"
+                      fallbackClassName="font-bold font-display text-lg text-[#b5ff00]"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="text-base font-bold font-display text-white truncate">
@@ -533,9 +539,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     className="p-2.5 rounded-lg bg-zinc-950/90 border border-zinc-800/80 flex items-center justify-between gap-3 hover:border-zinc-700 transition-all text-xs"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="h-8 w-8 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xs font-bold font-display text-zinc-300 shrink-0">
-                        {m.name.charAt(0)}
-                      </div>
+                      <SecureAvatar
+                        src={m.avatarUrl}
+                        name={m.name}
+                        size={32}
+                        shape="rounded"
+                        className="border border-zinc-800 shrink-0"
+                        fallbackClassName="text-xs font-bold font-display text-zinc-300"
+                      />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 truncate">
                           <span className="font-bold text-zinc-200 truncate">{m.name}</span>
@@ -767,9 +778,14 @@ export const MembersView: React.FC<MembersViewProps> = ({
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-zinc-900 border border-zinc-800 group-hover:border-[#b5ff00]/40 flex items-center justify-center font-bold font-display text-sm text-[#b5ff00] shrink-0 transition-colors">
-                      {member.name.charAt(0)}
-                    </div>
+                    <SecureAvatar
+                      src={member.avatarUrl}
+                      name={member.name}
+                      size={40}
+                      shape="rounded"
+                      className="border border-zinc-800 group-hover:border-[#b5ff00]/40 shrink-0 transition-colors"
+                      fallbackClassName="font-bold font-display text-sm text-[#b5ff00]"
+                    />
                     <div className="truncate">
                       <h3 className="text-sm font-bold font-display text-white group-hover:text-[#b5ff00] transition-colors truncate">{member.name}</h3>
                       <div className="text-xs text-zinc-400 font-mono truncate">{member.handle}</div>
