@@ -178,6 +178,8 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
   const [newRequestToast, setNewRequestToast] = useState<UserProfile | null>(null);
+  const [initialPendingToastCount, setInitialPendingToastCount] = useState<number | null>(null);
+  const hasCheckedInitialPendingRef = useRef(false);
   const pendingDetectorRef = useRef<PendingRequestDetector>(new PendingRequestDetector());
 
   // Guest view toggle & active guest navigation tab
@@ -224,8 +226,8 @@ export default function App() {
   const handleSelectTab = useCallback(
     (tab: NavigationTab, pushHistory = true) => {
       let targetTab = tab;
-      // If not admin and selecting an admin-only tab, default to home
-      if (!isAdmin && (tab === 'kiosk' || tab === 'requests')) {
+      // If not admin and selecting kiosk, default to home
+      if (!isAdmin && tab === 'kiosk') {
         targetTab = 'home';
       }
 
@@ -274,7 +276,7 @@ export default function App() {
 
   // Enforce role-based access for tabs if role changes or tab loaded from storage
   useEffect(() => {
-    if (!isAdmin && (activeTab === 'requests' || activeTab === 'kiosk')) {
+    if (!isAdmin && activeTab === 'kiosk') {
       handleSelectTab('home');
     }
   }, [isAdmin, activeTab, handleSelectTab]);
@@ -347,6 +349,13 @@ export default function App() {
       unsubUsers = subscribeToUsers(
         (remoteUsers) => {
           setAllUsers(remoteUsers);
+          if (!hasCheckedInitialPendingRef.current) {
+            hasCheckedInitialPendingRef.current = true;
+            const initialCount = remoteUsers.filter((u) => u.status === 'pending').length;
+            if (initialCount > 0) {
+              setInitialPendingToastCount(initialCount);
+            }
+          }
           const newAlerts = pendingDetectorRef.current.processUsers(remoteUsers);
           if (newAlerts.length > 0) {
             const latest = newAlerts[newAlerts.length - 1];
@@ -364,6 +373,7 @@ export default function App() {
       );
     } else {
       pendingDetectorRef.current.reset();
+      hasCheckedInitialPendingRef.current = false;
     }
 
     return () => {
@@ -380,6 +390,15 @@ export default function App() {
       requestNotificationPermission().catch(() => {});
     }
   }, [isAdmin]);
+
+  // Auto-dismiss initial pending toast after 8 seconds
+  useEffect(() => {
+    if (!initialPendingToastCount) return;
+    const t = setTimeout(() => {
+      setInitialPendingToastCount(null);
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [initialPendingToastCount]);
 
   // Auto-dismiss new request in-app toast after 8 seconds
   useEffect(() => {
@@ -1033,6 +1052,54 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Real-time Admin Alert Toast for Initial Pending Requests on First Load */}
+      <AnimatePresence>
+        {initialPendingToastCount !== null && (
+          <m.div
+            key="initial-pending-toast"
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="fixed bottom-20 sm:bottom-6 right-4 sm:right-6 z-50 max-w-sm w-[calc(100vw-2rem)] p-4 rounded-2xl bg-[#0c0e14]/95 border-2 border-[#b5ff00]/60 shadow-[0_0_30px_rgba(181,255,0,0.25)] backdrop-blur-xl flex items-start gap-3"
+            role="status"
+            aria-live="polite"
+          >
+            <div className="w-10 h-10 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/40 flex items-center justify-center text-[#b5ff00] shrink-0">
+              <UserCheck className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-[#b5ff00] font-bold">
+                  Pending Review
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInitialPendingToastCount(null)}
+                  className="text-white/40 hover:text-white text-xs p-1 cursor-pointer"
+                  aria-label="Dismiss toast"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-sm font-bold text-white font-display mt-0.5">
+                {initialPendingToastCount} {initialPendingToastCount === 1 ? 'request' : 'requests'} waiting for review
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setInitialPendingToastCount(null);
+                  handleSelectTab('requests');
+                }}
+                className="mt-2.5 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>View Requests</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </m.div>
+        )}
+      </AnimatePresence>
+
       {/* Workspace Content Shell: Desktop Persistent Sidebar for Primary Sections + Main Views */}
       <div className="flex-1 flex w-full max-w-7xl mx-auto items-stretch">
         {/* Desktop Sidebar for Primary Sections (>= lg) */}
@@ -1219,16 +1286,51 @@ export default function App() {
               </m.div>
             )}
 
-            {activeTab === 'requests' && isAdmin && (
-              <m.div key="requests" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
-                <PendingRequests
-                  members={members}
-                  onOpenAddMemberWithPrefill={(prefill) => {
-                    setEditingMember(null);
-                    setPrefillMember(prefill);
-                    setIsAddMemberOpen(true);
-                  }}
-                />
+            {activeTab === 'requests' && (
+              <m.div key="requests" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
+                {isAdmin ? (
+                  <PendingRequests
+                    members={members}
+                    onOpenAddMemberWithPrefill={(prefill) => {
+                      setEditingMember(null);
+                      setPrefillMember(prefill);
+                      setIsAddMemberOpen(true);
+                    }}
+                  />
+                ) : (
+                  <div className="max-w-2xl mx-auto py-12 px-4 text-center">
+                    <div className="glass-panel p-8 rounded-3xl border border-amber-500/30 space-y-5 spatial-card">
+                      <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+                        <ShieldAlert className="w-7 h-7" />
+                      </div>
+                      <div className="space-y-2">
+                        <h2 className="text-xl font-bold font-display uppercase tracking-tight text-white">
+                          Administrator Access Required
+                        </h2>
+                        <p className="text-sm text-zinc-300 leading-relaxed">
+                          You are signed in as <span className="text-[#b5ff00] font-mono font-semibold">{user?.email || 'unknown'}</span>. This account is not an administrator. Ask the Super Administrator to make this account an admin, or sign in with the admin account.
+                        </p>
+                      </div>
+                      <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => signOutUser()}
+                          className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-mono text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          <LogOut className="w-4 h-4 text-red-400" />
+                          <span>Sign In with Admin Account</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectTab('home')}
+                          className="px-4 py-2.5 rounded-xl bg-[#b5ff00] hover:bg-[#c4ff26] text-black font-mono text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          <span>Back to Home</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </m.div>
             )}
           </AnimatePresence>

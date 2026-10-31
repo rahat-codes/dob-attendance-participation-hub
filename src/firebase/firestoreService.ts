@@ -113,6 +113,25 @@ export function removeUndefinedFields<T extends Record<string, any>>(obj: T): T 
   return clean as T;
 }
 
+/**
+ * Ensures onSnapshot error callbacks always receive the error with its code,
+ * while safely invoking handleFirestoreError for auth logging without letting its throw abort the callback.
+ */
+export function notifyListenerError(
+  err: unknown,
+  op: OperationType,
+  path: string,
+  onError?: (err: Error) => void
+): void {
+  try {
+    handleFirestoreError(err, op, path);
+  } catch {
+    // Expected: handleFirestoreError logs auth context and throws
+  }
+  const errorObj = err instanceof Error ? err : new Error(String(err));
+  onError?.(errorObj);
+}
+
 // ==========================================
 // Audit Trail
 // ==========================================
@@ -160,8 +179,7 @@ export function subscribeToAuditLogs(
       onUpdate(logs);
     },
     (error) => {
-      console.warn('Audit logs subscription error:', error);
-      onError?.(error);
+      notifyListenerError(error, OperationType.LIST, AUDIT_LOGS_COLLECTION, onError);
     }
   );
 }
@@ -183,6 +201,112 @@ export async function checkIsAdmin(uid: string, email?: string | null): Promise<
   }
 }
 
+export interface RequestPipelineCheckResult {
+  canReadUsers: { pass: boolean; error?: string; errorCode?: string };
+  userCounts: {
+    pending: number;
+    approved_waiting_response: number;
+    active: number;
+    declined: number;
+    suspended: number;
+  };
+  adminDocExists: { pass: boolean; exists: boolean; error?: string; errorCode?: string };
+  canReadMembersAndSessions: {
+    pass: boolean;
+    membersPass: boolean;
+    sessionsPass: boolean;
+    membersError?: string;
+    membersErrorCode?: string;
+    sessionsError?: string;
+    sessionsErrorCode?: string;
+  };
+}
+
+/**
+ * Purely read-only diagnostic verifying the admin request pipeline connectivity and permissions.
+ */
+export async function checkRequestPipeline(currentUid: string): Promise<RequestPipelineCheckResult> {
+  const result: RequestPipelineCheckResult = {
+    canReadUsers: { pass: false },
+    userCounts: {
+      pending: 0,
+      approved_waiting_response: 0,
+      active: 0,
+      declined: 0,
+      suspended: 0,
+    },
+    adminDocExists: { pass: false, exists: false },
+    canReadMembersAndSessions: {
+      pass: false,
+      membersPass: false,
+      sessionsPass: false,
+    },
+  };
+
+  // a & b: Can read users collection & count by status
+  try {
+    const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
+    result.canReadUsers = { pass: true };
+    usersSnap.forEach((d) => {
+      const data = d.data() as UserProfile;
+      const status = data.status || 'pending';
+      if (status in result.userCounts) {
+        result.userCounts[status as keyof typeof result.userCounts]++;
+      }
+    });
+  } catch (err: any) {
+    result.canReadUsers = {
+      pass: false,
+      error: err?.message || 'Access to users collection denied',
+      errorCode: err?.code || 'permission-denied',
+    };
+  }
+
+  // c: admins/{myUid} exists
+  try {
+    if (currentUid) {
+      const adminSnap = await getDoc(doc(db, ADMINS_COLLECTION, currentUid));
+      result.adminDocExists = {
+        pass: true,
+        exists: adminSnap.exists(),
+      };
+    } else {
+      result.adminDocExists = { pass: false, exists: false, error: 'No authenticated user UID' };
+    }
+  } catch (err: any) {
+    result.adminDocExists = {
+      pass: false,
+      exists: false,
+      error: err?.message || 'Failed to check admins collection',
+      errorCode: err?.code || 'permission-denied',
+    };
+  }
+
+  // d: Can read members and sessions
+  let membersOk = false;
+  let sessionsOk = false;
+  try {
+    await getDocs(query(collection(db, MEMBERS_COLLECTION), limit(1)));
+    membersOk = true;
+    result.canReadMembersAndSessions.membersPass = true;
+  } catch (err: any) {
+    result.canReadMembersAndSessions.membersError = err?.message || 'Members read error';
+    result.canReadMembersAndSessions.membersErrorCode = err?.code || 'permission-denied';
+  }
+
+  try {
+    await getDocs(query(collection(db, SESSIONS_COLLECTION), limit(1)));
+    sessionsOk = true;
+    result.canReadMembersAndSessions.sessionsPass = true;
+  } catch (err: any) {
+    result.canReadMembersAndSessions.sessionsError = err?.message || 'Sessions read error';
+    result.canReadMembersAndSessions.sessionsErrorCode = err?.code || 'permission-denied';
+  }
+
+  result.canReadMembersAndSessions.pass = membersOk && sessionsOk;
+  return result;
+}
+
 export function subscribeToAdmins(
   onUpdate: (adminDocs: { uid: string; data: AdminDoc }[]) => void,
   onError?: (error: Error) => void
@@ -197,8 +321,7 @@ export function subscribeToAdmins(
       onUpdate(list);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, ADMINS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, ADMINS_COLLECTION, onError);
     }
   );
 }
@@ -228,6 +351,10 @@ export async function revokeAdminRole(targetUid: string, targetEmail: string): P
   const currentUser = auth.currentUser;
   if (!currentUser || currentUser.email?.toLowerCase().trim() !== SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
     throw new Error('Only the designated Super Administrator can revoke admin privileges.');
+  }
+
+  if (targetEmail.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
+    throw new Error('Cannot revoke administrator status from the designated Super Administrator.');
   }
 
   const adminRef = doc(db, ADMINS_COLLECTION, targetUid);
@@ -296,8 +423,7 @@ export function subscribeToUserProfile(
       }
     },
     (err) => {
-      handleFirestoreError(err, OperationType.GET, `users/${uid}`);
-      onError?.(err);
+      notifyListenerError(err, OperationType.GET, `users/${uid}`, onError);
     }
   );
 }
@@ -318,12 +444,7 @@ export function subscribeToPendingUsers(
       onUpdate(list);
     },
     (err) => {
-      try {
-        handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
-      } catch {
-        // error already formatted and logged
-      }
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, USERS_COLLECTION, onError);
     }
   );
 }
@@ -599,8 +720,7 @@ export function subscribeToMembers(
       onUpdate(list);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, MEMBERS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, MEMBERS_COLLECTION, onError);
     }
   );
 }
@@ -772,8 +892,7 @@ export function subscribeToSessions(
       onUpdate(list);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, SESSIONS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, SESSIONS_COLLECTION, onError);
     }
   );
 }
@@ -968,7 +1087,8 @@ export async function writeKioskToken(sessionId: string, token: string, prevToke
 
 export function subscribeToSessionToken(
   sessionId: string,
-  onUpdate: (data: { token: string; prevToken: string; rotatedAt?: Timestamp } | null) => void
+  onUpdate: (data: { token: string; prevToken: string; rotatedAt?: Timestamp } | null) => void,
+  onError?: (err: Error) => void
 ): () => void {
   const tokenRef = doc(db, SESSION_TOKENS_COLLECTION, sessionId);
   return onSnapshot(
@@ -981,7 +1101,7 @@ export function subscribeToSessionToken(
       }
     },
     (err) => {
-      console.warn('Session token listener warning:', err);
+      notifyListenerError(err, OperationType.GET, `sessionTokens/${sessionId}`, onError);
     }
   );
 }
@@ -1007,8 +1127,7 @@ export function subscribeToMemberCheckIns(
       onUpdate(records);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, CHECKINS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, CHECKINS_COLLECTION, onError);
     }
   );
 }
@@ -1024,8 +1143,7 @@ export function subscribeToAllCheckIns(
       onUpdate(records);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, CHECKINS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, CHECKINS_COLLECTION, onError);
     }
   );
 }
@@ -1199,8 +1317,7 @@ export function subscribeToAnnouncements(
       onUpdate(list);
     },
     (err) => {
-      handleFirestoreError(err, OperationType.LIST, ANNOUNCEMENTS_COLLECTION);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, ANNOUNCEMENTS_COLLECTION, onError);
     }
   );
 }
@@ -1221,8 +1338,7 @@ export function subscribeToPublicLeaderboard(
       onUpdate(list);
     },
     (err) => {
-      console.warn('Public leaderboard listener warning:', err);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, PUBLIC_LEADERBOARD_COLLECTION, onError);
     }
   );
 }
@@ -1566,12 +1682,7 @@ export function subscribeToUsers(
       onData(users);
     },
     (err) => {
-      try {
-        handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
-      } catch {
-        // error already formatted and logged
-      }
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, USERS_COLLECTION, onError);
     }
   );
 }
@@ -1599,8 +1710,7 @@ export function subscribeToUserNotifications(
       onData(notifs);
     },
     (err) => {
-      console.warn('Notifications subscription warning:', err);
-      onError?.(err);
+      notifyListenerError(err, OperationType.LIST, 'notifications', onError);
     }
   );
 }

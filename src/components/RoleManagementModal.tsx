@@ -105,6 +105,12 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
       return;
     }
 
+    const action = isAdminPermission ? 'revoke' : 'grant';
+    const actionLabel = isAdminPermission ? 'Revoke admin access' : 'Grant admin access';
+    if (!window.confirm(`${actionLabel} for "${linkedUser.displayName || linkedUser.email}"?\n\nAuth UID: ${linkedUser.id}\nEmail: ${linkedUser.email}`)) {
+      return;
+    }
+
     setTogglingAdmin(true);
     setMessage(null);
     try {
@@ -118,7 +124,8 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
         setMessage({ type: 'success', text: `Granted admin privileges to ${linkedUser.email}.` });
       }
     } catch (err: any) {
-      setMessage({ type: 'error', text: err?.message || 'Failed to update admin permissions.' });
+      const code = err?.code ? `[${err.code}] ` : '';
+      setMessage({ type: 'error', text: `${code}${err?.message || 'Failed to update admin permissions.'}` });
     } finally {
       setTogglingAdmin(false);
     }

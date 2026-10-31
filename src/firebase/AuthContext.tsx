@@ -49,6 +49,8 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isApprovedMember: boolean;
+  registrationError: { code: string; message: string } | null;
+  retryRegistration: () => Promise<void>;
   handleSignIn: () => Promise<boolean>;
   signInWithGoogle: () => Promise<boolean>;
   signOutUser: () => Promise<void>;
@@ -69,6 +71,8 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signingIn: false,
   authError: null,
+  registrationError: null,
+  retryRegistration: async () => {},
   membershipPhase: 'loading',
   membershipState: 'loading',
   isAdmin: false,
@@ -94,6 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [registrationError, setRegistrationError] = useState<{ code: string; message: string } | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   const profileUnsubRef = useRef<(() => void) | null>(null);
@@ -116,13 +121,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const memberRef = doc(db, 'members', memberId);
-    memberUnsubRef.current = onSnapshot(memberRef, (snap) => {
-      if (snap.exists()) {
-        setLinkedMember(snap.data() as Member);
-      } else {
-        setLinkedMember(null);
+    memberUnsubRef.current = onSnapshot(
+      memberRef,
+      (snap) => {
+        if (snap.exists()) {
+          setLinkedMember(snap.data() as Member);
+        } else {
+          setLinkedMember(null);
+        }
+      },
+      (err) => {
+        console.warn('Member profile subscription notice:', err);
       }
-    });
+    );
 
     try {
       const privRef = doc(db, 'memberPrivate', memberId);
@@ -144,14 +155,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const adminStatus = await checkIsAdmin(currentUser.uid, currentUser.email);
         setIsAdmin(adminStatus);
 
-        // Ensure user document exists with least privilege
-        const initProfile = await ensureUserProfile(
-          currentUser.uid,
-          currentUser.email || '',
-          currentUser.displayName || 'Club Builder',
-          currentUser.photoURL || undefined
-        );
-        setProfile(initProfile);
+        let initProfile: UserProfile;
+        try {
+          // Ensure user document exists with least privilege
+          initProfile = await ensureUserProfile(
+            currentUser.uid,
+            currentUser.email || '',
+            currentUser.displayName || 'Club Builder',
+            currentUser.photoURL || undefined
+          );
+          setProfile(initProfile);
+          setRegistrationError(null);
+        } catch (ensureErr: any) {
+          console.error('Failed to register/ensure user profile:', ensureErr);
+          const code = ensureErr?.code || (ensureErr?.message?.includes('permission-denied') ? 'permission-denied' : 'registration-failed');
+          const errorMsg = `We could not register your request: [${code}]. Please try again or contact an admin.`;
+          setRegistrationError({ code, message: errorMsg });
+          setAuthError(errorMsg);
+          setLoading(false);
+          return;
+        }
 
         if (initProfile.memberId) {
           loadMemberData(initProfile.memberId);
@@ -197,6 +220,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [loadMemberData]
   );
 
+  const retryRegistration = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    setRegistrationError(null);
+    setAuthError(null);
+    await attachUserListeners(user);
+  }, [user, attachUserListeners]);
+
   // Authentication state watcher and redirect result handler
   useEffect(() => {
     // Check if returning from a mobile redirect sign-in flow
@@ -237,6 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLinkedMember(null);
         setMemberPrivate(null);
         setIsAdmin(false);
+        setRegistrationError(null);
         setLoading(false);
       }
     });
@@ -382,7 +414,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Derive authoritative phase state machine
   let membershipPhase: MembershipPhase = 'loading';
-  if (loading) {
+  if (registrationError) {
+    membershipPhase = 'error';
+  } else if (loading) {
     membershipPhase = 'loading';
   } else if (!user) {
     membershipPhase = 'signed_out';
@@ -414,6 +448,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         signingIn,
         authError,
+        registrationError,
+        retryRegistration,
         membershipPhase,
         membershipState: membershipPhase,
         isAdmin,

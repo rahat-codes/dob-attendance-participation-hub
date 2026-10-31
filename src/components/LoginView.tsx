@@ -30,6 +30,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     signOutUser,
     authError,
     clearAuthError,
+    registrationError,
+    retryRegistration,
     refreshProfile,
     requestMembershipLink,
     acceptMembershipInvitation,
@@ -296,17 +298,70 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
           </div>
         )}
 
+        {/* State: Registration Failure (ensureUserProfile failed) */}
+        {user && (registrationError || (membershipState === 'error' && authError)) && (
+          <div className="bg-zinc-900/90 border border-red-500/40 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
+            <div className="inline-flex p-3 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white">Registration Error</h2>
+              <p className="text-xs text-red-300 mt-2 leading-relaxed">
+                {registrationError?.message || authError || 'We could not register your request: [registration-failed]. Please try again or contact an admin.'}
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={retryRegistration}
+                disabled={loading}
+                className="w-full py-2.5 px-4 rounded-xl bg-red-500/20 hover:bg-red-500/35 border border-red-500/50 text-red-100 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>Retry</span>
+              </button>
+              <button
+                type="button"
+                onClick={signOutUser}
+                className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* State 7: Membership Pending Admin Approval */}
-        {user && membershipState === 'pending' && (
+        {user && membershipState === 'pending' && !registrationError && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mx-auto">
               <RefreshCw className="h-6 w-6 animate-spin" />
             </div>
-            <div>
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] text-xs font-mono font-bold uppercase tracking-wider">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                <span>Request submitted</span>
+              </div>
               <h2 className="text-base font-bold text-white">Membership Pending Approval</h2>
-              <p className="text-xs text-zinc-400 mt-1">
+              <p className="text-xs text-zinc-400">
                 Your builder profile request for <span className="text-zinc-200 font-mono">{user.email}</span> is awaiting verification by club administrators.
               </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs space-y-2 font-mono">
+              <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                <span className="text-zinc-400">Account:</span>
+                <span className="text-white truncate max-w-[200px]">{user.email}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Submitted at:</span>
+                <span className="text-[#b5ff00]">
+                  {profile?.createdAt
+                    ? new Date(profile.createdAt).toLocaleString()
+                    : new Date().toLocaleString()}
+                </span>
+              </div>
             </div>
 
             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs text-zinc-400">
