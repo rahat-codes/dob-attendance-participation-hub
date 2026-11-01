@@ -39,8 +39,31 @@ export const RankingList: React.FC<RankingListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTrack, setSelectedTrack] = useState<string>('all');
 
-  const currentMonthKey = useMemo(() => getSeoulMonthKey(), []);
-  const prevMonthKey = useMemo(() => getSeoulPreviousMonthKey(), []);
+  const currentMonthKey = useMemo(() => {
+    const seoulMonth = getSeoulMonthKey();
+    const hasCurrentMonthData = items.some(
+      (item) => (item.monthlyCheckIns?.[seoulMonth] || 0) > 0
+    );
+    if (hasCurrentMonthData) return seoulMonth;
+    const allMonths = new Set<string>();
+    items.forEach((item) => {
+      const monthly = item.monthlyCheckIns;
+      if (monthly) {
+        Object.keys(monthly).forEach((m) => {
+          if ((monthly[m] || 0) > 0) allMonths.add(m);
+        });
+      }
+    });
+    const sorted = Array.from(allMonths).sort().reverse();
+    return sorted[0] || seoulMonth;
+  }, [items]);
+
+  const prevMonthKey = useMemo(() => {
+    const [y, m] = currentMonthKey.split('-').map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }, [currentMonthKey]);
+
   const semesterInfo = useMemo(() => getSeoulSemesterInfo(), []);
 
   // Compute ranked list for each period

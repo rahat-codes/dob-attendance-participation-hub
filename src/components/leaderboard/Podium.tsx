@@ -6,15 +6,17 @@ import { m } from 'motion/react';
 import { SecureAvatar } from '../common/SecureAvatar';
 
 interface PodiumProps {
-  topItems: PublicLeaderboardItem[];
+  topItems: Array<PublicLeaderboardItem & { displayPoints?: number; displayCheckIns?: number }>;
   onSelectMember: (item: PublicLeaderboardItem, rank: number) => void;
   disableAnimation?: boolean;
+  periodLabel?: string;
 }
 
 export const Podium: React.FC<PodiumProps> = ({
   topItems,
   onSelectMember,
   disableAnimation = false,
+  periodLabel,
 }) => {
   if (topItems.length === 0) return null;
 
@@ -23,7 +25,7 @@ export const Podium: React.FC<PodiumProps> = ({
   const third = topItems[2] || null;
 
   const renderCard = (
-    item: PublicLeaderboardItem | null,
+    item: (PublicLeaderboardItem & { displayPoints?: number; displayCheckIns?: number }) | null,
     rank: 1 | 2 | 3,
     heightClass: string
   ) => {
@@ -79,7 +81,9 @@ export const Podium: React.FC<PodiumProps> = ({
       .substring(0, 2)
       .toUpperCase();
 
-    const points = item.totalPoints ?? item.points ?? 0;
+    const points = typeof item.displayPoints === 'number'
+      ? item.displayPoints
+      : (item.totalPoints ?? item.points ?? 0);
 
     return (
       <m.div
@@ -156,7 +160,7 @@ export const Podium: React.FC<PodiumProps> = ({
 
           {/* Tier Badge */}
           <div className="mt-2.5">
-            <TierBadge points={points} size="sm" disableAnimation={disableAnimation} />
+            <TierBadge points={item.totalPoints ?? item.points ?? 0} size="sm" disableAnimation={disableAnimation} />
           </div>
         </div>
 
@@ -164,7 +168,7 @@ export const Podium: React.FC<PodiumProps> = ({
         <div className="w-full mt-6 pt-4 border-t border-white/[0.08] grid grid-cols-2 gap-2 text-center">
           <div className="p-2 rounded-xl bg-white/[0.02] border border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
             <span className="block text-[10px] font-rajdhani uppercase tracking-wider text-white/58 font-bold">
-              Total Points
+              {periodLabel ? `${periodLabel} Points` : 'Total Points'}
             </span>
             <span className={`block font-orbitron font-black text-lg sm:text-xl tabular-nums ${numClass}`}>
               {points}

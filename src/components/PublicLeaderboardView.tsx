@@ -8,6 +8,7 @@ import { RankingList, LeaderboardPeriod } from './leaderboard/RankingList';
 import { HallOfFame } from './leaderboard/HallOfFame';
 import { MemberProfileModal } from './leaderboard/MemberProfileModal';
 import { ShareCardModal } from './leaderboard/ShareCardModal';
+import { getSeoulMonthKey, getSeoulSemesterInfo } from '../config/tierConfig';
 import {
   Trophy,
   Crown,
@@ -123,19 +124,82 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     setIsShareCardOpen(true);
   };
 
-  // Top 3 Podium items
-  const topThree = useMemo(() => activeItems.slice(0, 3), [activeItems]);
+  // Active month resolution: If Seoul current month (e.g. 2026-11) has recorded check-ins, use it;
+  // otherwise fallback to the most recent month key with recorded check-ins (e.g. 2026-10).
+  const activeMonthKey = useMemo(() => {
+    const seoulMonth = getSeoulMonthKey();
+    const hasCurrentMonthData = activeItems.some(
+      (item) => (item.monthlyCheckIns?.[seoulMonth] || 0) > 0
+    );
+    if (hasCurrentMonthData) return seoulMonth;
+    const allMonths = new Set<string>();
+    activeItems.forEach((item) => {
+      const monthly = item.monthlyCheckIns;
+      if (monthly) {
+        Object.keys(monthly).forEach((m) => {
+          if ((monthly[m] || 0) > 0) allMonths.add(m);
+        });
+      }
+    });
+    const sorted = Array.from(allMonths).sort().reverse();
+    return sorted[0] || seoulMonth;
+  }, [activeItems]);
+
+  const semesterInfo = useMemo(() => getSeoulSemesterInfo(), []);
+
+  // Compute period points and period check-ins for each item
+  const periodRankedItems = useMemo(() => {
+    const mapped = activeItems.map((item) => {
+      let periodPoints = 0;
+      let periodCheckIns = 0;
+
+      if (selectedPeriod === 'this_month') {
+        periodCheckIns = item.monthlyCheckIns?.[activeMonthKey] || 0;
+        periodPoints = periodCheckIns * 10;
+      } else if (selectedPeriod === 'semester') {
+        const months = semesterInfo.monthKeys;
+        periodCheckIns = months.reduce(
+          (sum, mKey) => sum + (item.monthlyCheckIns?.[mKey] || 0),
+          0
+        );
+        periodPoints = periodCheckIns * 10;
+      } else {
+        periodPoints = item.totalPoints ?? item.points ?? 0;
+        periodCheckIns = item.totalCheckIns || 0;
+      }
+
+      return {
+        ...item,
+        displayPoints: periodPoints,
+        displayCheckIns: periodCheckIns,
+      };
+    });
+
+    mapped.sort((a, b) => {
+      if (b.displayPoints !== a.displayPoints) {
+        return b.displayPoints - a.displayPoints;
+      }
+      return b.displayCheckIns - a.displayCheckIns;
+    });
+
+    return mapped;
+  }, [activeItems, selectedPeriod, activeMonthKey, semesterInfo]);
+
+  // Top 3 Podium items for active period
+  const topThree = useMemo(() => periodRankedItems.slice(0, 3), [periodRankedItems]);
 
   // Guild aggregate KPIs
   const totalBuilders = activeItems.length;
-  const totalGuildPoints = activeItems.reduce(
-    (acc, i) => acc + (i.totalPoints ?? i.points ?? 0),
-    0
-  );
-  const recordStreak = activeItems.reduce(
-    (max, i) => Math.max(max, i.bestStreak || i.currentStreak || 0),
-    0
-  );
+  const totalPeriodPoints = useMemo(() => {
+    return periodRankedItems.reduce((acc, i) => acc + (i.displayPoints || 0), 0);
+  }, [periodRankedItems]);
+
+  const recordStreak = useMemo(() => {
+    return activeItems.reduce(
+      (max, i) => Math.max(max, i.bestStreak || i.currentStreak || 0),
+      0
+    );
+  }, [activeItems]);
 
   return (
     <div className={`relative min-h-screen space-y-8 pb-16 ${fxEnabled ? '' : 'reduced-fx'}`}>
@@ -174,7 +238,7 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               </span>
               <span className="text-zinc-600 font-mono">·</span>
               <span className="text-zinc-400 text-xs font-rajdhani font-semibold tracking-wide">
-                Live Esports Rankings · Seoul Timezone (KST)
+                Live Builder &amp; Workshop Rankings · Seoul Timezone (KST)
               </span>
             </div>
 
@@ -264,10 +328,10 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
           <div className="p-4 rounded-2xl bg-white/[0.03] backdrop-blur-sm border border-white/10 glass-card-hairline">
             <span className="text-[11px] font-rajdhani uppercase tracking-wider text-white/60 font-bold block">
-              Total Guild Points
+              {selectedPeriod === 'this_month' ? 'Monthly Points' : selectedPeriod === 'semester' ? 'Semester Points' : 'Total Guild Points'}
             </span>
             <span className="text-2xl sm:text-3xl font-orbitron font-black text-[#FF7A1A] mt-1 block tabular-nums num-grad-ember">
-              {totalGuildPoints}
+              {totalPeriodPoints}
             </span>
           </div>
 
@@ -330,6 +394,7 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
             topItems={topThree}
             onSelectMember={handleSelectMember}
             disableAnimation={!fxEnabled}
+            periodLabel={selectedPeriod === 'this_month' ? 'Monthly' : selectedPeriod === 'semester' ? 'Semester' : 'Total'}
           />
 
           {/* Hall of Fame: Past Monthly Champions */}
@@ -359,7 +424,7 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
         disableAnimation={!fxEnabled}
       />
 
-      {/* Esports Share Card Modal */}
+      {/* Builder Share Card Modal */}
       <ShareCardModal
         item={shareCardMember}
         rank={shareCardRank}
