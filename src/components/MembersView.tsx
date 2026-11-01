@@ -345,7 +345,11 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </button>
                     {onRejectRequest && (
                       <button
-                        onClick={() => onRejectRequest(req.id)}
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to reject the membership request for "${req.displayName || req.email}"?`)) {
+                            onRejectRequest(req.id);
+                          }
+                        }}
                         className="py-1.5 px-2.5 rounded-lg bg-zinc-800 hover:bg-red-950/60 hover:text-red-400 text-zinc-400 text-xs font-semibold transition-colors cursor-pointer"
                         title="Dismiss Request"
                       >

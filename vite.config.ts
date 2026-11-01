@@ -3,12 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   return {
-    mode: 'production',
-    define: {
-      'process.env.NODE_ENV': JSON.stringify('production'),
-    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -37,6 +33,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      host: '0.0.0.0',
+      allowedHosts: true,
       headers: {
         'Cache-Control': 'no-store, no-cache, must-revalidate',
       },

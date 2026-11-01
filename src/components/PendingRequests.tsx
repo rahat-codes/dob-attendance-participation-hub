@@ -19,6 +19,7 @@ import {
   subscribeToPendingUsers,
   approveUserMembershipLink,
   rejectUserMembershipLink,
+  directActivateUserMembership,
 } from '../firebase/firestoreService';
 import { SecureAvatar } from './common/SecureAvatar';
 
@@ -45,6 +46,9 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
   const [pendingUsers, setPendingUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Filter state
+  const [statusFilter, setStatusFilter] = useState<'actionable' | 'all' | 'pending' | 'approved_waiting_response' | 'declined'>('actionable');
 
   // Search query state
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,7 +152,30 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     }
   };
 
-  // 3. Action: Reject user and mark status as suspended
+  const handleDirectActivate = async (user: UserProfile, targetMemberId?: string) => {
+    const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId || getAutoMatchMember(user)?.id;
+    if (!chosenMemberId) return;
+
+    setProcessingId(user.id);
+    setError(null);
+    try {
+      await directActivateUserMembership(user.id, chosenMemberId);
+      const matchedName = members.find((m) => m.id === chosenMemberId)?.name || 'Builder Profile';
+      setActionSuccessMessage(
+        `Directly activated ${user.displayName || user.email} and linked to ${matchedName}. Status is now Active.`
+      );
+      setTimeout(() => setActionSuccessMessage(null), 5000);
+      onStatusChange?.();
+    } catch (err: any) {
+      console.error('Failed to directly activate user:', err);
+      const code = err?.code ? `[${err.code}] ` : '';
+      setError(`Failed to directly activate user: ${code}${err?.message || 'Unknown error'}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  // 3. Action: Reject user and mark status as declined
   const handleConfirmReject = async () => {
     if (!confirmRejectUser) return;
     const userId = confirmRejectUser.id;
@@ -169,12 +196,26 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
   };
 
   const filteredUsers = pendingUsers.filter((req) => {
+    // 1. Status filter
+    if (statusFilter === 'actionable') {
+      if (req.status !== 'pending' && req.status !== 'approved_waiting_response' && req.status) {
+        return false;
+      }
+    } else if (statusFilter === 'pending') {
+      if (req.status && req.status !== 'pending') return false;
+    } else if (statusFilter === 'approved_waiting_response') {
+      if (req.status !== 'approved_waiting_response') return false;
+    } else if (statusFilter === 'declined') {
+      if (req.status !== 'declined' && req.status !== 'suspended') return false;
+    }
+
+    // 2. Search query filter
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
     return (
-      req.displayName?.toLowerCase().includes(q) ||
-      req.email?.toLowerCase().includes(q) ||
-      req.requestedNotes?.toLowerCase().includes(q)
+      Boolean(req.displayName?.toLowerCase().includes(q)) ||
+      Boolean(req.email?.toLowerCase().includes(q)) ||
+      Boolean(req.requestedNotes?.toLowerCase().includes(q))
     );
   });
 
@@ -256,6 +297,65 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
         </div>
       </div>
 
+      {/* Filter Tabs */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800/80 pb-3 font-mono text-xs">
+        <button
+          type="button"
+          onClick={() => setStatusFilter('actionable')}
+          className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+            statusFilter === 'actionable'
+              ? 'bg-[#b5ff00] text-black font-bold shadow-[0_0_10px_rgba(181,255,0,0.2)]'
+              : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          Active Queue ({pendingUsers.filter((r) => r.status === 'pending' || r.status === 'approved_waiting_response' || !r.status).length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('pending')}
+          className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+            statusFilter === 'pending'
+              ? 'bg-amber-400 text-black font-bold shadow-[0_0_10px_rgba(251,191,36,0.2)]'
+              : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          Awaiting Admin ({pendingUsers.filter((r) => r.status === 'pending' || !r.status).length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('approved_waiting_response')}
+          className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+            statusFilter === 'approved_waiting_response'
+              ? 'bg-cyan-400 text-black font-bold shadow-[0_0_10px_rgba(34,211,238,0.2)]'
+              : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          Waiting on User ({pendingUsers.filter((r) => r.status === 'approved_waiting_response').length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('declined')}
+          className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+            statusFilter === 'declined'
+              ? 'bg-red-500/80 text-white font-bold'
+              : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          Declined ({pendingUsers.filter((r) => r.status === 'declined' || r.status === 'suspended').length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter('all')}
+          className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+            statusFilter === 'all'
+              ? 'bg-zinc-200 text-black font-bold'
+              : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          All ({pendingUsers.length})
+        </button>
+      </div>
+
       {/* Loading state */}
       {loading ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-12 text-center space-y-3">
@@ -314,7 +414,21 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                           {req.status === 'approved_waiting_response' ? (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 uppercase font-bold flex items-center gap-1">
                               <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                              <span>Approved — Waiting for User Response</span>
+                              <span>Approved — Waiting for User</span>
+                            </span>
+                          ) : req.status === 'declined' ? (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 uppercase font-bold flex items-center gap-1">
+                              <XCircle className="h-3 w-3 text-red-400" />
+                              <span>Declined</span>
+                            </span>
+                          ) : req.status === 'active' ? (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#b5ff00]/15 border border-[#b5ff00]/30 text-[#b5ff00] uppercase font-bold flex items-center gap-1">
+                              <CheckCircle2 className="h-3 w-3 text-[#b5ff00]" />
+                              <span>Active</span>
+                            </span>
+                          ) : req.status === 'suspended' ? (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 uppercase font-semibold">
+                              Suspended
                             </span>
                           ) : (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 uppercase font-semibold">
@@ -345,7 +459,20 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                         <span>Approved — Waiting for User Response</span>
                       </div>
                       <p className="text-xs text-zinc-300">
-                        The applicant has been notified. The account will activate automatically once they click &quot;Accept Invitation&quot; in their portal.
+                        The applicant has been notified. The account will activate automatically once they click &quot;Accept Invitation&quot; in their portal, or you can click &quot;Activate Directly&quot; below.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Status Banner for Declined */}
+                  {req.status === 'declined' && (
+                    <div className="p-3 rounded-2xl bg-red-950/30 border border-red-500/30 text-xs text-red-200 space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold text-red-300">
+                        <XCircle className="h-4 w-4 shrink-0 text-red-400" />
+                        <span>Request Declined</span>
+                      </div>
+                      <p className="text-xs text-zinc-300">
+                        This request was previously declined. You can select a member profile and click Approve or Activate Directly to re-admit this user.
                       </p>
                     </div>
                   )}
@@ -394,45 +521,60 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                   </div>
                 </div>
 
-                {/* Actions: Approve (Link to chosen) | Register New | Reject */}
+                {/* Actions: Approve (Invite) | Activate Directly | Register New | Reject */}
                 <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-white/10">
                   {currentlyChosenMemberId ? (
-                    <button
-                      onClick={() => handleApprove(req, currentlyChosenMemberId)}
-                      disabled={isProcessing}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 disabled:opacity-50"
-                    >
-                      {isProcessing ? (
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-black" />
-                      ) : (
-                        <UserCheck className="h-3.5 w-3.5 text-black" />
-                      )}
-                      <span>
-                        {req.status === 'approved_waiting_response'
-                          ? 'Re-Approve Link'
-                          : 'Approve Application'}
-                      </span>
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleApprove(req, currentlyChosenMemberId)}
+                        disabled={isProcessing}
+                        className="flex-1 py-2.5 px-3 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
+                        title="Stages the approval and waits for user acceptance"
+                      >
+                        {isProcessing ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin text-black" />
+                        ) : (
+                          <UserCheck className="h-3.5 w-3.5 text-black" />
+                        )}
+                        <span>
+                          {req.status === 'approved_waiting_response'
+                            ? 'Re-Send Invite'
+                            : 'Approve (Invite)'}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => handleDirectActivate(req, currentlyChosenMemberId)}
+                        disabled={isProcessing}
+                        className="py-2.5 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
+                        title="Instantly activates this member without requiring acceptance"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-black" />
+                        <span>Activate Directly</span>
+                      </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => handleApprove(req)}
                       disabled={isProcessing}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50"
+                      className="flex-1 py-2.5 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
                     >
                       <UserPlus className="h-3.5 w-3.5 text-black" />
                       <span>Register &amp; Link New</span>
                     </button>
                   )}
 
-                  <button
-                    onClick={() => setConfirmRejectUser(req)}
-                    disabled={isProcessing}
-                    className="py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-red-950/60 hover:text-red-400 border border-white/10 neu-button text-zinc-400 text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                    title="Reject and deny membership access"
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                    <span>Reject</span>
-                  </button>
+                  {req.status !== 'declined' ? (
+                    <button
+                      onClick={() => setConfirmRejectUser(req)}
+                      disabled={isProcessing}
+                      className="py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-red-950/60 hover:text-red-400 border border-white/10 neu-button text-zinc-400 text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-11"
+                      title="Decline membership access for this account"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      <span>Decline</span>
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
@@ -450,7 +592,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white uppercase font-display tracking-tight">
-                  Reject Membership Request
+                  Decline Membership Request
                 </h3>
                 <p className="text-xs text-zinc-400 font-mono mt-0.5 truncate max-w-[260px]">
                   {confirmRejectUser.email}
@@ -459,23 +601,23 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              Are you sure you want to deny this request? The user&apos;s status will be set to <span className="text-red-400 font-mono font-semibold">suspended</span>, preventing them from accessing the attendance hub.
+              Are you sure you want to decline this request? The user&apos;s status will be marked as <span className="text-red-400 font-mono font-semibold">declined</span>. They will see that their request was reviewed and can re-submit if needed.
             </p>
 
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setConfirmRejectUser(null)}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 text-xs text-zinc-300 font-semibold uppercase tracking-wider neu-button transition-colors cursor-pointer"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 text-xs text-zinc-300 font-semibold uppercase tracking-wider neu-button transition-colors cursor-pointer min-h-11"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmReject}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-95"
+                className="flex-1 py-2.5 px-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-[0_0_15px_rgba(239,68,68,0.3)] active:scale-95 min-h-11"
               >
-                Confirm Reject
+                Confirm Decline
               </button>
             </div>
           </div>

@@ -556,7 +556,7 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can register builders.');
     }
     try {
-      await addMemberToFirestore(newMember, {
+      const createdMemberId = await addMemberToFirestore(newMember, {
         email: newMember.email,
         phone: newMember.phone,
         studentId: newMember.studentId,
@@ -565,9 +565,12 @@ export default function App() {
         major: newMember.major,
         semester: newMember.semester,
       });
-      if (newMember.authUid) {
-        await approveUserMembershipLink(newMember.authUid, newMember.id);
+      const targetMemberId = createdMemberId || newMember.id;
+      if (newMember.authUid && targetMemberId) {
+        await approveUserMembershipLink(newMember.authUid, targetMemberId);
       }
+      setIsAddMemberOpen(false);
+      setPrefillMember(null);
     } catch (err: any) {
       console.error('Failed to add member:', err);
       throw err;
@@ -582,6 +585,7 @@ export default function App() {
     try {
       if (matchedMemberId) {
         await approveUserMembershipLink(req.id, matchedMemberId);
+        setFirestoreError(null);
       } else {
         setEditingMember(null);
         setPrefillMember({
@@ -589,7 +593,7 @@ export default function App() {
           email: req.email,
           handle: req.requestedNotes?.startsWith('@')
             ? req.requestedNotes
-            : `@${req.requestedNotes || req.email?.split('@')[0]}`,
+            : `@${req.requestedNotes || req.email?.split('@')[0] || 'builder'}`,
           authUid: req.id,
           studentId: (/^\d+$/.test(req.requestedNotes?.trim() || '')) ? req.requestedNotes?.trim() : undefined,
           university: 'Tongmyong University',
@@ -598,6 +602,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Failed to approve membership request:', err);
+      const code = err?.code ? `[${err.code}] ` : '';
+      setFirestoreError(`Failed to approve request: ${code}${err?.message || 'Access denied'}`);
     }
   };
 
@@ -605,8 +611,11 @@ export default function App() {
     if (!isAdmin) return;
     try {
       await rejectUserMembershipLink(userId);
+      setFirestoreError(null);
     } catch (err: any) {
       console.error('Failed to reject membership request:', err);
+      const code = err?.code ? `[${err.code}] ` : '';
+      setFirestoreError(`Failed to reject request: ${code}${err?.message || 'Access denied'}`);
     }
   };
 

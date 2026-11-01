@@ -440,7 +440,10 @@ export function subscribeToPendingUsers(
   return onSnapshot(
     q,
     (snap) => {
-      const list = snap.docs.map((d) => d.data() as UserProfile);
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      }) as UserProfile);
       onUpdate(list);
     },
     (err) => {
@@ -455,6 +458,7 @@ export async function reRequestMembership(uid: string, requestedNotes?: string):
     await updateDoc(userRef, {
       status: 'pending',
       requestedNotes: requestedNotes || '',
+      membershipRequestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -666,6 +670,52 @@ export async function approveAndLinkUser(
   await approveUserMembershipLink(userId, targetMemberId);
 }
 
+export async function directActivateUserMembership(
+  userId: string,
+  targetMemberId: string
+): Promise<void> {
+  if (!userId) throw new Error('User ID is required.');
+  if (!targetMemberId) throw new Error('Target member ID is required.');
+
+  const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
+  const memSnap = await getDoc(memberRef);
+  if (!memSnap.exists()) {
+    throw new Error('Target member record not found in roster.');
+  }
+
+  const existingMem = memSnap.data() as Member;
+  if (existingMem.authUid && existingMem.authUid !== userId) {
+    throw new Error('Member record is already linked to another account.');
+  }
+
+  const userRef = doc(db, USERS_COLLECTION, userId);
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  batch.update(userRef, {
+    status: 'active',
+    memberId: targetMemberId,
+    approvedMemberId: targetMemberId,
+    approvedAt: now,
+    respondedAt: now,
+    updatedAt: now,
+  });
+
+  batch.update(memberRef, {
+    authUid: userId,
+  });
+
+  try {
+    await batch.commit();
+    await createAuditLog(
+      'approve_user',
+      `Admin directly activated member link for user ${userId} to member ${targetMemberId}`
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
+  }
+}
+
 export async function declineUserRequest(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
   try {
@@ -757,7 +807,9 @@ export async function addMemberToFirestore(
     throw new Error(`Builder handle "${cleanHandle}" is already in use.`);
   }
 
-  const memberId = `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const memberId = (publicData as any).id && typeof (publicData as any).id === 'string' && (publicData as any).id.trim().length > 0
+    ? (publicData as any).id.trim()
+    : `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
   const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, memberId);
 
@@ -765,6 +817,7 @@ export async function addMemberToFirestore(
 
   const defaultUni = publicData.university?.trim() || privateData?.university?.trim() || 'Tongmyong University';
   const safeAvatar = await ensureSafeAvatarUrl(publicData.avatarUrl);
+  const rawAuthUid = (publicData as any).authUid?.trim() || undefined;
   const finalPublic: Member = removeUndefinedFields({
     ...publicData,
     avatarUrl: safeAvatar,
@@ -773,8 +826,12 @@ export async function addMemberToFirestore(
     handle: cleanHandle,
     studentId: publicData.studentId?.trim() || privateData?.studentId?.trim() || undefined,
     university: defaultUni,
+    authUid: rawAuthUid || undefined,
     createdAt: new Date().toISOString(),
   });
+  if (!finalPublic.authUid) {
+    delete (finalPublic as any).authUid;
+  }
   batch.set(memberRef, finalPublic);
 
   const finalPriv: MemberPrivate = removeUndefinedFields({
