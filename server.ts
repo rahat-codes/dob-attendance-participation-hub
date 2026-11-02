@@ -19,8 +19,8 @@ app.use(express.static(distPath, {
   index: false,
 }));
 
-// Health check endpoint for Cloud Run and monitoring
-app.get('/_healthz', (_req, res) => {
+// Health check endpoints for Cloud Run and container monitoring
+app.get(['/_healthz', '/healthz'], (_req, res) => {
   res.status(200).send('OK');
 });
 
@@ -50,6 +50,20 @@ app.get('*', (_req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[Production Server] Den of Builders running on http://0.0.0.0:${PORT}`);
+});
+
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, closing server cleanly...');
+  server.close(() => {
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('Received SIGINT, closing server cleanly...');
+  server.close(() => {
+    process.exit(0);
+  });
 });
