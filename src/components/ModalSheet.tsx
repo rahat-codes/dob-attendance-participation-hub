@@ -203,24 +203,24 @@ export const ModalSheet: React.FC<ModalSheetProps> = ({
             initial="hidden"
             animate="show"
             exit="exit"
-            className={`w-full ${maxWidthMap[maxWidth]} bg-[#0f1118] border border-white/10 sm:rounded-2xl rounded-t-3xl shadow-[0_25px_65px_-12px_rgba(0,0,0,0.95),0_0_1px_1px_rgba(255,255,255,0.1)] flex flex-col ${
+            className={`w-full ${maxWidthMap[maxWidth]} bg-[#0c0e14]/95 border border-white/10 sm:rounded-[28px] rounded-t-[32px] shadow-[0_30px_90px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.15)] grain-overlay flex flex-col ${
               fullHeightOnMobile ? 'h-[92dvh] sm:h-auto' : 'max-h-[92dvh] sm:max-h-[85dvh]'
             } sm:my-auto outline-none overflow-hidden ${className}`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Mobile pull indicator */}
-            <div className="w-full flex sm:hidden items-center justify-center pt-2.5 pb-1">
-              <div className="w-10 h-1 rounded-full bg-zinc-700/60" />
+            <div className="w-full flex sm:hidden items-center justify-center pt-3 pb-1">
+              <div className="w-12 h-1.5 rounded-full bg-white/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]" />
             </div>
 
             {/* Sticky Header */}
             {(title || !hideCloseButton) && (
               <header
-                className={`sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3.5 sm:py-4 bg-[#121520]/95 backdrop-blur-lg border-b border-white/[0.08] shrink-0 ${headerClassName}`}
+                className={`sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-4 bg-[#0e111a]/90 backdrop-blur-xl border-b border-white/[0.08] shrink-0 ${headerClassName}`}
               >
                 <div className="flex items-center gap-3 min-w-0 pr-2">
                   {icon && (
-                    <div className="p-2 rounded-xl bg-zinc-900 border border-white/10 text-[#b5ff00] shrink-0">
+                    <div className="p-2.5 rounded-2xl bg-zinc-950/80 border border-white/10 text-[#b5ff00] shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
                       {icon}
                     </div>
                   )}
@@ -248,7 +248,7 @@ export const ModalSheet: React.FC<ModalSheetProps> = ({
                       type="button"
                       onClick={handleSafeClose}
                       aria-label="Close dialog"
-                      className="min-w-11 min-h-11 w-11 h-11 flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#b5ff00]"
+                      className="min-w-11 min-h-11 w-11 h-11 flex items-center justify-center rounded-full text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] active:scale-95"
                     >
                       <X className="w-5 h-5" />
                     </button>
@@ -267,7 +267,7 @@ export const ModalSheet: React.FC<ModalSheetProps> = ({
             {/* Sticky Footer */}
             {footer && (
               <footer
-                className={`sticky bottom-0 z-10 px-4 sm:px-6 py-3.5 sm:py-4 bg-[#121520]/95 backdrop-blur-lg border-t border-white/[0.08] pb-safe shrink-0 ${footerClassName}`}
+                className={`sticky bottom-0 z-10 px-4 sm:px-6 py-3.5 sm:py-4 bg-[#0e111a]/90 backdrop-blur-xl border-t border-white/[0.08] pb-safe shrink-0 ${footerClassName}`}
               >
                 {footer}
               </footer>

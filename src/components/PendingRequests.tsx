@@ -391,7 +391,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
             return (
               <div
                 key={req.id}
-                className="rounded-3xl glass-panel p-5 sm:p-6 space-y-4 hover:border-amber-500/40 transition-all shadow-md flex flex-col justify-between spatial-card"
+                className="rounded-[28px] p-5 sm:p-6 bg-[#0c0e14]/85 border border-white/10 hover:border-amber-500/40 shadow-[0_15px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.1)] grain-overlay space-y-4 flex flex-col justify-between"
               >
                 <div className="space-y-3.5">
                   {/* Card Header: User Google Identity */}
@@ -528,7 +528,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       <button
                         onClick={() => handleApprove(req, currentlyChosenMemberId)}
                         disabled={isProcessing}
-                        className="flex-1 py-2.5 px-3 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
+                        className="btn-glossy-primary flex-1 py-2.5 px-4 rounded-full text-black font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-11"
                         title="Stages the approval and waits for user acceptance"
                       >
                         {isProcessing ? (
@@ -546,10 +546,10 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       <button
                         onClick={() => handleDirectActivate(req, currentlyChosenMemberId)}
                         disabled={isProcessing}
-                        className="py-2.5 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
+                        className="btn-glossy-secondary py-2.5 px-4 rounded-full text-[#2DE2E6] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-11"
                         title="Instantly activates this member without requiring acceptance"
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5 text-black" />
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[#2DE2E6]" />
                         <span>Activate Directly</span>
                       </button>
                     </>
@@ -557,9 +557,9 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                     <button
                       onClick={() => handleApprove(req)}
                       disabled={isProcessing}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.3)] active:scale-95 disabled:opacity-50 min-h-11"
+                      className="btn-glossy-secondary flex-1 py-2.5 px-4 rounded-full text-[#2DE2E6] font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 min-h-11"
                     >
-                      <UserPlus className="h-3.5 w-3.5 text-black" />
+                      <UserPlus className="h-3.5 w-3.5 text-[#2DE2E6]" />
                       <span>Register &amp; Link New</span>
                     </button>
                   )}
@@ -568,7 +568,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                     <button
                       onClick={() => setConfirmRejectUser(req)}
                       disabled={isProcessing}
-                      className="py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-red-950/60 hover:text-red-400 border border-white/10 neu-button text-zinc-400 text-xs font-semibold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-11"
+                      className="btn-glossy-danger py-2.5 px-4 rounded-full text-xs font-semibold uppercase tracking-wider cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 min-h-11"
                       title="Decline membership access for this account"
                     >
                       <XCircle className="h-3.5 w-3.5" />

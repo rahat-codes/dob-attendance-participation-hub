@@ -457,7 +457,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/85 backdrop-blur-xl p-0 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg rounded-t-3xl sm:rounded-3xl glass-modal shadow-2xl overflow-hidden my-0 sm:my-6 spatial-card border border-white/10 max-h-[92dvh] flex flex-col">
+      <div className="relative w-full max-w-lg rounded-t-[32px] sm:rounded-[28px] bg-[#0c0e14]/95 border border-white/10 shadow-[0_30px_90px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.15)] grain-overlay overflow-hidden my-0 sm:my-6 max-h-[92dvh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-white/10 px-4 sm:px-6 py-3.5 bg-white/[0.02] shrink-0 sticky top-0 z-10">
           <div className="flex items-center gap-2">
@@ -776,7 +776,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                   }
                 }}
                 disabled={!manualCode.trim() || isProcessing}
-                className="w-full min-h-11 py-3 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] disabled:opacity-50 text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-white"
+                className="btn-glossy-primary w-full min-h-11 py-3.5 px-6 rounded-full disabled:opacity-50 text-black font-bold text-xs uppercase tracking-wider cursor-pointer flex items-center justify-center"
               >
                 Verify Code &amp; Record Attendance
               </button>

@@ -216,7 +216,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
             type="button"
             disabled={isSubmitting}
             onClick={onClose}
-            className="flex-1 sm:flex-initial py-2.5 px-4 rounded-xl bg-[#141720] hover:bg-[#191c27] text-zinc-300 font-bold uppercase tracking-wider text-xs neu-button transition-colors cursor-pointer disabled:opacity-50 min-h-11"
+            className="btn-glossy-secondary flex-1 sm:flex-initial py-2.5 px-5 rounded-full text-zinc-300 font-bold uppercase tracking-wider text-xs transition-colors cursor-pointer disabled:opacity-50 min-h-11"
           >
             Cancel
           </button>
@@ -227,7 +227,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
               if (form) form.requestSubmit();
             }}
             disabled={isSubmitting}
-            className="flex-1 sm:flex-initial py-2.5 px-5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold uppercase tracking-wider text-xs transition-all cursor-pointer shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 min-h-11"
+            className="btn-glossy-primary flex-1 sm:flex-initial py-2.5 px-6 rounded-full text-black font-bold uppercase tracking-wider text-xs transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 min-h-11"
           >
             {isSubmitting ? (
               <>

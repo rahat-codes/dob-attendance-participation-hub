@@ -562,7 +562,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 await signOutUser();
                 onClose();
               }}
-              className="flex-1 py-3 px-4 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-xs text-zinc-300 font-mono transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-11"
+              className="btn-glossy-secondary flex-1 py-3 px-5 rounded-full text-xs text-zinc-300 font-mono transition-colors cursor-pointer flex items-center justify-center gap-2 min-h-11"
             >
               <LogOut className="h-4 w-4" />
               <span>Sign Out</span>
@@ -581,7 +581,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
               if (ok) onClose();
             }}
             disabled={signingIn}
-            className="w-full py-3.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-sm font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-11 flex items-center justify-center gap-2 disabled:opacity-50"
+            className="btn-glossy-primary w-full py-3.5 px-6 rounded-full text-black text-sm font-bold font-display uppercase tracking-wider cursor-pointer min-h-11 flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <span>{signingIn ? 'Connecting...' : 'Sign in with Google'}</span>
           </button>

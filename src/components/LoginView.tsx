@@ -16,6 +16,7 @@ import {
   HelpCircle,
   Trophy,
 } from 'lucide-react';
+import { Field } from '../ui/Field';
 
 interface LoginViewProps {
   onContinueAsGuest?: () => void;
@@ -112,16 +113,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
         {/* State 1 & 2: Not Signed In / Signing In / Error */}
         {(!user || membershipState === 'not_authenticated' || membershipState === 'signing_in' || membershipState === 'error') && (
-          <div className="glass-panel rounded-3xl p-6 sm:p-8 spatial-card space-y-6">
+          <div className="rounded-[28px] p-6 sm:p-9 bg-[#0c0e14]/85 border border-white/10 shadow-[0_30px_90px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.15)] grain-overlay backdrop-blur-2xl space-y-6">
             <div className="space-y-2 text-center">
-              <h2 className="text-lg font-bold text-white font-display uppercase tracking-tight">Workshop &amp; Meeting Check-In</h2>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Sign in with your Google account to scan workshop QR codes, track your build streak, and view active meeting sessions.
+              <h2 className="text-xl font-bold text-white font-display uppercase tracking-tight">Workshop &amp; Meeting Check-In</h2>
+              <p className="text-xs text-zinc-400 leading-relaxed max-w-sm mx-auto">
+                Sign in with your Google account to scan workshop QR codes, track your build streak, and access club sessions.
               </p>
             </div>
 
             {authError && (
-              <div className="p-4 rounded-2xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs space-y-2.5 neu-raised-sm">
+              <div className="p-4 rounded-2xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs space-y-2.5">
                 <div className="flex items-start gap-2.5">
                   <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-400" />
                   <div className="flex-1">
@@ -141,7 +142,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     type="button"
                     onClick={handleSignIn}
                     disabled={signingIn}
-                    className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-500/35 text-red-100 border border-red-500/40 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                    className="btn-glossy-secondary px-3 py-1.5 rounded-full text-red-100 border-red-500/40 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-all"
                   >
                     <RefreshCw className={`h-3 w-3 ${signingIn ? 'animate-spin' : ''}`} />
                     <span>Retry Sign-In</span>
@@ -150,7 +151,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     <button
                       type="button"
                       onClick={onContinueAsGuest}
-                      className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                      className="btn-glossy-secondary px-3 py-1.5 rounded-full text-zinc-300 hover:text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer transition-all"
                     >
                       <Trophy className="h-3 w-3 text-[#b5ff00]" />
                       <span>Browse Public Hub</span>
@@ -164,7 +165,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               type="button"
               onClick={handleSignIn}
               disabled={signingIn || loading}
-              className="w-full py-3.5 px-4 rounded-2xl bg-[#b5ff00] hover:bg-[#c4ff26] active:scale-[0.99] text-black font-bold text-sm tracking-wide transition-all shadow-[0_0_20px_rgba(181,255,0,0.25)] flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border border-white/30"
+              className="btn-glossy-primary w-full py-3.5 px-6 rounded-full font-bold text-sm tracking-wide flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {signingIn ? (
                 <>
@@ -173,7 +174,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 </>
               ) : (
                 <>
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                     <path
                       fill="currentColor"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -196,11 +197,50 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               )}
             </button>
 
+            {/* Reference 2: Continue With Divider & Circular Provider Button */}
+            <div className="space-y-4 pt-1">
+              <div className="relative flex items-center justify-center">
+                <div className="w-full border-t border-white/10" />
+                <span className="absolute px-3 bg-[#0d0f17] text-[10px] uppercase font-mono font-bold tracking-widest text-zinc-500 rounded-full">
+                  or continue with
+                </span>
+              </div>
+
+              <div className="flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={handleSignIn}
+                  disabled={signingIn || loading}
+                  aria-label="Sign in using Google Provider"
+                  className="w-14 h-14 rounded-full orb-pearl flex items-center justify-center shadow-lg transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] cursor-pointer"
+                >
+                  <svg className="w-6 h-6" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.7 1 4 3.5 2.2 7.1l3.7 2.8C6.7 7.3 9.1 5 12 5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M22.6 12.3c0-.8-.1-1.5-.2-2.3H12v4.3h6c-.3 1.4-1.1 2.5-2.2 3.3l3.6 2.8c2.1-1.9 3.2-4.8 3.2-8.1z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.9 14.1c-.2-.7-.3-1.4-.3-2.1s.1-1.4.3-2.1V7.1H2.2C1.4 8.6 1 10.2 1 12s.43 3.45 1.2 4.9l3.7-2.8z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.8c-1 .7-2.3 1.1-3.7 1.1-2.9 0-5.3-2.3-6.1-4.9L2.2 16.5C4 20.1 7.7 23 12 23z"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
             {onContinueAsGuest && (
               <button
                 type="button"
                 onClick={onContinueAsGuest}
-                className="w-full py-3 px-4 rounded-2xl bg-[#141720] hover:bg-[#1c202d] text-zinc-200 hover:text-white border border-[#b5ff00]/40 neu-button font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2.5 cursor-pointer font-mono shadow-[0_0_15px_rgba(181,255,0,0.15)]"
+                className="btn-glossy-secondary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 cursor-pointer font-mono"
               >
                 <Trophy className="h-4 w-4 text-[#b5ff00]" />
                 <span>Explore Public Hub (Leaderboard &amp; Meetings)</span>
@@ -256,22 +296,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmitLinkRequest} className="space-y-3">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-400 font-mono">
-                  Your Builder Handle or Name
-                </label>
-                <input
-                  type="text"
+              <form onSubmit={handleSubmitLinkRequest} className="space-y-4">
+                <Field
+                  label="Your Builder Handle or Name"
                   required
                   value={requestedHandle}
                   onChange={(e) => setRequestedHandle(e.target.value)}
                   placeholder="@yourhandle or Full Name"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-sm text-white focus:outline-none focus:border-[#b5ff00]"
                 />
                 <button
                   type="submit"
                   disabled={isSubmittingRequest}
-                  className="w-full py-2.5 px-4 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Send className="h-3.5 w-3.5" />
                   <span>Request Membership Link</span>

@@ -16,6 +16,7 @@ import { updateMemberSelfProfile } from '../firebase/firestoreService';
 import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
+import { Switch } from '../ui/Switch';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -188,7 +189,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="flex-1 sm:flex-initial px-4 py-2.5 rounded-xl bg-[#141720] hover:bg-[#191c27] text-zinc-300 text-xs font-semibold neu-button transition-colors cursor-pointer min-h-11"
+            className="btn-glossy-secondary flex-1 sm:flex-initial px-5 py-2.5 rounded-full text-zinc-300 text-xs font-semibold cursor-pointer min-h-11"
           >
             Cancel
           </button>
@@ -199,7 +200,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               if (form) form.requestSubmit();
             }}
             disabled={saving}
-            className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 min-h-11"
+            className="btn-glossy-primary flex-1 sm:flex-initial px-6 py-2.5 rounded-full text-black font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 min-h-11"
           >
             {saving ? (
               <>
@@ -441,22 +442,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               When enabled, your display name, builder rank, points, and tier appear on the public esports leaderboard. If turned off, you are completely omitted from the public collection.
             </p>
           </div>
-          <button
-            type="button"
+          <Switch
             id="public-leaderboard-toggle"
-            role="switch"
-            aria-checked={showOnLeaderboard}
-            onClick={() => setShowOnLeaderboard((prev) => !prev)}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#FF6A00] focus:ring-offset-2 focus:ring-offset-black ${
-              showOnLeaderboard ? 'bg-[#FF6A00]' : 'bg-zinc-800'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                showOnLeaderboard ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
+            checked={showOnLeaderboard}
+            onChange={setShowOnLeaderboard}
+            aria-label="Show me on the public leaderboard"
+          />
         </div>
 
         {/* Immutable Security Notice */}

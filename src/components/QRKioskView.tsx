@@ -315,7 +315,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             aria-label={soundEnabled ? 'Mute audio' : 'Enable audio'}
-            className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+            className="w-11 h-11 rounded-full orb-onyx flex items-center justify-center cursor-pointer"
           >
             {soundEnabled ? <Volume2 className="h-4 w-4 text-[#b5ff00]" /> : <VolumeX className="h-4 w-4" />}
           </button>
@@ -323,7 +323,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
           <button
             onClick={toggleFullscreen}
             aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-            className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-white/10 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer"
+            className="w-11 h-11 rounded-full orb-onyx flex items-center justify-center cursor-pointer"
           >
             {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
           </button>
@@ -331,7 +331,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
           <button
             onClick={handleExportCSV}
             aria-label="Export session attendance as CSV"
-            className="px-3.5 py-2.5 rounded-xl bg-[#141720] hover:bg-zinc-800 border border-white/10 text-xs font-mono text-zinc-200 flex items-center gap-1.5 min-h-[44px] cursor-pointer"
+            className="btn-glossy-secondary px-4 py-2.5 rounded-full text-xs font-mono text-zinc-200 flex items-center gap-1.5 min-h-[44px] cursor-pointer"
           >
             <Download className="h-3.5 w-3.5 text-[#b5ff00]" />
             <span className="hidden sm:inline">Export CSV</span>
@@ -351,7 +351,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
       {currentSession ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Main Stage: QR Projection Card */}
-          <div className="lg:col-span-7 xl:col-span-8 rounded-3xl glass-panel p-6 sm:p-10 spatial-card border border-white/10 text-center flex flex-col items-center justify-center relative overflow-hidden">
+          <div className="lg:col-span-7 xl:col-span-8 rounded-[28px] p-6 sm:p-10 bg-[#0c0e14]/90 border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.1)] grain-overlay text-center flex flex-col items-center justify-center relative overflow-hidden">
             <div className="absolute top-0 right-0 w-80 h-80 bg-[#b5ff00]/5 rounded-full blur-3xl pointer-events-none" />
 
             <div className="space-y-2 mb-6">

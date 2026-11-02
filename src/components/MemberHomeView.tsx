@@ -73,7 +73,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Builder Profile Header Banner */}
-      <div className="glass-panel rounded-3xl p-6 sm:p-8 relative overflow-hidden spatial-card">
+      <div className="rounded-[28px] p-6 sm:p-8 bg-[#0c0e14]/85 border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.1)] grain-overlay relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-[#b5ff00]/5 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-10 left-10 w-60 h-60 bg-orange-500/5 rounded-full blur-3xl pointer-events-none" />
 
@@ -97,7 +97,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
                 name={member.name}
                 alt={member.name}
                 shape="rounded"
-                className="w-16 h-16 sm:w-20 sm:h-20 border-2 border-[#b5ff00]/40 group-hover:border-[#b5ff00] neu-raised shadow-lg shadow-[#b5ff00]/10 transition-colors"
+                className="w-16 h-16 sm:w-20 sm:h-20 border-2 border-[#b5ff00]/40 group-hover:border-[#b5ff00] shadow-lg shadow-[#b5ff00]/10 transition-colors"
                 fallbackClassName="font-display font-black text-2xl text-[#b5ff00]"
               />
               <span className="absolute -bottom-1 -right-1 flex h-4 w-4 rounded-full bg-[#b5ff00] border-2 border-[#141720] items-center justify-center shadow-[0_0_8px_rgba(181,255,0,0.8)]">
@@ -110,7 +110,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
                 <h1 className="text-xl sm:text-2xl font-black text-white font-display">
                   {member.name}
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-lg bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] text-[11px] font-mono font-bold uppercase tracking-wider neu-raised-sm">
+                <span className="px-2.5 py-0.5 rounded-full bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] text-[11px] font-mono font-bold uppercase tracking-wider">
                   {member.role}
                 </span>
               </div>
@@ -121,7 +121,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
                 {member.tracks.map((track) => (
                   <span
                     key={track}
-                    className="px-2.5 py-0.5 rounded-lg bg-zinc-950/80 border border-white/5 neu-inset text-[10px] text-zinc-300 font-mono"
+                    className="px-2.5 py-0.5 rounded-full bg-zinc-950/80 border border-white/5 text-[10px] text-zinc-300 font-mono"
                   >
                     {track}
                   </span>
@@ -134,7 +134,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
             {onOpenEditProfile && (
               <button
                 onClick={onOpenEditProfile}
-                className="px-3.5 py-2 rounded-xl bg-[#141720] hover:bg-[#1b1f2b] text-zinc-200 border border-white/10 neu-button text-xs font-bold font-mono transition-colors cursor-pointer flex items-center gap-1.5"
+                className="btn-glossy-secondary px-4 py-2 rounded-full text-zinc-200 text-xs font-bold font-mono transition-colors cursor-pointer flex items-center gap-1.5"
               >
                 <User className="h-4 w-4 text-[#b5ff00]" />
                 <span>Edit Profile</span>
@@ -143,7 +143,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
 
             <button
               onClick={onViewPass}
-              className="px-4 py-2 rounded-xl bg-[#b5ff00]/10 hover:bg-[#b5ff00]/20 text-[#b5ff00] border border-[#b5ff00]/40 neu-raised-sm text-xs font-bold font-mono transition-all cursor-pointer flex items-center gap-2"
+              className="btn-glossy-secondary px-5 py-2 rounded-full text-[#b5ff00] border-[#b5ff00]/40 text-xs font-bold font-mono transition-all cursor-pointer flex items-center gap-2"
             >
               <QrCode className="h-4 w-4 text-[#b5ff00]" />
               <span>Digital Builder Pass</span>
@@ -239,12 +239,12 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
       {/* Target Meeting Action Section */}
       {targetSession ? (
         <div
-          className={`rounded-3xl p-6 sm:p-8 backdrop-blur-xl transition-all spatial-card ${
+          className={`rounded-[28px] p-6 sm:p-8 bg-[#0c0e14]/85 border shadow-[0_20px_60px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.1)] grain-overlay transition-all ${
             temporalInfo?.isOpenNow
-              ? 'glass-panel border-[#b5ff00]/40 shadow-[0_12px_40px_rgba(0,0,0,0.6),0_0_25px_rgba(181,255,0,0.1)] ring-1 ring-[#b5ff00]/30'
+              ? 'border-[#b5ff00]/40 shadow-[0_0_35px_rgba(181,255,0,0.15)] ring-1 ring-[#b5ff00]/30'
               : temporalInfo?.badgeVariant === 'upcoming_soon'
-              ? 'glass-panel border-amber-500/30 shadow-[0_10px_30px_rgba(0,0,0,0.5)]'
-              : 'glass-panel border-white/10'
+              ? 'border-amber-500/30'
+              : 'border-white/10'
           }`}
         >
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -325,9 +325,9 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
               ) : temporalInfo?.isOpenNow ? (
                 <button
                   onClick={onOpenScanner}
-                  className="py-4 px-6 sm:px-8 rounded-2xl bg-[#b5ff00] hover:bg-[#c4ff26] active:scale-[0.98] text-black font-display font-black text-sm uppercase tracking-wider transition-all shadow-[0_0_25px_rgba(181,255,0,0.35)] flex items-center justify-center gap-3 cursor-pointer group border border-white/30"
+                  className="btn-glossy-primary py-4 px-8 rounded-full text-black font-display font-black text-sm uppercase tracking-wider flex items-center justify-center gap-3 cursor-pointer group"
                 >
-                  <QrCode className="h-5 w-5 group-hover:scale-110 transition-transform" />
+                  <QrCode className="h-5 w-5 group-hover:scale-110 transition-transform text-black" />
                   <span>Scan Meeting QR Code</span>
                 </button>
               ) : temporalInfo?.isUpcoming ? (

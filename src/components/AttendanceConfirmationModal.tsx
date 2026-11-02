@@ -86,7 +86,7 @@ export const AttendanceConfirmationModal: React.FC<AttendanceConfirmationModalPr
                 onClose();
                 onViewPass(member);
               }}
-              className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 text-zinc-200 text-xs font-bold font-display uppercase tracking-wider flex items-center justify-center gap-2 transition-all neu-button cursor-pointer min-h-11"
+              className="btn-glossy-secondary w-full sm:flex-1 py-3 px-5 rounded-full text-zinc-200 text-xs font-bold font-display uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer min-h-11"
             >
               <QrCode className="h-4 w-4 text-[#b5ff00]" />
               <span>View My Digital Pass</span>
@@ -96,7 +96,7 @@ export const AttendanceConfirmationModal: React.FC<AttendanceConfirmationModalPr
           <button
             type="button"
             onClick={onClose}
-            className="w-full sm:flex-1 py-3 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-xs font-bold font-display uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_0_20px_rgba(181,255,0,0.4)] active:scale-98 min-h-11"
+            className="btn-glossy-primary w-full sm:flex-1 py-3 px-6 rounded-full text-black text-xs font-bold font-display uppercase tracking-wider flex items-center justify-center gap-2 transition-all cursor-pointer min-h-11"
           >
             <CheckCircle2 className="h-4 w-4 text-black" />
             <span>Done / Keep Exploring</span>

@@ -127,9 +127,9 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
         {isAdmin ? (
           <button
             onClick={onOpenNewSession}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c4ff26] rounded-xl uppercase tracking-wider transition-all whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 cursor-pointer font-mono border border-white/20"
+            className="btn-glossy-primary flex items-center gap-1.5 px-5 py-2.5 text-xs font-bold text-black rounded-full uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer font-mono"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4 text-black" />
             <span>New Build Session</span>
           </button>
         ) : (

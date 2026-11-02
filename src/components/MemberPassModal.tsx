@@ -57,7 +57,7 @@ export const MemberPassModal: React.FC<MemberPassModalProps> = ({ member, onClos
           <button
             type="button"
             onClick={handleDownloadQR}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 neu-button text-zinc-200 hover:text-[#b5ff00] text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11"
+            className="btn-glossy-secondary flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-full text-zinc-200 hover:text-[#b5ff00] text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11"
             title="Download QR code image"
           >
             <Download className="h-4 w-4 text-[#b5ff00]" />
@@ -66,7 +66,7 @@ export const MemberPassModal: React.FC<MemberPassModalProps> = ({ member, onClos
           <button
             type="button"
             onClick={handlePrint}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 neu-button text-zinc-200 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11"
+            className="btn-glossy-secondary flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-full text-zinc-200 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11"
           >
             <Printer className="h-4 w-4 text-zinc-400" />
             <span>Print Pass</span>
@@ -74,7 +74,7 @@ export const MemberPassModal: React.FC<MemberPassModalProps> = ({ member, onClos
           <button
             type="button"
             onClick={onClose}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-xs font-bold uppercase tracking-wider transition-all text-center cursor-pointer shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 min-h-11"
+            className="btn-glossy-primary w-full sm:w-auto px-6 py-2.5 rounded-full text-black text-xs font-bold uppercase tracking-wider text-center cursor-pointer min-h-11"
           >
             Done
           </button>

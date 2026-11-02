@@ -197,7 +197,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
             <>
               <button
                 onClick={handleExportRosterCSV}
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-wider text-zinc-300 bg-zinc-950 border border-zinc-800 rounded-full hover:bg-zinc-900 hover:border-[#b5ff00]/60 hover:text-[#b5ff00] transition-all whitespace-nowrap cursor-pointer shadow-xs"
+                className="btn-glossy-secondary flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-300 rounded-full transition-all whitespace-nowrap cursor-pointer font-mono"
                 title="Export complete roster to CSV for external database management"
               >
                 <Download className="h-3.5 w-3.5 text-zinc-400 group-hover:text-[#b5ff00]" />
@@ -206,9 +206,9 @@ export const MembersView: React.FC<MembersViewProps> = ({
 
               <button
                 onClick={onOpenAddMember}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-black bg-[#b5ff00] hover:bg-[#c6ff24] rounded-full uppercase tracking-wider transition-all whitespace-nowrap shadow-[0_0_15px_rgba(181,255,0,0.25)] hover:shadow-[0_0_20px_rgba(181,255,0,0.4)] active:scale-95 cursor-pointer"
+                className="btn-glossy-primary flex items-center gap-1.5 px-5 py-2.5 text-xs font-bold text-black rounded-full uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer font-mono"
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-4 w-4 text-black" />
                 <span>Add Builder</span>
               </button>
             </>

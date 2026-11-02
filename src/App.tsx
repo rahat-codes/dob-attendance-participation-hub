@@ -47,6 +47,7 @@ import {
 } from './firebase/firestoreService';
 import { Navbar, NavigationTab } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
+import { IslandNav } from './ui/IslandNav';
 import { m, AnimatePresence } from 'motion/react';
 import { fadeUp, fade, spring } from './motion/presets';
 import { BottomTabBar } from './components/BottomTabBar';
@@ -957,8 +958,8 @@ export default function App() {
         Skip to main content
       </a>
 
-      {/* Universal Top Navigation */}
-      <Navbar
+      {/* Floating Island Navigation (Desktop top center, Mobile bottom) */}
+      <IslandNav
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
         onOpenQuickScan={() => setIsScannerOpen(true)}
@@ -968,18 +969,17 @@ export default function App() {
         }}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
-        members={members}
         pendingRequestsCount={pendingRequestsCount}
         unreadNotificationsCount={unreadNotificationsCount}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
         onOpenBackup={() => setIsBackupOpen(true)}
         onOpenMore={() => setIsMoreOpen(true)}
-        onToggleSidebar={() => setIsMoreOpen((prev) => !prev)}
         onOpenEditProfile={() => setIsEditProfileOpen(true)}
         onViewPass={() => {
           if (linkedMember) setSelectedPassMember(linkedMember);
         }}
+        isModalOpen={isAnyModalOpen}
       />
 
 
@@ -1130,7 +1130,7 @@ export default function App() {
         <main
           id="main"
           tabIndex={-1}
-          className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 py-6 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-8 focus:outline-none"
+          className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pt-4 lg:pt-24 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-12 focus:outline-none"
         >
         <Suspense
           fallback={
@@ -1384,19 +1384,6 @@ export default function App() {
           </div>
         </div>
       </footer>
-
-      {/* Mobile Fixed Bottom Tab Bar (< 768px) */}
-      <BottomTabBar
-        activeTab={activeTab}
-        onSelectTab={handleSelectTab}
-        onOpenQuickScan={() => setIsScannerOpen(true)}
-        onOpenMore={() => setIsMoreOpen(true)}
-        onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
-        onOpenGuide={() => setIsGuideOpen(true)}
-        pendingRequestsCount={pendingRequestsCount}
-        unreadNotificationsCount={unreadNotificationsCount}
-        isModalOpen={isAnyModalOpen}
-      />
 
       {/* Mobile Collapsible Sidebar Drawer (< lg) */}
       <AnimatePresence>
