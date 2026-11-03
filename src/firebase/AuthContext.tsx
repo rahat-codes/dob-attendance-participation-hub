@@ -295,8 +295,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const code = err?.code || '';
       console.error('Sign-in error detail:', code, err);
 
-      if (code === 'auth/popup-closed-by-user') {
-        // User closed the popup window; never trigger redirect
+      if (
+        code === 'auth/popup-closed-by-user' ||
+        code === 'auth/cancelled-popup-request' ||
+        code === 'auth/user-cancelled'
+      ) {
+        // User closed the popup window; never trigger redirect or display error
         return false;
       }
 
@@ -311,11 +315,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (redirectErr: any) {
           console.error('Redirect sign-in error detail:', redirectErr);
           const redirectCode = redirectErr?.code || '';
-          if (redirectCode === 'auth/popup-closed-by-user') {
+          if (
+            redirectCode === 'auth/popup-closed-by-user' ||
+            redirectCode === 'auth/cancelled-popup-request' ||
+            redirectCode === 'auth/user-cancelled'
+          ) {
             return false;
           }
           if (redirectCode === 'auth/network-request-failed') {
-            setAuthError('Network error connecting to sign-in service. Please check your connection.');
+            setAuthError('Network error connecting to sign-in service. Please check your connection and try again.');
           } else if (redirectCode === 'auth/unauthorized-domain') {
             setAuthError('This domain is not authorized for authentication. Please contact an admin.');
           } else {
@@ -326,7 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (code === 'auth/network-request-failed') {
-        setAuthError('Network error connecting to sign-in service. Please check your connection.');
+        setAuthError('Network error connecting to sign-in service. Please check your connection and try again.');
       } else if (code === 'auth/unauthorized-domain') {
         setAuthError('This domain is not authorized for authentication. Please contact an admin.');
       } else {

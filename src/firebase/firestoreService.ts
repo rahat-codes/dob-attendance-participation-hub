@@ -524,8 +524,7 @@ export async function requestMembershipLink(userId: string, requestedNotes?: str
   const userRef = doc(db, USERS_COLLECTION, userId);
   try {
     await updateDoc(userRef, {
-      status: 'pending',
-      requestedNotes: requestedNotes || '',
+      requestedNotes: (requestedNotes || '').trim(),
       membershipRequestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
