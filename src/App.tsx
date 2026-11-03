@@ -1130,7 +1130,7 @@ export default function App() {
         <main
           id="main"
           tabIndex={-1}
-          className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pt-4 lg:pt-24 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-12 focus:outline-none"
+          className="flex-1 min-w-0 px-4 sm:px-6 lg:px-8 pt-4 lg:pt-24 pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-12 focus:outline-none"
         >
         <Suspense
           fallback={

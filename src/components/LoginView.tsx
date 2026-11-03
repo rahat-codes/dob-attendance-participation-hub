@@ -39,11 +39,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     declineMembershipInvitation,
     signingIn,
     loading,
+    reRequestAccess,
   } = useAuth();
 
   const [requestedHandle, setRequestedHandle] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [requestSubmittedSuccess, setRequestSubmittedSuccess] = useState(false);
+  const [isEditingPendingHandle, setIsEditingPendingHandle] = useState(false);
+  const [reApplyNotes, setReApplyNotes] = useState('');
+  const [isReApplying, setIsReApplying] = useState(false);
   const [isRespondingToOffer, setIsRespondingToOffer] = useState(false);
   const [respondError, setRespondError] = useState<string | null>(null);
 
@@ -76,14 +81,30 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
   const handleSubmitLinkRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!requestedHandle.trim()) return;
     setIsSubmittingRequest(true);
+    setLinkError(null);
     try {
-      await requestMembershipLink(requestedHandle);
+      await requestMembershipLink(requestedHandle.trim());
       setRequestSubmittedSuccess(true);
-    } catch (err) {
-      console.error(err);
+      setIsEditingPendingHandle(false);
+    } catch (err: any) {
+      setLinkError(err?.message || 'Failed to submit membership request.');
     } finally {
       setIsSubmittingRequest(false);
+    }
+  };
+
+  const handleReApply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsReApplying(true);
+    setLinkError(null);
+    try {
+      await reRequestAccess(reApplyNotes.trim());
+    } catch (err: any) {
+      setLinkError(err?.message || 'Failed to submit membership re-application.');
+    } finally {
+      setIsReApplying(false);
     }
   };
 
@@ -111,8 +132,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
           </p>
         </div>
 
-        {/* State 1 & 2: Not Signed In / Signing In / Error */}
-        {(!user || membershipState === 'not_authenticated' || membershipState === 'signing_in' || membershipState === 'error') && (
+        {/* State 1 & 2: Not Signed In / Signing In */}
+        {(!user || membershipState === 'not_authenticated' || membershipState === 'signed_out' || membershipState === 'signing_in') && !loading && (
           <div className="rounded-[28px] p-6 sm:p-9 bg-[#0c0e14]/85 border border-white/10 shadow-[0_30px_90px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.15)] grain-overlay backdrop-blur-2xl space-y-6">
             <div className="space-y-2 text-center">
               <h2 className="text-xl font-bold text-white font-display uppercase tracking-tight">Workshop &amp; Meeting Check-In</h2>
@@ -256,18 +277,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 3: Loading Profile */}
-        {user && membershipState === 'loading_profile' && (
+        {(loading || membershipState === 'loading' || membershipState === 'loading_profile') && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-8 backdrop-blur-xl shadow-2xl text-center space-y-4">
             <RefreshCw className="h-8 w-8 text-[#b5ff00] animate-spin mx-auto" />
             <h2 className="text-base font-bold text-white">Verifying Builder Credentials...</h2>
             <p className="text-xs text-zinc-400">
-              Retrieving member profile and access level for {user.email}.
+              Retrieving member profile and access level for {user?.email || 'your account'}.
             </p>
           </div>
         )}
 
         {/* State 6: Authenticated but Not Linked to Member */}
-        {user && membershipState === 'unlinked' && (
+        {user && !loading && membershipState === 'unlinked' && (
           <div className="bg-zinc-900/90 border border-amber-800/60 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shrink-0">
@@ -282,8 +303,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              Your Google account is signed in, but it is not linked to a registered builder profile in the club directory.
+              Your Google account is signed in, but it is not linked to a registered builder profile in the club directory. Enter your builder handle or full name to submit a link request to administrators.
             </p>
+
+            {linkError && (
+              <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                <span>{linkError}</span>
+              </div>
+            )}
 
             {requestSubmittedSuccess ? (
               <div className="p-4 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-xs text-zinc-200 space-y-1">
@@ -306,10 +334,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 />
                 <button
                   type="submit"
-                  disabled={isSubmittingRequest}
-                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2"
+                  disabled={isSubmittingRequest || !requestedHandle.trim()}
+                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  {isSubmittingRequest ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
                   <span>Request Membership Link</span>
                 </button>
               </form>
@@ -317,6 +349,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
             <div className="flex items-center justify-between pt-3 border-t border-zinc-800/80 gap-2">
               <button
+                type="button"
                 onClick={refreshProfile}
                 className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 cursor-pointer"
               >
@@ -324,6 +357,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 <span>Check Status</span>
               </button>
               <button
+                type="button"
                 onClick={signOutUser}
                 className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1.5 cursor-pointer"
               >
@@ -335,7 +369,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State: Registration Failure (ensureUserProfile failed) */}
-        {user && (registrationError || (membershipState === 'error' && authError)) && (
+        {user && !loading && (registrationError || (membershipState === 'error' && authError)) && (
           <div className="bg-zinc-900/90 border border-red-500/40 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto">
               <AlertCircle className="h-6 w-6" />
@@ -369,7 +403,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 7: Membership Pending Admin Approval */}
-        {user && membershipState === 'pending' && !registrationError && (
+        {user && !loading && membershipState === 'pending' && !registrationError && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mx-auto">
               <RefreshCw className="h-6 w-6 animate-spin" />
@@ -385,20 +419,75 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               </p>
             </div>
 
+            {linkError && (
+              <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs flex items-start gap-2 text-left">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                <span>{linkError}</span>
+              </div>
+            )}
+
             <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs space-y-2 font-mono">
               <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
                 <span className="text-zinc-400">Account:</span>
                 <span className="text-white truncate max-w-[200px]">{user.email}</span>
               </div>
+              <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                <span className="text-zinc-400">Builder Handle / Name:</span>
+                <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">
+                  {profile?.requestedNotes || 'Awaiting entry'}
+                </span>
+              </div>
               <div className="flex items-center justify-between">
                 <span className="text-zinc-400">Submitted at:</span>
-                <span className="text-[#b5ff00]">
-                  {profile?.createdAt
-                    ? new Date(profile.createdAt).toLocaleString()
+                <span className="text-zinc-300">
+                  {profile?.membershipRequestedAt || profile?.createdAt
+                    ? new Date((profile.membershipRequestedAt || profile.createdAt) as string).toLocaleString()
                     : new Date().toLocaleString()}
                 </span>
               </div>
             </div>
+
+            {isEditingPendingHandle ? (
+              <form onSubmit={handleSubmitLinkRequest} className="space-y-3 pt-2 text-left">
+                <Field
+                  label="Update Builder Handle or Name"
+                  required
+                  value={requestedHandle}
+                  onChange={(e) => setRequestedHandle(e.target.value)}
+                  placeholder="@yourhandle or Full Name"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmittingRequest || !requestedHandle.trim()}
+                    className="btn-glossy-primary flex-1 py-2 px-3 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmittingRequest ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                    <span>Save</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPendingHandle(false)}
+                    className="btn-glossy-secondary py-2 px-4 rounded-full text-xs font-semibold text-zinc-300 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRequestedHandle(profile?.requestedNotes || '');
+                    setIsEditingPendingHandle(true);
+                  }}
+                  className="text-xs text-[#b5ff00] hover:underline font-mono cursor-pointer"
+                >
+                  Edit handle / note
+                </button>
+              </div>
+            )}
 
             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs text-zinc-400">
               <p className="font-semibold text-zinc-300">Next Steps:</p>
@@ -411,6 +500,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
             <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
               <button
+                type="button"
                 onClick={refreshProfile}
                 className="w-full py-2.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
@@ -418,6 +508,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 <span>Check Approval Status</span>
               </button>
               <button
+                type="button"
                 onClick={signOutUser}
                 className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
@@ -512,29 +603,48 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 7C: Declined Membership */}
-        {user && membershipState === 'declined' && (
+        {user && !loading && membershipState === 'declined' && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-4 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
               <AlertCircle className="h-6 w-6" />
             </div>
             <h2 className="text-base font-bold text-white">Membership Invitation Declined</h2>
             <p className="text-xs text-zinc-400">
-              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If this was a mistake, you can submit a new request.
+              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If this was a mistake or you wish to join again, you can submit a re-application.
             </p>
-            <div className="flex gap-2 justify-center pt-2">
-              <button
-                onClick={() => requestMembershipLink()}
-                className="py-2.5 px-4 rounded-xl bg-[#b5ff00] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
-              >
-                Re-apply for Membership
-              </button>
-              <button
-                onClick={signOutUser}
-                className="py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition-colors cursor-pointer"
-              >
-                Sign Out
-              </button>
-            </div>
+
+            {linkError && (
+              <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                <span>{linkError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleReApply} className="space-y-3 pt-1 text-left">
+              <Field
+                label="Message or Handle to Organizers (Optional)"
+                value={reApplyNotes}
+                onChange={(e) => setReApplyNotes(e.target.value)}
+                placeholder="Reason for re-applying or your handle"
+              />
+              <div className="flex gap-2 justify-center pt-2">
+                <button
+                  type="submit"
+                  disabled={isReApplying}
+                  className="py-2.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isReApplying ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  <span>Re-apply for Membership</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={signOutUser}
+                  className="py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </form>
           </div>
         )}
 

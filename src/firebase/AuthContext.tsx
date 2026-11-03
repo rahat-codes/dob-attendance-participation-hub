@@ -377,6 +377,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await reRequestMembership(user.uid, notes);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to re-submit membership request.');
+      throw err;
     }
   };
 
@@ -386,6 +387,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await requestLink(user.uid, notes);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to submit membership request.');
+      throw err;
     }
   };
 
@@ -433,7 +435,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   } else if (profile.status === 'declined') {
     membershipPhase = 'declined';
   } else {
-    membershipPhase = 'pending';
+    // If pending, check if unlinked (user has not submitted a requested handle/notes yet)
+    if (!profile.requestedNotes || !profile.requestedNotes.trim()) {
+      membershipPhase = 'unlinked';
+    } else {
+      membershipPhase = 'pending';
+    }
   }
 
   const isApprovedMember = Boolean(profile?.status === 'active' && profile?.memberId);

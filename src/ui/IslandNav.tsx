@@ -162,15 +162,15 @@ export const IslandNav: React.FC<IslandNavProps> = ({
           ========================================================================= */}
       <nav
         aria-label="Mobile Island Navigation"
-        className={`lg:hidden fixed left-4 right-4 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-40 max-w-lg mx-auto island-nav rounded-full px-2.5 py-1.5 transition-all duration-200 ${
+        className={`lg:hidden fixed left-3 right-3 bottom-[calc(env(safe-area-inset-bottom)+8px)] z-40 max-w-[380px] mx-auto island-nav rounded-full px-2 py-1 shadow-2xl transition-all duration-200 ${
           isModalOpen ? 'opacity-30 pointer-events-none scale-95' : 'opacity-100 scale-100'
         }`}
       >
-        <div className="flex items-center justify-around gap-1">
+        <div className="flex items-center justify-between gap-0.5 px-0.5">
           {mobileNavItems.map((item) => {
             const Icon = item.icon;
 
-            // Center Scan Action Orb (prominent tactile lime pill)
+            // Center Scan Action Orb (compact tactile lime pill)
             if (item.isScanAction) {
               return (
                 <button
@@ -178,12 +178,12 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                   type="button"
                   onClick={onOpenQuickScan}
                   aria-label="Open Camera QR Scanner"
-                  className="relative -top-2 flex flex-col items-center justify-center p-2 rounded-full cursor-pointer transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
+                  className="relative -top-1 flex flex-col items-center justify-center p-0.5 rounded-full cursor-pointer transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
                 >
-                  <span className="w-12 h-12 rounded-full orb-accent flex items-center justify-center shadow-[0_0_20px_rgba(181,255,0,0.45)]">
-                    <Scan className="w-5 h-5 text-black" />
+                  <span className="w-10 h-10 rounded-full orb-accent flex items-center justify-center shadow-[0_0_14px_rgba(181,255,0,0.4)]">
+                    <Scan className="w-4 h-4 text-black" />
                   </span>
-                  <span className="text-[10px] font-display font-extrabold text-[#b5ff00] mt-0.5 uppercase tracking-wider">
+                  <span className="text-[9px] font-display font-extrabold text-[#b5ff00] mt-0.5 uppercase tracking-wider">
                     Scan
                   </span>
                 </button>
@@ -193,7 +193,6 @@ export const IslandNav: React.FC<IslandNavProps> = ({
             // More Menu Trigger (carries pending badges if secondary tabs have notifications)
             if (item.isMoreAction) {
               const hasBadge = (pendingRequestsCount > 0 && isAdmin) || unreadNotificationsCount > 0;
-              const totalBadge = (isAdmin ? pendingRequestsCount : 0) + unreadNotificationsCount;
 
               return (
                 <button
@@ -201,15 +200,15 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                   type="button"
                   onClick={onOpenMore}
                   aria-label="Open More Menu and Settings"
-                  className="relative flex flex-col items-center justify-center py-1.5 px-3 rounded-full text-zinc-400 hover:text-white transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
+                  className="relative flex flex-col items-center justify-center py-1 px-2.5 rounded-full text-zinc-400 hover:text-white transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
                 >
                   <div className="relative">
-                    <Menu className="w-5 h-5" />
+                    <Menu className="w-4 h-4" />
                     {hasBadge && (
-                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-400 border border-black animate-pulse" />
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 border border-black animate-pulse" />
                     )}
                   </div>
-                  <span className="text-[10px] font-display font-bold uppercase tracking-wider mt-0.5">
+                  <span className="text-[9px] font-display font-bold uppercase tracking-wider mt-0.5">
                     More
                   </span>
                 </button>
@@ -225,7 +224,7 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                 type="button"
                 onClick={() => onSelectTab(item.id as NavigationTab)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative flex flex-col items-center justify-center py-1.5 px-3 rounded-full transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] ${
+                className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-full transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] ${
                   isActive
                     ? 'text-black font-extrabold'
                     : 'text-zinc-400 hover:text-white'
@@ -233,13 +232,13 @@ export const IslandNav: React.FC<IslandNavProps> = ({
               >
                 {isActive && (
                   <span
-                    className="absolute inset-0 rounded-full bg-[#b5ff00] shadow-[0_0_15px_rgba(181,255,0,0.35),inset_0_1px_0_rgba(255,255,255,0.6)] z-0"
+                    className="absolute inset-0 rounded-full bg-[#b5ff00] shadow-[0_0_12px_rgba(181,255,0,0.35),inset_0_1px_0_rgba(255,255,255,0.6)] z-0"
                     aria-hidden="true"
                   />
                 )}
                 <span className="relative z-10 flex flex-col items-center">
-                  <Icon className={`w-5 h-5 ${isActive ? 'text-black' : 'text-current'}`} />
-                  <span className={`text-[10px] font-display uppercase tracking-wider mt-0.5 ${isActive ? 'text-black font-extrabold' : ''}`}>
+                  <Icon className={`w-4 h-4 ${isActive ? 'text-black' : 'text-current'}`} />
+                  <span className={`text-[9px] font-display uppercase tracking-wider mt-0.5 ${isActive ? 'text-black font-extrabold' : ''}`}>
                     {item.label}
                   </span>
                 </span>

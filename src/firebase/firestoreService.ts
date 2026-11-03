@@ -587,13 +587,22 @@ export async function acceptMembershipInvitation(userId: string): Promise<void> 
 
   const memberId = userProfile.approvedMemberId;
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
-  const memberSnap = await getDoc(memberRef);
-
-  if (memberSnap.exists()) {
-    const memData = memberSnap.data() as Member;
-    if (memData.authUid && memData.authUid !== userId) {
-      throw new Error('Member record is already linked to another account.');
+  let memberExists = true;
+  try {
+    const memberSnap = await getDoc(memberRef);
+    if (memberSnap.exists()) {
+      const memData = memberSnap.data() as Member;
+      if (memData.authUid && memData.authUid !== userId) {
+        throw new Error('Member record is already linked to another account.');
+      }
+    } else {
+      memberExists = false;
     }
+  } catch (err: any) {
+    if (err?.message?.includes('already linked')) {
+      throw err;
+    }
+    // Non-fatal pre-read: Firestore security rules validate authUid during atomic batch commit
   }
 
   const batch = writeBatch(db);
@@ -604,7 +613,7 @@ export async function acceptMembershipInvitation(userId: string): Promise<void> 
     updatedAt: new Date().toISOString(),
   });
 
-  if (memberSnap.exists()) {
+  if (memberExists) {
     batch.update(memberRef, { authUid: userId });
   }
 

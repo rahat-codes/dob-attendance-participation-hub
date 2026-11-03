@@ -44,14 +44,28 @@ export function calculateMonthlyStats(
     trackBreakdown[track] = (trackBreakdown[track] || 0) + 1;
   });
 
+  const sessionPointsMap = new Map<string, number>();
+  monthSessions.forEach((s) => {
+    sessionPointsMap.set(s.id, typeof s.points === 'number' ? s.points : 10);
+  });
+
   const topBuilders = members.map((m) => {
-    const memberMonthCheckIns = monthCheckIns.filter((c) => c.memberId === m.id).length;
-    const streak = m.currentStreak || 0;
+    const memberMonthRecords = monthCheckIns.filter((c) => c.memberId === m.id);
+    const memberMonthCheckIns = memberMonthRecords.length;
+    let monthlyPoints = 0;
+    memberMonthRecords.forEach((c) => {
+      monthlyPoints += sessionPointsMap.get(c.sessionId) ?? 10;
+    });
+    const stats = computeMemberStats(m, sessions, checkIns);
+    const streak = stats.streak;
     const participationRate = totalSessions > 0 ? Math.round((memberMonthCheckIns / totalSessions) * 100) : 0;
     return {
       member: m,
       monthlyCount: memberMonthCheckIns,
+      monthlyPoints,
       streak,
+      bestStreak: stats.bestStreak,
+      totalPoints: stats.points,
       participationRate,
     };
   });

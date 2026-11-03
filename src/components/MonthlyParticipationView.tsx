@@ -32,6 +32,7 @@ import {
 import { AttendanceBadges } from './AttendanceBadges';
 import { ParticipationTrends } from './ParticipationTrends';
 import { formatTimeInClubTz } from '../utils/sessionWindow';
+import { computeMemberStats } from '../utils/stats';
 
 interface MonthlyParticipationViewProps {
   members: Member[];
@@ -74,16 +75,36 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
   const [activeLeaderboardTab, setActiveLeaderboardTab] = useState<'attendance' | 'streak'>('attendance');
   const [displayMode, setDisplayMode] = useState<'cards' | 'table'>('cards');
 
+  // Compute live member stats map for accurate unforgeable streaks and check-ins
+  const memberStatsMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof computeMemberStats>>();
+    members.forEach((m) => {
+      map.set(m.id, computeMemberStats(m, sessions, checkIns));
+    });
+    return map;
+  }, [members, sessions, checkIns]);
+
   // Top 5 builders based on their current streak count
   const topStreakBuilders = useMemo(() => {
     return [...members]
+      .filter((m) => m.status !== 'Inactive')
+      .map((m) => {
+        const stats = memberStatsMap.get(m.id) || { total: 0, streak: 0, bestStreak: 0, points: 0, lateCount: 0 };
+        return {
+          ...m,
+          currentStreak: stats.streak,
+          bestStreak: stats.bestStreak,
+          totalCheckIns: stats.total,
+          points: stats.points,
+        };
+      })
       .sort(
         (a, b) =>
           (b.currentStreak || 0) - (a.currentStreak || 0) ||
           (b.totalCheckIns || 0) - (a.totalCheckIns || 0)
       )
       .slice(0, 5);
-  }, [members]);
+  }, [members, memberStatsMap]);
 
   // Calculate monthly stats for the active month
   const currentMonthStats = useMemo(
