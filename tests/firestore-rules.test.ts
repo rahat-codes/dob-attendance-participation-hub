@@ -214,6 +214,40 @@ async function runRulesTests() {
     );
   });
 
+  // TEST 6: Pending user updating requestedNotes and membershipRequestedAt
+  await test('Pending applicant can update requestedNotes and membershipRequestedAt without permission-denied', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'applicant_uid_1'), {
+        id: 'applicant_uid_1',
+        email: 'applicant@example.com',
+        displayName: 'Applicant One',
+        status: 'pending',
+        readAnnouncementIds: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    const applicantContext = testEnv.authenticatedContext('applicant_uid_1', {
+      email: 'applicant@example.com',
+      email_verified: true,
+    });
+    const db = applicantContext.firestore();
+
+    // Updating requestedNotes and membershipRequestedAt must succeed under affectedKeys().hasOnly
+    await assertSucceeds(
+      setDoc(
+        doc(db, 'users', 'applicant_uid_1'),
+        {
+          requestedNotes: '@applicant_one',
+          membershipRequestedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+    );
+  });
+
   console.log('\n========================================');
   console.log(`BASELINE RULES TEST RUN COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);

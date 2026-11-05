@@ -185,7 +185,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             <button
               type="button"
               onClick={handleSignIn}
-              disabled={signingIn}
+              disabled={signingIn || loading}
               className="btn-glossy-primary w-full py-3.5 px-6 rounded-full font-bold text-sm tracking-wide flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {signingIn ? (
@@ -231,7 +231,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 <button
                   type="button"
                   onClick={handleSignIn}
-                  disabled={signingIn}
+                  disabled={signingIn || loading}
                   aria-label="Sign in using Google Provider"
                   className="w-14 h-14 rounded-full orb-pearl flex items-center justify-center shadow-lg transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] cursor-pointer"
                 >
