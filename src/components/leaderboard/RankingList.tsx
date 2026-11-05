@@ -4,7 +4,6 @@ import { TierBadge } from './TierBadge';
 import {
   getSeoulMonthKey,
   getSeoulPreviousMonthKey,
-  getSeoulSemesterInfo,
   getTier,
 } from '../../config/tierConfig';
 import {
@@ -19,14 +18,17 @@ import { m } from 'motion/react';
 import { fadeUp } from '../../motion/presets';
 import { SecureAvatar } from '../common/SecureAvatar';
 
-export type LeaderboardPeriod = 'this_month' | 'all_time' | 'semester';
+export type LeaderboardPeriod = 'all_time' | 'this_month';
 
 interface RankingListProps {
   items: PublicLeaderboardItem[];
   selectedPeriod: LeaderboardPeriod;
-  onPeriodChange: (period: LeaderboardPeriod) => void;
+  onPeriodChange?: (period: LeaderboardPeriod) => void;
   onSelectMember: (item: PublicLeaderboardItem, rank: number) => void;
   disableAnimation?: boolean;
+  searchQuery?: string;
+  selectedTrack?: string;
+  showControls?: boolean;
 }
 
 export const RankingList: React.FC<RankingListProps> = ({
@@ -35,9 +37,17 @@ export const RankingList: React.FC<RankingListProps> = ({
   onPeriodChange,
   onSelectMember,
   disableAnimation = false,
+  searchQuery: externalSearchQuery,
+  selectedTrack: externalSelectedTrack,
+  showControls = false,
 }) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTrack, setSelectedTrack] = useState<string>('all');
+  const [internalSearchQuery, setInternalSearchQuery] = useState('');
+  const [internalSelectedTrack, setInternalSelectedTrack] = useState<string>('all');
+
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : internalSearchQuery;
+  const setSearchQuery = setInternalSearchQuery;
+  const selectedTrack = externalSelectedTrack !== undefined ? externalSelectedTrack : internalSelectedTrack;
+  const setSelectedTrack = setInternalSelectedTrack;
 
   const currentMonthKey = useMemo(() => {
     const seoulMonth = getSeoulMonthKey();
@@ -64,8 +74,6 @@ export const RankingList: React.FC<RankingListProps> = ({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   }, [currentMonthKey]);
 
-  const semesterInfo = useMemo(() => getSeoulSemesterInfo(), []);
-
   // Compute ranked list for each period
   const rankedEntries = useMemo(() => {
     // 1. Calculate previous month rankings (for rankDelta comparison)
@@ -90,15 +98,8 @@ export const RankingList: React.FC<RankingListProps> = ({
       if (selectedPeriod === 'this_month') {
         periodCheckIns = item.monthlyCheckIns?.[currentMonthKey] || 0;
         periodPoints = periodCheckIns * 10;
-      } else if (selectedPeriod === 'semester') {
-        const months = semesterInfo.monthKeys;
-        periodCheckIns = months.reduce(
-          (sum, mKey) => sum + (item.monthlyCheckIns?.[mKey] || 0),
-          0
-        );
-        periodPoints = periodCheckIns * 10;
       } else {
-        // all_time
+        // all_time (default)
         periodPoints = item.totalPoints ?? item.points ?? 0;
         periodCheckIns = item.totalCheckIns || 0;
       }
@@ -140,7 +141,7 @@ export const RankingList: React.FC<RankingListProps> = ({
         isNew,
       };
     });
-  }, [items, selectedPeriod, currentMonthKey, prevMonthKey, semesterInfo]);
+  }, [items, selectedPeriod, currentMonthKey, prevMonthKey]);
 
   // Filter by search & track
   const filteredEntries = useMemo(() => {
@@ -161,89 +162,74 @@ export const RankingList: React.FC<RankingListProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Control Bar: Sliding Period Tabs & Search */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-2">
-        {/* Animated sliding pill tabs */}
-        <div className="relative inline-flex rounded-2xl bg-white/[0.03] p-1 border border-white/[0.08] backdrop-blur-md">
-          <button
-            type="button"
-            onClick={() => onPeriodChange('this_month')}
-            className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
-              selectedPeriod === 'this_month' ? 'text-black' : 'text-white/58 hover:text-white'
-            }`}
-          >
-            {selectedPeriod === 'this_month' && (
-              <m.div
-                layoutId="activePeriodTabIndicator"
-                transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
-                className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#FFB36B] via-[#FF7A1A] to-[#FF4D2E] shadow-[0_0_16px_rgba(255,122,26,0.35)] -z-10"
-              />
-            )}
-            This Month
-          </button>
+      {/* Control Bar: Sliding Period Tabs & Search (only shown if showControls is true) */}
+      {showControls && (
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-2">
+          {/* Animated sliding pill tabs: All Time first, then This Month */}
+          <div className="relative inline-flex rounded-2xl bg-white/[0.03] p-1 border border-white/[0.08] backdrop-blur-md">
+            <button
+              type="button"
+              onClick={() => onPeriodChange?.('all_time')}
+              className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
+                selectedPeriod === 'all_time' ? 'text-black' : 'text-white/58 hover:text-white'
+              }`}
+            >
+              {selectedPeriod === 'all_time' && (
+                <m.div
+                  layoutId="activePeriodTabIndicator"
+                  transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                  className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#E879F9] shadow-[0_0_16px_rgba(232,121,249,0.35)] -z-10"
+                />
+              )}
+              All Time
+            </button>
 
-          <button
-            type="button"
-            onClick={() => onPeriodChange('semester')}
-            className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
-              selectedPeriod === 'semester' ? 'text-black' : 'text-white/58 hover:text-white'
-            }`}
-          >
-            {selectedPeriod === 'semester' && (
-              <m.div
-                layoutId="activePeriodTabIndicator"
-                transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
-                className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#2DE2E6] to-[#3B82F6] shadow-[0_0_16px_rgba(45,226,230,0.35)] -z-10"
-              />
-            )}
-            {semesterInfo.label}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onPeriodChange('all_time')}
-            className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
-              selectedPeriod === 'all_time' ? 'text-black' : 'text-white/58 hover:text-white'
-            }`}
-          >
-            {selectedPeriod === 'all_time' && (
-              <m.div
-                layoutId="activePeriodTabIndicator"
-                transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
-                className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#E879F9] shadow-[0_0_16px_rgba(232,121,249,0.35)] -z-10"
-              />
-            )}
-            All Time
-          </button>
-        </div>
-
-        {/* Search & Track Filter */}
-        <div className="flex items-center gap-2 flex-1 md:max-w-md">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/38" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search builder or handle..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/92 placeholder-white/38 focus:outline-none focus:border-white/20 transition-colors min-h-10"
-            />
+            <button
+              type="button"
+              onClick={() => onPeriodChange?.('this_month')}
+              className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
+                selectedPeriod === 'this_month' ? 'text-black' : 'text-white/58 hover:text-white'
+              }`}
+            >
+              {selectedPeriod === 'this_month' && (
+                <m.div
+                  layoutId="activePeriodTabIndicator"
+                  transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                  className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#FFB36B] via-[#FF7A1A] to-[#FF4D2E] shadow-[0_0_16px_rgba(255,122,26,0.35)] -z-10"
+                />
+              )}
+              This Month
+            </button>
           </div>
 
-          <select
-            value={selectedTrack}
-            onChange={(e) => setSelectedTrack(e.target.value)}
-            aria-label="Filter tracks"
-            className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/70 focus:outline-none min-h-10 cursor-pointer"
-          >
-            <option value="all">All Tracks</option>
-            <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
-            <option value="Software & Systems">Software &amp; Systems</option>
-            <option value="AI & Embedded">AI &amp; Embedded</option>
-            <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
-          </select>
+          {/* Search & Track Filter */}
+          <div className="flex items-center gap-2 flex-1 md:max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/38" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search builder or handle..."
+                className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/92 placeholder-white/38 focus:outline-none focus:border-white/20 transition-colors min-h-10"
+              />
+            </div>
+
+            <select
+              value={selectedTrack}
+              onChange={(e) => setSelectedTrack(e.target.value)}
+              aria-label="Filter tracks"
+              className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/70 focus:outline-none min-h-10 cursor-pointer"
+            >
+              <option value="all">All Tracks</option>
+              <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
+              <option value="Software & Systems">Software &amp; Systems</option>
+              <option value="AI & Embedded">AI &amp; Embedded</option>
+              <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
+            </select>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Table Header */}
       <div className="hidden sm:grid grid-cols-12 gap-3 px-5 py-2.5 rounded-xl bg-white/[0.02] border border-white/5 text-[11px] font-rajdhani font-bold uppercase tracking-widest text-white/40">

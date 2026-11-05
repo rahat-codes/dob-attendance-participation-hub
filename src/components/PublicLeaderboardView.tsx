@@ -8,7 +8,7 @@ import { RankingList, LeaderboardPeriod } from './leaderboard/RankingList';
 import { HallOfFame } from './leaderboard/HallOfFame';
 import { MemberProfileModal } from './leaderboard/MemberProfileModal';
 import { ShareCardModal } from './leaderboard/ShareCardModal';
-import { getSeoulMonthKey, getSeoulSemesterInfo } from '../config/tierConfig';
+import { getSeoulMonthKey } from '../config/tierConfig';
 import {
   Trophy,
   Crown,
@@ -22,7 +22,9 @@ import {
   Layers,
   ChevronRight,
   Info,
+  Search,
 } from 'lucide-react';
+import { m } from 'motion/react';
 
 interface PublicLeaderboardViewProps {
   items: PublicLeaderboardItem[];
@@ -81,8 +83,10 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     return [];
   }, [items, isDemoMode]);
 
-  // Selected period state: 'this_month' | 'semester' | 'all_time'
-  const [selectedPeriod, setSelectedPeriod] = useState<LeaderboardPeriod>('this_month');
+  // Selected period state: 'all_time' (default) | 'this_month' (semester omitted)
+  const [selectedPeriod, setSelectedPeriod] = useState<LeaderboardPeriod>('all_time');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTrack, setSelectedTrack] = useState<string>('all');
 
   // Modals state
   const [selectedMember, setSelectedMember] = useState<PublicLeaderboardItem | null>(null);
@@ -145,9 +149,7 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     return sorted[0] || seoulMonth;
   }, [activeItems]);
 
-  const semesterInfo = useMemo(() => getSeoulSemesterInfo(), []);
-
-  // Compute period points and period check-ins for each item
+  // Compute period points and period check-ins for each item (omitting semester)
   const periodRankedItems = useMemo(() => {
     const mapped = activeItems.map((item) => {
       let periodPoints = 0;
@@ -155,13 +157,6 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
       if (selectedPeriod === 'this_month') {
         periodCheckIns = item.monthlyCheckIns?.[activeMonthKey] || 0;
-        periodPoints = periodCheckIns * 10;
-      } else if (selectedPeriod === 'semester') {
-        const months = semesterInfo.monthKeys;
-        periodCheckIns = months.reduce(
-          (sum, mKey) => sum + (item.monthlyCheckIns?.[mKey] || 0),
-          0
-        );
         periodPoints = periodCheckIns * 10;
       } else {
         periodPoints = item.totalPoints ?? item.points ?? 0;
@@ -183,16 +178,40 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     });
 
     return mapped;
-  }, [activeItems, selectedPeriod, activeMonthKey, semesterInfo]);
+  }, [activeItems, selectedPeriod, activeMonthKey]);
 
-  // Top 3 Podium items for active period
-  const topThree = useMemo(() => periodRankedItems.slice(0, 3), [periodRankedItems]);
+  // Filter ranked items by search and track
+  const filteredRankedItems = useMemo(() => {
+    return periodRankedItems.filter((item) => {
+      if (selectedTrack !== 'all' && !item.tracks?.includes(selectedTrack as any)) {
+        return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const name = (item.displayName || item.name || '').toLowerCase();
+        const handle = (item.handle || '').toLowerCase();
+        const role = (item.role || '').toLowerCase();
+        return name.includes(q) || handle.includes(q) || role.includes(q);
+      }
+      return true;
+    });
+  }, [periodRankedItems, selectedTrack, searchQuery]);
 
-  // Guild aggregate KPIs
+  // Top 3 Podium items for active period (respecting filters)
+  const topThree = useMemo(() => filteredRankedItems.slice(0, 3), [filteredRankedItems]);
+
+  // Guild aggregate KPIs starting from All time and then this month
   const totalBuilders = activeItems.length;
-  const totalPeriodPoints = useMemo(() => {
-    return periodRankedItems.reduce((acc, i) => acc + (i.displayPoints || 0), 0);
-  }, [periodRankedItems]);
+  const totalAllTimePoints = useMemo(() => {
+    return activeItems.reduce((acc, i) => acc + (i.totalPoints ?? i.points ?? 0), 0);
+  }, [activeItems]);
+
+  const totalMonthPoints = useMemo(() => {
+    return activeItems.reduce(
+      (acc, i) => acc + ((i.monthlyCheckIns?.[activeMonthKey] || 0) * 10),
+      0
+    );
+  }, [activeItems, activeMonthKey]);
 
   const recordStreak = useMemo(() => {
     return activeItems.reduce(
@@ -315,8 +334,8 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
           </div>
         )}
 
-        {/* Live Guild KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mt-8 pt-6 border-t border-white/10 relative z-10">
+        {/* Live Guild KPIs: starting from All time and then this month */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-8 pt-6 border-t border-white/10 relative z-10">
           <div className="p-4 rounded-2xl bg-white/[0.03] backdrop-blur-sm border border-white/10 glass-card-hairline">
             <span className="text-[11px] font-rajdhani uppercase tracking-wider text-white/60 font-bold block">
               Active Builders
@@ -328,10 +347,19 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
           <div className="p-4 rounded-2xl bg-white/[0.03] backdrop-blur-sm border border-white/10 glass-card-hairline">
             <span className="text-[11px] font-rajdhani uppercase tracking-wider text-white/60 font-bold block">
-              {selectedPeriod === 'this_month' ? 'Monthly Points' : selectedPeriod === 'semester' ? 'Semester Points' : 'Total Guild Points'}
+              All Time Points
             </span>
             <span className="text-2xl sm:text-3xl font-orbitron font-black text-[#FF7A1A] mt-1 block tabular-nums num-grad-ember">
-              {totalPeriodPoints}
+              {totalAllTimePoints}
+            </span>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white/[0.03] backdrop-blur-sm border border-white/10 glass-card-hairline">
+            <span className="text-[11px] font-rajdhani uppercase tracking-wider text-white/60 font-bold block">
+              This Month Points
+            </span>
+            <span className="text-2xl sm:text-3xl font-orbitron font-black text-[#FFB36B] mt-1 block tabular-nums">
+              {totalMonthPoints}
             </span>
           </div>
 
@@ -389,12 +417,79 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
         </div>
       ) : (
         <div className="space-y-8">
+          {/* Controls: Period Tabs & Search & Track Filter - Positioned BEFORE Top Guild Podium */}
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-2">
+            {/* Animated sliding pill tabs: All Time first, then This Month */}
+            <div className="relative inline-flex rounded-2xl bg-white/[0.03] p-1 border border-white/[0.08] backdrop-blur-md">
+              <button
+                type="button"
+                onClick={() => setSelectedPeriod('all_time')}
+                className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
+                  selectedPeriod === 'all_time' ? 'text-black' : 'text-white/58 hover:text-white'
+                }`}
+              >
+                {selectedPeriod === 'all_time' && (
+                  <m.div
+                    layoutId="activePublicPeriodTabIndicator"
+                    transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#E879F9] shadow-[0_0_16px_rgba(232,121,249,0.35)] -z-10"
+                  />
+                )}
+                All Time
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedPeriod('this_month')}
+                className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
+                  selectedPeriod === 'this_month' ? 'text-black' : 'text-white/58 hover:text-white'
+                }`}
+              >
+                {selectedPeriod === 'this_month' && (
+                  <m.div
+                    layoutId="activePublicPeriodTabIndicator"
+                    transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#FFB36B] via-[#FF7A1A] to-[#FF4D2E] shadow-[0_0_16px_rgba(255,122,26,0.35)] -z-10"
+                  />
+                )}
+                This Month
+              </button>
+            </div>
+
+            {/* Search & Track Filter */}
+            <div className="flex items-center gap-2 flex-1 md:max-w-md">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/38" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search builder or handle..."
+                  className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/92 placeholder-white/38 focus:outline-none focus:border-white/20 transition-colors min-h-10"
+                />
+              </div>
+
+              <select
+                value={selectedTrack}
+                onChange={(e) => setSelectedTrack(e.target.value)}
+                aria-label="Filter tracks"
+                className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/70 focus:outline-none min-h-10 cursor-pointer"
+              >
+                <option value="all">All Tracks</option>
+                <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
+                <option value="Software & Systems">Software &amp; Systems</option>
+                <option value="AI & Embedded">AI &amp; Embedded</option>
+                <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
+              </select>
+            </div>
+          </div>
+
           {/* Top 3 Podium */}
           <Podium
             topItems={topThree}
             onSelectMember={handleSelectMember}
             disableAnimation={!fxEnabled}
-            periodLabel={selectedPeriod === 'this_month' ? 'Monthly' : selectedPeriod === 'semester' ? 'Semester' : 'Total'}
+            periodLabel={selectedPeriod === 'this_month' ? 'Monthly' : 'All Time'}
           />
 
           {/* Hall of Fame: Past Monthly Champions */}
@@ -410,6 +505,9 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
             onPeriodChange={setSelectedPeriod}
             onSelectMember={handleSelectMember}
             disableAnimation={!fxEnabled}
+            searchQuery={searchQuery}
+            selectedTrack={selectedTrack}
+            showControls={false}
           />
         </div>
       )}
