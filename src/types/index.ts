@@ -51,6 +51,8 @@ export interface Member {
   totalCheckIns?: number;
   currentStreak?: number;
   bestStreak?: number;
+  profileCompleted?: boolean;
+  profileCompletedAt?: string;
 }
 
 /**
@@ -66,6 +68,8 @@ export interface MemberPrivate {
   department?: string;
   major?: string;
   semester?: string;
+  profileCompleted?: boolean;
+  profileCompletedAt?: string;
 }
 
 export type UserStatus = 'pending' | 'approved_waiting_response' | 'active' | 'declined' | 'suspended';

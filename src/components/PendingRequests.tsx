@@ -20,8 +20,10 @@ import {
   approveUserMembershipLink,
   rejectUserMembershipLink,
   directActivateUserMembership,
+  archiveMemberHandle,
 } from '../firebase/firestoreService';
 import { SecureAvatar } from './common/SecureAvatar';
+import { findReuseCandidates, parseApplicantNotes } from '../utils/reuseHelpers';
 
 interface PendingRequestsProps {
   members: Member[];
@@ -95,11 +97,13 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     }
 
     if (req.requestedNotes) {
-      const cleanReqHandle = req.requestedNotes.toLowerCase().replace('@', '').trim();
+      const rawHandle = req.requestedNotes.split('·')[0].trim();
+      const cleanReqHandle = rawHandle.toLowerCase().replace('@', '').trim();
       const handleMatch = members.find(
         (m) =>
           m.handle.toLowerCase().replace('@', '').trim() === cleanReqHandle ||
-          m.name.toLowerCase().trim() === req.requestedNotes?.toLowerCase().trim()
+          m.name.toLowerCase().trim() === req.requestedNotes?.toLowerCase().trim() ||
+          m.name.toLowerCase().trim() === rawHandle.toLowerCase()
       );
       if (handleMatch) return handleMatch;
     }
@@ -120,14 +124,18 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     if (!chosenMemberId) {
       // If no member selected, launch add member modal with prefilled data
       if (onOpenAddMemberWithPrefill) {
+        const rawHandle = (user.requestedNotes || '').split('·')[0].trim();
+        const studentIdMatch = (user.requestedNotes || '').match(/ID:\s*(\w+)/i) || (user.requestedNotes || '').match(/\b(20\d{6,8})\b/);
+        const extractedStudentId = studentIdMatch ? studentIdMatch[1] : undefined;
+
         onOpenAddMemberWithPrefill({
           name: user.displayName,
           email: user.email,
-          handle: user.requestedNotes?.startsWith('@')
-            ? user.requestedNotes
-            : `@${user.requestedNotes || user.email?.split('@')[0] || 'builder'}`,
+          handle: rawHandle.startsWith('@')
+            ? rawHandle
+            : `@${rawHandle || user.email?.split('@')[0] || 'builder'}`,
           authUid: user.id,
-          studentId: (/^\d+$/.test(user.requestedNotes?.trim() || '')) ? user.requestedNotes?.trim() : undefined,
+          studentId: extractedStudentId,
           university: 'Tongmyong University',
         });
       }
@@ -154,7 +162,26 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
 
   const handleDirectActivate = async (user: UserProfile, targetMemberId?: string) => {
     const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId || getAutoMatchMember(user)?.id;
-    if (!chosenMemberId) return;
+    if (!chosenMemberId) {
+      // If no member chosen, open add member modal so admin can register & activate
+      if (onOpenAddMemberWithPrefill) {
+        const rawHandle = (user.requestedNotes || '').split('·')[0].trim();
+        const studentIdMatch = (user.requestedNotes || '').match(/ID:\s*(\w+)/i) || (user.requestedNotes || '').match(/\b(20\d{6,8})\b/);
+        const extractedStudentId = studentIdMatch ? studentIdMatch[1] : undefined;
+
+        onOpenAddMemberWithPrefill({
+          name: user.displayName,
+          email: user.email,
+          handle: rawHandle.startsWith('@')
+            ? rawHandle
+            : `@${rawHandle || user.email?.split('@')[0] || 'builder'}`,
+          authUid: user.id,
+          studentId: extractedStudentId,
+          university: 'Tongmyong University',
+        });
+      }
+      return;
+    }
 
     setProcessingId(user.id);
     setError(null);
@@ -170,6 +197,37 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       console.error('Failed to directly activate user:', err);
       const code = err?.code ? `[${err.code}] ` : '';
       setError(`Failed to directly activate user: ${code}${err?.message || 'Unknown error'}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleArchiveAndCreateNew = async (user: UserProfile, oldMember: Member) => {
+    setProcessingId(user.id);
+    setError(null);
+    try {
+      const archivedHandle = await archiveMemberHandle(oldMember.id);
+      setActionSuccessMessage(
+        `Archived previous record handle (${oldMember.handle} -> ${archivedHandle}). You can now register a fresh profile with the freed handle.`
+      );
+      setTimeout(() => setActionSuccessMessage(null), 6000);
+
+      if (onOpenAddMemberWithPrefill) {
+        const parsed = parseApplicantNotes(user.requestedNotes);
+        const cleanHandle = parsed.handle || oldMember.handle.replace(/^@/, '');
+
+        onOpenAddMemberWithPrefill({
+          name: parsed.name || user.displayName || oldMember.name,
+          email: user.email || oldMember.email,
+          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
+          authUid: user.id,
+          studentId: parsed.studentId || oldMember.studentId,
+          university: oldMember.university || 'Tongmyong University',
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to archive previous member handle:', err);
+      setError(`Failed to archive old record: ${err?.message || 'Unknown error'}`);
     } finally {
       setProcessingId(null);
     }
@@ -435,6 +493,12 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                               Pending
                             </span>
                           )}
+
+                          {Boolean(req.status === 'declined' || (req.status === 'pending' && (req.respondedAt || (req.membershipRequestedAt && req.updatedAt && req.membershipRequestedAt !== req.createdAt)))) && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 uppercase font-bold flex items-center gap-1">
+                              <span>Re-applicant</span>
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-zinc-400 font-mono flex items-center gap-1.5 mt-0.5 truncate">
                           <Mail className="h-3 w-3 text-zinc-500 shrink-0" />
@@ -488,6 +552,46 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       </span>
                     </div>
                   )}
+
+                  {/* Previous Builder Record Found (Reuse Candidates) */}
+                  {(() => {
+                    const reuseCandidates = findReuseCandidates(members, req);
+                    if (reuseCandidates.length === 0) return null;
+                    const cand = reuseCandidates[0];
+
+                    return (
+                      <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                          <Sparkles className="h-4 w-4 shrink-0 text-amber-400" />
+                          <span>Previous builder record found ({cand.totalCheckIns || 0} check-ins)</span>
+                        </div>
+                        <p className="text-[11.5px] text-zinc-300 leading-relaxed">
+                          Matching record: <strong className="text-white">{cand.name}</strong> ({cand.handle}) with status{' '}
+                          <span className="font-mono text-amber-300 font-semibold">{cand.status}</span>. You can restore this builder's previous participation history or archive the old handle to create a fresh record.
+                        </p>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleApprove(req, cand.id)}
+                            disabled={isProcessing}
+                            className="px-3 py-1.5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            <UserCheck className="h-3.5 w-3.5" />
+                            <span>Reuse Record (Restores History)</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleArchiveAndCreateNew(req, cand)}
+                            disabled={isProcessing}
+                            className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            <UserPlus className="h-3.5 w-3.5" />
+                            <span>Create New Record (Archives Old Handle)</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Target Member Linking Dropdown */}
                   <div className="space-y-1.5">

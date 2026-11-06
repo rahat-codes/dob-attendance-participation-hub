@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../firebase/AuthContext';
 import { m } from 'motion/react';
 import { fadeUp } from '../motion/presets';
@@ -15,8 +15,10 @@ import {
   ArrowRight,
   HelpCircle,
   Trophy,
+  UserPlus,
 } from 'lucide-react';
 import { Field } from '../ui/Field';
+import { BuilderTrack } from '../types';
 
 interface LoginViewProps {
   onContinueAsGuest?: () => void;
@@ -43,6 +45,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
   } = useAuth();
 
   const [requestedHandle, setRequestedHandle] = useState('');
+  const [requestedName, setRequestedName] = useState(user?.displayName || '');
+  const [requestedStudentId, setRequestedStudentId] = useState('');
+  const [selectedTrack, setSelectedTrack] = useState<BuilderTrack>('Software & Systems');
+  const [requestNotes, setRequestNotes] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
   const [requestSubmittedSuccess, setRequestSubmittedSuccess] = useState(false);
@@ -51,6 +57,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
   const [isReApplying, setIsReApplying] = useState(false);
   const [isRespondingToOffer, setIsRespondingToOffer] = useState(false);
   const [respondError, setRespondError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user?.displayName && !requestedName) {
+      setRequestedName(user.displayName);
+    }
+  }, [user?.displayName, requestedName]);
+
+  useEffect(() => {
+    if (membershipState === 'declined' && profile?.requestedNotes && !reApplyNotes) {
+      setReApplyNotes(profile.requestedNotes);
+    }
+  }, [membershipState, profile?.requestedNotes, reApplyNotes]);
 
   const handleAcceptOffer = async () => {
     setIsRespondingToOffer(true);
@@ -81,11 +99,17 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
   const handleSubmitLinkRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestedHandle.trim()) return;
+    const cleanHandleRaw = requestedHandle.trim();
+    if (!cleanHandleRaw) return;
+    const cleanHandle = cleanHandleRaw.startsWith('@') ? cleanHandleRaw : `@${cleanHandleRaw}`;
+    const cleanName = requestedName.trim() || user?.displayName || '';
+    const cleanStudentId = requestedStudentId.trim();
+    const payload = `${cleanHandle} · ID: ${cleanStudentId || 'N/A'} · Track: ${selectedTrack}${cleanName ? ` · Name: ${cleanName}` : ''}${requestNotes.trim() ? ` · Note: ${requestNotes.trim()}` : ''}`;
+
     setIsSubmittingRequest(true);
     setLinkError(null);
     try {
-      await requestMembershipLink(requestedHandle.trim());
+      await requestMembershipLink(payload);
       setRequestSubmittedSuccess(true);
       setIsEditingPendingHandle(false);
     } catch (err: any) {
@@ -287,15 +311,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
           </div>
         )}
 
-        {/* State 6: Authenticated but Not Linked to Member */}
+        {/* State 6: Authenticated but Not Linked to Member (New Member Registration) */}
         {user && !loading && membershipState === 'unlinked' && (
-          <div className="bg-zinc-900/90 border border-amber-800/60 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5">
+          <div className="bg-zinc-900/90 border border-[#b5ff00]/30 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 shrink-0">
-                <AlertCircle className="h-5 w-5" />
+              <div className="p-2.5 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] shrink-0">
+                <UserPlus className="h-5 w-5" />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-white">Account Not Linked to Member</h2>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">New Member Registration</h2>
                 <p className="text-xs text-zinc-400 font-mono mt-0.5 truncate max-w-[240px]">
                   {user.email}
                 </p>
@@ -303,7 +327,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              Your Google account is signed in, but it is not linked to a registered builder profile in the club directory. Enter your builder handle or full name to submit a link request to administrators.
+              Welcome to Den of Builders! Fill in your details below to submit your official builder registration. Once an administrator approves your profile, your pass will be ready to activate.
             </p>
 
             {linkError && (
@@ -317,32 +341,71 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               <div className="p-4 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-xs text-zinc-200 space-y-1">
                 <p className="font-bold text-[#b5ff00] flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4" />
-                  Request Submitted
+                  Registration Submitted Successfully
                 </p>
                 <p className="text-[11px] text-zinc-400">
-                  Please ask an administrator at today's meeting to approve your membership link.
+                  Please inform a club organizer at today's meeting to verify and approve your builder pass.
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleSubmitLinkRequest} className="space-y-4">
+              <form onSubmit={handleSubmitLinkRequest} className="space-y-3.5">
                 <Field
-                  label="Your Builder Handle or Name"
+                  label="Full Name"
+                  required
+                  value={requestedName}
+                  onChange={(e) => setRequestedName(e.target.value)}
+                  placeholder="e.g. Alex Morgan"
+                />
+
+                <Field
+                  label="Builder Handle"
                   required
                   value={requestedHandle}
                   onChange={(e) => setRequestedHandle(e.target.value)}
-                  placeholder="@yourhandle or Full Name"
+                  placeholder="e.g. @alex or alex"
                 />
+
+                <Field
+                  label="Student ID (Recommended)"
+                  value={requestedStudentId}
+                  onChange={(e) => setRequestedStudentId(e.target.value)}
+                  placeholder="e.g. 20241089"
+                />
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5 font-mono">
+                    Specialty Track <span className="text-[#b5ff00]">*</span>
+                  </label>
+                  <select
+                    value={selectedTrack}
+                    onChange={(e) => setSelectedTrack(e.target.value as BuilderTrack)}
+                    className="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#b5ff00]/60 transition-colors font-mono cursor-pointer"
+                  >
+                    <option value="Software & Systems">Software &amp; Systems</option>
+                    <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
+                    <option value="AI & Embedded">AI &amp; Embedded</option>
+                    <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
+                  </select>
+                </div>
+
+                <Field
+                  label="Note to Organizers (Optional)"
+                  value={requestNotes}
+                  onChange={(e) => setRequestNotes(e.target.value)}
+                  placeholder="e.g. Attending workshop today"
+                />
+
                 <button
                   type="submit"
                   disabled={isSubmittingRequest || !requestedHandle.trim()}
-                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 mt-1"
                 >
                   {isSubmittingRequest ? (
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Send className="h-3.5 w-3.5" />
                   )}
-                  <span>Request Membership Link</span>
+                  <span>Submit Builder Registration</span>
                 </button>
               </form>
             )}
@@ -411,11 +474,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             <div className="space-y-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] text-xs font-mono font-bold uppercase tracking-wider">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                <span>Request submitted</span>
+                <span>Registration Submitted</span>
               </div>
-              <h2 className="text-base font-bold text-white">Membership Pending Approval</h2>
+              <h2 className="text-base font-bold text-white">Pending Admin Verification</h2>
               <p className="text-xs text-zinc-400">
-                Your builder profile request for <span className="text-zinc-200 font-mono">{user.email}</span> is awaiting verification by club administrators.
+                Your builder registration for <span className="text-zinc-200 font-mono">{user.email}</span> is awaiting approval by club organizers.
               </p>
             </div>
 
@@ -431,12 +494,42 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 <span className="text-zinc-400">Account:</span>
                 <span className="text-white truncate max-w-[200px]">{user.email}</span>
               </div>
-              <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                <span className="text-zinc-400">Builder Handle / Name:</span>
-                <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">
-                  {profile?.requestedNotes || 'Awaiting entry'}
-                </span>
-              </div>
+              {(() => {
+                const notes = profile?.requestedNotes || '';
+                const handlePart = notes.split('·')[0]?.trim() || '';
+                const idMatch = notes.match(/ID:\s*([A-Za-z0-9_-]+)/i);
+                const trackMatch = notes.match(/Track:\s*([^·]+)/i);
+                const nameMatch = notes.match(/Name:\s*([^·]+)/i);
+
+                return (
+                  <>
+                    {nameMatch && (
+                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                        <span className="text-zinc-400">Full Name:</span>
+                        <span className="text-zinc-200 font-bold truncate max-w-[200px]">{nameMatch[1].trim()}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                      <span className="text-zinc-400">Builder Handle:</span>
+                      <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">
+                        {handlePart || notes || 'Awaiting entry'}
+                      </span>
+                    </div>
+                    {idMatch && idMatch[1] !== 'N/A' && (
+                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                        <span className="text-zinc-400">Student ID:</span>
+                        <span className="text-zinc-200 font-mono truncate max-w-[200px]">{idMatch[1].trim()}</span>
+                      </div>
+                    )}
+                    {trackMatch && (
+                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                        <span className="text-zinc-400">Specialty Track:</span>
+                        <span className="text-zinc-200 truncate max-w-[200px]">{trackMatch[1].trim()}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div className="flex items-center justify-between">
                 <span className="text-zinc-400">Submitted at:</span>
                 <span className="text-zinc-300">
@@ -610,8 +703,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             </div>
             <h2 className="text-base font-bold text-white">Membership Invitation Declined</h2>
             <p className="text-xs text-zinc-400">
-              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If this was a mistake or you wish to join again, you can submit a re-application.
+              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If you wish to join or update your details, you can re-apply below with your builder handle.
             </p>
+
+            {profile?.requestedNotes && (
+              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs font-mono">
+                <span className="text-zinc-500 block text-[10px] uppercase">Previous Application Details:</span>
+                <span className="text-[#b5ff00] font-semibold">{profile.requestedNotes}</span>
+              </div>
+            )}
 
             {linkError && (
               <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
@@ -622,15 +722,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
             <form onSubmit={handleReApply} className="space-y-3 pt-1 text-left">
               <Field
-                label="Message or Handle to Organizers (Optional)"
+                label="Builder Handle / Re-application Details"
                 value={reApplyNotes}
                 onChange={(e) => setReApplyNotes(e.target.value)}
-                placeholder="Reason for re-applying or your handle"
+                placeholder="@yourhandle · ID: 20241234"
               />
               <div className="flex gap-2 justify-center pt-2">
                 <button
                   type="submit"
-                  disabled={isReApplying}
+                  disabled={isReApplying || !reApplyNotes.trim()}
                   className="py-2.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   {isReApplying ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}

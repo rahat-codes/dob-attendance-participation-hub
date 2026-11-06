@@ -8,6 +8,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  updateDoc,
   deleteDoc,
   collection,
   getDocs,
@@ -15,6 +16,7 @@ import {
   where,
   serverTimestamp,
   Timestamp,
+  deleteField,
 } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
@@ -246,6 +248,134 @@ async function runRulesTests() {
         { merge: true }
       )
     );
+  });
+
+  // TEST 7: Declined user re-applies (declined -> pending with keys ['status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt'])
+  await test('Declined applicant can transition to pending on re-apply', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'declined_uid_1'), {
+        id: 'declined_uid_1',
+        email: 'declined@example.com',
+        displayName: 'Declined Applicant',
+        status: 'declined',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    const userContext = testEnv.authenticatedContext('declined_uid_1', {
+      email: 'declined@example.com',
+      email_verified: true,
+    });
+    const db = userContext.firestore();
+
+    // Re-applying with allowed keys succeeds
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'declined_uid_1'), {
+        status: 'pending',
+        requestedNotes: '@reapply_handle · ID: 20241234',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Non-owner cannot update this user
+    const strangerContext = testEnv.authenticatedContext('stranger_uid');
+    await assertFails(
+      updateDoc(doc(strangerContext.firestore(), 'users', 'declined_uid_1'), {
+        status: 'pending',
+        requestedNotes: '@malicious',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  // TEST 8: Admin resets a user with deleteField() for memberId/approvedMemberId
+  await test('Admin can reset user document using deleteField() for memberId and approvedMemberId', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users', 'target_member_user_1'), {
+        id: 'target_member_user_1',
+        email: 'target_member@example.com',
+        displayName: 'Target Builder',
+        status: 'active',
+        memberId: 'mem_target_1',
+        approvedMemberId: 'mem_target_1',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(doc(context.firestore(), 'admins', 'admin_uid_rules'), {
+        userId: 'admin_uid_rules',
+        role: 'admin',
+        grantedAt: new Date().toISOString(),
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext('admin_uid_rules');
+    const adminDb = adminContext.firestore();
+
+    // Admin reset succeeds
+    await assertSucceeds(
+      updateDoc(doc(adminDb, 'users', 'target_member_user_1'), {
+        status: 'declined',
+        memberId: deleteField(),
+        approvedMemberId: deleteField(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Ordinary non-admin member cannot reset another user's document
+    const ordinaryContext = testEnv.authenticatedContext('ordinary_member_uid');
+    await assertFails(
+      updateDoc(doc(ordinaryContext.firestore(), 'users', 'target_member_user_1'), {
+        status: 'declined',
+        memberId: deleteField(),
+        approvedMemberId: deleteField(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  // TEST 9: Admin deletes members, memberPrivate, and publicLeaderboard docs
+  await test('Admin can delete members, memberPrivate, and publicLeaderboard documents (ordinary member denied)', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'members', 'mem_to_delete'), {
+        id: 'mem_to_delete',
+        name: 'Delete Me',
+        handle: '@deleteme',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        joinedDate: '2026-01-01',
+        status: 'Active',
+      });
+      await setDoc(doc(db, 'memberPrivate', 'mem_to_delete'), {
+        email: 'deleteme@example.com',
+        studentId: '20249999',
+      });
+      await setDoc(doc(db, 'publicLeaderboard', 'mem_to_delete'), {
+        id: 'mem_to_delete',
+        displayName: 'Delete Me',
+        handle: '@deleteme',
+        totalCheckIns: 2,
+        currentStreak: 1,
+        bestStreak: 1,
+        tier: 'Novice Maker',
+      });
+    });
+
+    const adminContext = testEnv.authenticatedContext('admin_uid_rules');
+    const ordinaryContext = testEnv.authenticatedContext('ordinary_member_uid');
+
+    // Ordinary member cannot delete member record
+    await assertFails(deleteDoc(doc(ordinaryContext.firestore(), 'members', 'mem_to_delete')));
+    await assertFails(deleteDoc(doc(ordinaryContext.firestore(), 'memberPrivate', 'mem_to_delete')));
+    await assertFails(deleteDoc(doc(ordinaryContext.firestore(), 'publicLeaderboard', 'mem_to_delete')));
+
+    // Admin can delete all three
+    await assertSucceeds(deleteDoc(doc(adminContext.firestore(), 'members', 'mem_to_delete')));
+    await assertSucceeds(deleteDoc(doc(adminContext.firestore(), 'memberPrivate', 'mem_to_delete')));
+    await assertSucceeds(deleteDoc(doc(adminContext.firestore(), 'publicLeaderboard', 'mem_to_delete')));
   });
 
   console.log('\n========================================');

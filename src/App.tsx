@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense, lazy } from 'react';
 import {
   Member,
   Session,
@@ -157,6 +157,7 @@ export default function App() {
     user,
     profile,
     linkedMember,
+    memberPrivate,
     membershipState,
     isAdmin,
     isApprovedMember,
@@ -222,6 +223,22 @@ export default function App() {
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [attendanceConfirmation, setAttendanceConfirmation] = useState<AttendanceConfirmationData | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+
+  // Check if an approved/active builder must complete the mandatory profile form
+  const isMandatoryProfileRequired = useMemo(() => {
+    // Only applies to logged-in non-admin active members who have a linked member profile
+    if (!user || isAdmin || !linkedMember || membershipState !== 'active') return false;
+
+    // If marked as profile completed in private data or member record, not required
+    if (memberPrivate?.profileCompleted === true || linkedMember.profileCompleted === true) return false;
+
+    // Check mandatory fields: studentId, phone, and at least one track
+    const hasStudentId = Boolean(linkedMember.studentId?.trim() || memberPrivate?.studentId?.trim());
+    const hasPhone = Boolean(memberPrivate?.phone?.trim() || linkedMember.phone?.trim());
+    const hasTracks = Boolean(linkedMember.tracks && linkedMember.tracks.length > 0);
+
+    return !hasStudentId || !hasPhone || !hasTracks;
+  }, [user, isAdmin, linkedMember, memberPrivate, membershipState]);
 
   // Synchronize tab selection with History API (pushState) & LocalStorage
   const handleSelectTab = useCallback(
@@ -489,7 +506,11 @@ export default function App() {
   );
 
   // Admin-Only Record Deletion Execution (Session, Member Profile, or Attendance Check-in)
-  const handleExecuteRecordDeletion = async (target: DeleteRecordTarget, permanent: boolean) => {
+  const handleExecuteRecordDeletion = async (
+    target: DeleteRecordTarget,
+    permanent: boolean,
+    options?: { deleteAttendance?: boolean }
+  ) => {
     if (!isAdmin) {
       throw new Error('Unauthorized: Only administrators can delete club records.');
     }
@@ -498,7 +519,7 @@ export default function App() {
       if (target.type === 'session') {
         await adminDeleteSession(target.id, target.session?.title, permanent);
       } else if (target.type === 'member') {
-        await adminDeleteMember(target.id, target.member?.name, permanent);
+        await adminDeleteMember(target.id, target.member?.name, permanent, options);
       } else if (target.type === 'checkin') {
         await adminDeleteCheckIn(
           target.id,
@@ -1489,10 +1510,11 @@ export default function App() {
         prefill={prefillMember}
       />
 
-      {/* Builder Self Profile Editing Modal */}
-      {isEditProfileOpen && (
+      {/* Builder Self Profile Editing Modal (Voluntary or Mandatory after approval) */}
+      {(isEditProfileOpen || isMandatoryProfileRequired) && user && (
         <EditProfileModal
-          isOpen={isEditProfileOpen}
+          isOpen={isEditProfileOpen || isMandatoryProfileRequired}
+          isMandatory={isMandatoryProfileRequired}
           onClose={() => setIsEditProfileOpen(false)}
           member={
             linkedMember || {
@@ -1509,6 +1531,8 @@ export default function App() {
               bestStreak: 0,
             }
           }
+          memberPrivate={memberPrivate}
+          onSignOut={signOutUser}
         />
       )}
 

@@ -27,7 +27,11 @@ interface RecordDeleteModalProps {
   isOpen: boolean;
   onClose: () => void;
   target: DeleteRecordTarget | null;
-  onConfirmDelete: (target: DeleteRecordTarget, permanent: boolean) => Promise<void>;
+  onConfirmDelete: (
+    target: DeleteRecordTarget,
+    permanent: boolean,
+    options?: { deleteAttendance?: boolean }
+  ) => Promise<void>;
 }
 
 export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
@@ -38,6 +42,7 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
 }) => {
   const [deleteMode, setDeleteMode] = useState<'soft' | 'permanent'>('soft');
   const [confirmInput, setConfirmInput] = useState('');
+  const [deleteAttendance, setDeleteAttendance] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -79,7 +84,7 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
     setIsDeleting(true);
     setErrorMessage(null);
     try {
-      await onConfirmDelete(target, deleteMode === 'permanent');
+      await onConfirmDelete(target, deleteMode === 'permanent', { deleteAttendance });
       onClose();
     } catch (err: any) {
       console.error('Record deletion failed:', err);
@@ -220,18 +225,39 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
 
         {/* Warning Callout */}
         {deleteMode === 'permanent' && (
-          <div className="rounded-2xl border border-red-500/40 bg-red-950/40 p-3.5 space-y-1.5 text-red-200 text-xs">
+          <div className="rounded-2xl border border-red-500/40 bg-red-950/40 p-3.5 space-y-2 text-red-200 text-xs">
             <div className="flex items-center gap-2 font-bold text-red-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>Permanent Deletion Warning</span>
             </div>
             <p className="leading-relaxed text-zinc-300">
               {type === 'session'
-                ? `Deleting this session will also permanently purge all associated check-in records (${relatedCheckInsCount} records). This action cannot be undone.`
+                ? `Deleting this session will permanently purge all associated check-in records (${relatedCheckInsCount} records). This action cannot be undone.`
                 : type === 'member'
-                ? 'Deleting this builder removes their member profile and breaks associated login binding.'
+                ? `Permanently deleting ${member?.name || 'this builder'} immediately frees their handle (${member?.handle || ''}) and student ID for reuse. Their user login is reset to allow re-applying.`
                 : 'Deleting this check-in atomically decrements the builder attendance counter and updates stats.'}
             </p>
+
+            {type === 'member' && (
+              <div className="pt-2 border-t border-red-500/20">
+                <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-black/40 border border-red-500/30 text-xs text-zinc-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={deleteAttendance}
+                    onChange={(e) => setDeleteAttendance(e.target.checked)}
+                    className="mt-0.5 rounded border-zinc-700 text-red-500 focus:ring-0 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-semibold text-white">
+                      Also purge past attendance records {relatedCheckInsCount > 0 ? `(${relatedCheckInsCount} check-ins)` : ''}
+                    </span>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-normal">
+                      Default is unchecked (keeps past workshop history and session counts safe).
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
           </div>
         )}
 

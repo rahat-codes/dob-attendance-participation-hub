@@ -10,8 +10,11 @@ import {
   RefreshCw,
   Trophy,
   Eye,
+  ShieldCheck,
+  Sparkles,
+  LogOut,
 } from 'lucide-react';
-import { Member, BuilderTrack } from '../types';
+import { Member, BuilderTrack, MemberPrivate } from '../types';
 import { updateMemberSelfProfile } from '../firebase/firestoreService';
 import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
@@ -22,6 +25,9 @@ interface EditProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   member: Member;
+  memberPrivate?: MemberPrivate | null;
+  isMandatory?: boolean;
+  onSignOut?: () => void;
   onProfileUpdated?: (updated: Member) => void;
 }
 
@@ -36,16 +42,19 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   isOpen,
   onClose,
   member,
+  memberPrivate,
+  isMandatory = false,
+  onSignOut,
   onProfileUpdated,
 }) => {
   const [name, setName] = useState(member.name || '');
-  const [email, setEmail] = useState(member.email || '');
-  const [phone, setPhone] = useState(member.phone || '');
-  const [studentId, setStudentId] = useState(member.studentId || '');
-  const [university, setUniversity] = useState(member.university || 'Tongmyong University');
-  const [department, setDepartment] = useState(member.department || '');
-  const [major, setMajor] = useState(member.major || '');
-  const [semester, setSemester] = useState(member.semester || '');
+  const [email, setEmail] = useState(member.email || memberPrivate?.email || '');
+  const [phone, setPhone] = useState(member.phone || memberPrivate?.phone || '');
+  const [studentId, setStudentId] = useState(member.studentId || memberPrivate?.studentId || '');
+  const [university, setUniversity] = useState(member.university || memberPrivate?.university || 'Tongmyong University');
+  const [department, setDepartment] = useState(member.department || memberPrivate?.department || '');
+  const [major, setMajor] = useState(member.major || memberPrivate?.major || '');
+  const [semester, setSemester] = useState(member.semester || memberPrivate?.semester || '');
   const [avatarUrl, setAvatarUrl] = useState(member.avatarUrl || member.photoURL || '');
   const [bio, setBio] = useState(member.bio || '');
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
@@ -99,7 +108,13 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
     const cleanName = name.trim();
     if (!cleanName) {
-      setError('Name is required.');
+      setError('Full Name is required.');
+      return;
+    }
+
+    const cleanStudentId = studentId.trim();
+    if (isMandatory && !cleanStudentId) {
+      setError('Student ID is mandatory for club roster registration.');
       return;
     }
 
@@ -110,8 +125,17 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
 
     const cleanPhone = phone.trim();
+    if (isMandatory && !cleanPhone) {
+      setError('Phone number is mandatory for member communication and check-in confirmation.');
+      return;
+    }
     if (cleanPhone && !/^[+0-9\s\-()]{7,25}$/.test(cleanPhone)) {
       setError('Please provide a valid phone number (digits, +, -, spaces only).');
+      return;
+    }
+
+    if (isMandatory && selectedTracks.length === 0) {
+      setError('Please select at least one guild specialty track.');
       return;
     }
 
@@ -131,7 +155,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         name: cleanName,
         email: cleanEmail,
         phone: cleanPhone,
-        studentId: studentId.trim(),
+        studentId: cleanStudentId,
         university: university.trim() || 'Tongmyong University',
         department: department.trim(),
         major: major.trim(),
@@ -143,14 +167,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       });
 
       if (res.success) {
-        setSuccess('Profile updated successfully!');
+        setSuccess(isMandatory ? 'Profile setup complete! Welcome to Den of Builders!' : 'Profile updated successfully!');
         if (onProfileUpdated) {
           onProfileUpdated({
             ...member,
             name: cleanName,
             email: cleanEmail,
             phone: cleanPhone,
-            studentId: studentId.trim(),
+            studentId: cleanStudentId,
             university: university.trim() || 'Tongmyong University',
             department: department.trim(),
             major: major.trim(),
@@ -159,11 +183,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             bio: bio.trim(),
             tracks: selectedTracks,
             leaderboardOptOut: !showOnLeaderboard,
+            profileCompleted: true,
           });
         }
         setTimeout(() => {
           onClose();
-        }, 700);
+        }, 900);
       } else {
         setError(res.message || 'Failed to update builder profile.');
       }
@@ -177,22 +202,41 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   return (
     <ModalSheet
       isOpen={isOpen}
-      onClose={onClose}
-      title="Edit Builder Profile"
-      subtitle="Update personal credentials and academic information"
-      icon={<User className="w-5 h-5 text-[#b5ff00]" />}
+      onClose={isMandatory ? () => {} : onClose}
+      title={isMandatory ? 'Mandatory Builder Profile Setup' : 'Edit Builder Profile'}
+      subtitle={
+        isMandatory
+          ? 'Welcome to Den of Builders! Please complete your required membership credentials to activate your attendance pass and participate in meetings.'
+          : 'Update personal credentials and academic information'
+      }
+      icon={isMandatory ? <ShieldCheck className="w-5 h-5 text-[#b5ff00]" /> : <User className="w-5 h-5 text-[#b5ff00]" />}
       maxWidth="lg"
       hasUnsavedChanges={hasUnsavedChanges}
       footer={
-        <div className="flex items-center justify-end gap-3 w-full">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="btn-glossy-secondary flex-1 sm:flex-initial px-5 py-2.5 rounded-full text-zinc-300 text-xs font-semibold cursor-pointer min-h-11"
-          >
-            Cancel
-          </button>
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full">
+          {isMandatory ? (
+            onSignOut ? (
+              <button
+                type="button"
+                onClick={onSignOut}
+                disabled={saving}
+                className="btn-glossy-secondary px-4 py-2.5 rounded-full text-zinc-400 hover:text-red-400 text-xs font-semibold cursor-pointer min-h-11 flex items-center gap-1.5"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign Out</span>
+              </button>
+            ) : null
+          ) : (
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="btn-glossy-secondary flex-1 sm:flex-initial px-5 py-2.5 rounded-full text-zinc-300 text-xs font-semibold cursor-pointer min-h-11"
+            >
+              Cancel
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -200,17 +244,17 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               if (form) form.requestSubmit();
             }}
             disabled={saving}
-            className="btn-glossy-primary flex-1 sm:flex-initial px-6 py-2.5 rounded-full text-black font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 min-h-11"
+            className="btn-glossy-primary flex-1 sm:flex-initial px-6 py-2.5 rounded-full text-black font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 min-h-11 shadow-[0_0_20px_rgba(181,255,0,0.35)]"
           >
             {saving ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-black" />
-                <span>Saving...</span>
+                <span>Saving Profile...</span>
               </>
             ) : (
               <>
                 <Save className="h-4 w-4 text-black" />
-                <span>Save Changes</span>
+                <span>{isMandatory ? 'Complete & Activate Pass' : 'Save Changes'}</span>
               </>
             )}
           </button>
@@ -218,6 +262,18 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       }
     >
       <form id="edit-profile-form" onSubmit={handleSubmit} className="space-y-4 text-xs font-sans">
+        {isMandatory && (
+          <div className="p-3.5 rounded-2xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-xs text-zinc-200 space-y-1.5 neu-raised-sm">
+            <div className="flex items-center gap-2 font-bold text-[#b5ff00]">
+              <Sparkles className="h-4 w-4" />
+              <span>Membership Approved — Mandatory Profile Setup</span>
+            </div>
+            <p className="text-[11.5px] text-zinc-300 leading-relaxed">
+              Before you can check in to workshop meetings and view your verified builder pass, club guidelines require completing your student ID, phone number, and specialty tracks.
+            </p>
+          </div>
+        )}
+
         {error && (
           <div className="p-3 rounded-xl bg-red-950/60 border border-red-800 text-red-300 flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
@@ -277,7 +333,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         {/* Name & Email */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Full Name</label>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">
+              Full Name <span className="text-red-400">*</span>
+            </label>
             <input
               type="text"
               required
@@ -309,9 +367,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         {/* Student ID & Phone */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Student ID</label>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">
+              Student ID {isMandatory && <span className="text-red-400 font-bold">*</span>}
+            </label>
             <input
               type="text"
+              required={isMandatory}
               value={studentId}
               onChange={(e) => setStudentId(e.target.value)}
               placeholder="e.g. 20241234"
@@ -321,11 +382,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Phone Number</label>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">
+              Phone Number {isMandatory && <span className="text-red-400 font-bold">*</span>}
+            </label>
             <div className="relative">
               <Phone className="h-4 w-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
               <input
                 type="tel"
+                required={isMandatory}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+880 1712-345678"
@@ -406,7 +470,9 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
         {/* Tracks */}
         <div>
-          <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Guild Specialty Tracks</label>
+          <label className="block text-zinc-300 font-medium mb-1.5 text-xs">
+            Guild Specialty Tracks {isMandatory && <span className="text-red-400 font-bold">*</span>}
+          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {AVAILABLE_TRACKS.map((t) => {
               const active = selectedTracks.includes(t);
