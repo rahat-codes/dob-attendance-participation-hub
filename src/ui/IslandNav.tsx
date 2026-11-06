@@ -496,6 +496,18 @@ export const IslandNav: React.FC<IslandNavProps> = ({
               </div>
             )}
           </div>
+
+          {/* Dedicated Instant Log Out Button */}
+          {user && (
+            <IconOrb
+              variant="onyx"
+              size="sm"
+              icon={<LogOut className="w-4 h-4 text-red-400" />}
+              aria-label="Log Out of Account"
+              onClick={signOutUser}
+              title="Log Out"
+            />
+          )}
         </div>
       </header>
     </>

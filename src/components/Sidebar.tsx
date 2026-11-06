@@ -337,9 +337,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Sidebar Footer: Builder Profile Card */}
+      {/* Sidebar Footer: Builder Profile Card & Smooth Log Out */}
       {user && (
-        <div className="p-3 border-t border-white/[0.08] bg-zinc-950/60">
+        <div className="p-3 border-t border-white/[0.08] bg-zinc-950/60 space-y-2">
           <div className="flex items-center gap-2.5 p-2 rounded-xl bg-zinc-900/60 border border-white/5 neu-inset">
             <SecureAvatar
               src={linkedMember?.avatarUrl || user.photoURL}
@@ -372,6 +372,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={async () => {
+              if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+              await signOutUser();
+            }}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-red-950/20 hover:bg-red-950/50 border border-red-500/20 hover:border-red-500/40 text-red-300 hover:text-red-200 text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer min-h-10 focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"
+            title="Log out of account"
+            aria-label="Log out of account"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Log Out</span>
+          </button>
         </div>
       )}
     </aside>

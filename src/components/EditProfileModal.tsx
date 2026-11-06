@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User,
   Phone,
@@ -59,6 +59,25 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [bio, setBio] = useState(member.bio || '');
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState<boolean>(!member.leaderboardOptOut);
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(member.name || '');
+      setEmail(member.email || memberPrivate?.email || '');
+      setPhone(member.phone || memberPrivate?.phone || '');
+      setStudentId(member.studentId || memberPrivate?.studentId || '');
+      setUniversity(member.university || memberPrivate?.university || 'Tongmyong University');
+      setDepartment(member.department || memberPrivate?.department || '');
+      setMajor(member.major || memberPrivate?.major || '');
+      setSemester(member.semester || memberPrivate?.semester || '');
+      setAvatarUrl(member.avatarUrl || member.photoURL || '');
+      setBio(member.bio || '');
+      setSelectedTracks(member.tracks && member.tracks.length > 0 ? member.tracks : ['Software & Systems']);
+      setShowOnLeaderboard(!member.leaderboardOptOut);
+      setError(null);
+      setSuccess(null);
+    }
+  }, [isOpen, member, memberPrivate]);
 
   const [saving, setSaving] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);

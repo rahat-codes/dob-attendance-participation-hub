@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Field } from '../ui/Field';
 import { BuilderTrack } from '../types';
+import { parseApplicantNotes } from '../utils/reuseHelpers';
 
 interface LoginViewProps {
   onContinueAsGuest?: () => void;
@@ -99,17 +100,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
 
   const handleSubmitLinkRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanHandleRaw = requestedHandle.trim();
-    if (!cleanHandleRaw) return;
-    const cleanHandle = cleanHandleRaw.startsWith('@') ? cleanHandleRaw : `@${cleanHandleRaw}`;
     const cleanName = requestedName.trim() || user?.displayName || '';
+    if (!cleanName) {
+      setLinkError('Full Name is required.');
+      return;
+    }
+
+    const cleanHandleRaw = requestedHandle.trim().replace(/\s+/g, '_');
+    if (!cleanHandleRaw || cleanHandleRaw === '@') {
+      setLinkError('Builder handle is required.');
+      return;
+    }
+    const cleanHandle = cleanHandleRaw.startsWith('@') ? cleanHandleRaw : `@${cleanHandleRaw}`;
     const cleanStudentId = requestedStudentId.trim();
     const payload = `${cleanHandle} · ID: ${cleanStudentId || 'N/A'} · Track: ${selectedTrack}${cleanName ? ` · Name: ${cleanName}` : ''}${requestNotes.trim() ? ` · Note: ${requestNotes.trim()}` : ''}`;
 
     setIsSubmittingRequest(true);
     setLinkError(null);
     try {
-      await requestMembershipLink(payload);
+      await requestMembershipLink(payload, cleanName);
       setRequestSubmittedSuccess(true);
       setIsEditingPendingHandle(false);
     } catch (err: any) {
@@ -543,20 +552,33 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             {isEditingPendingHandle ? (
               <form onSubmit={handleSubmitLinkRequest} className="space-y-3 pt-2 text-left">
                 <Field
-                  label="Update Builder Handle or Name"
+                  label="Builder Handle"
                   required
                   value={requestedHandle}
                   onChange={(e) => setRequestedHandle(e.target.value)}
-                  placeholder="@yourhandle or Full Name"
+                  placeholder="@yourhandle"
                 />
-                <div className="flex gap-2">
+                <Field
+                  label="Full Name"
+                  required
+                  value={requestedName}
+                  onChange={(e) => setRequestedName(e.target.value)}
+                  placeholder="Full Name"
+                />
+                <Field
+                  label="Student ID"
+                  value={requestedStudentId}
+                  onChange={(e) => setRequestedStudentId(e.target.value)}
+                  placeholder="Student ID"
+                />
+                <div className="flex gap-2 pt-1">
                   <button
                     type="submit"
                     disabled={isSubmittingRequest || !requestedHandle.trim()}
                     className="btn-glossy-primary flex-1 py-2 px-3 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     {isSubmittingRequest ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                    <span>Save</span>
+                    <span>Save Updates</span>
                   </button>
                   <button
                     type="button"
@@ -572,12 +594,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 <button
                   type="button"
                   onClick={() => {
-                    setRequestedHandle(profile?.requestedNotes || '');
+                    const parsed = parseApplicantNotes(profile?.requestedNotes);
+                    setRequestedHandle(parsed.handle ? `@${parsed.handle}` : '');
+                    if (parsed.name) setRequestedName(parsed.name);
+                    if (parsed.studentId) setRequestedStudentId(parsed.studentId);
+                    if (parsed.track) setSelectedTrack(parsed.track as BuilderTrack);
                     setIsEditingPendingHandle(true);
                   }}
                   className="text-xs text-[#b5ff00] hover:underline font-mono cursor-pointer"
                 >
-                  Edit handle / note
+                  Edit handle / details
                 </button>
               </div>
             )}

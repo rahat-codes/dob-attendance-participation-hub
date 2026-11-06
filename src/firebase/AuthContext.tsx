@@ -58,7 +58,7 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   submitApplicantNotes: (notes: string) => Promise<void>;
   reRequestAccess: (notes?: string) => Promise<void>;
-  requestMembershipLink: (notes?: string) => Promise<void>;
+  requestMembershipLink: (notes?: string, displayName?: string) => Promise<void>;
   acceptMembershipInvitation: () => Promise<void>;
   declineMembershipInvitation: () => Promise<void>;
 }
@@ -354,13 +354,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       memberUnsubRef.current = null;
 
       await signOut(auth);
+    } catch (err: any) {
+      console.warn('Sign out warning:', err);
+    } finally {
       setUser(null);
       setProfile(null);
       setLinkedMember(null);
       setMemberPrivate(null);
       setIsAdmin(false);
-    } catch (err: any) {
-      setAuthError(err?.message || 'Sign out failed.');
+      setAuthError(null);
+      setRegistrationError(null);
+      setLoading(false);
     }
   };
 
@@ -389,10 +393,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const requestMembershipLink = async (notes?: string) => {
+  const requestMembershipLink = async (notes?: string, displayName?: string) => {
     if (!user) return;
     try {
-      await requestLink(user.uid, notes);
+      await requestLink(user.uid, notes, displayName);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to submit membership request.');
       throw err;

@@ -522,14 +522,22 @@ export async function markAllAnnouncementsRead(uid: string, announcementIds: str
 // Membership Approval & Two-Stage Linking Workflow
 // ==========================================
 
-export async function requestMembershipLink(userId: string, requestedNotes?: string): Promise<void> {
+export async function requestMembershipLink(
+  userId: string,
+  requestedNotes?: string,
+  displayName?: string
+): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
   try {
-    await updateDoc(userRef, {
+    const updatePayload: Record<string, any> = {
       requestedNotes: (requestedNotes || '').trim(),
       membershipRequestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    });
+    };
+    if (displayName && displayName.trim()) {
+      updatePayload.displayName = displayName.trim();
+    }
+    await updateDoc(userRef, updatePayload);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
   }

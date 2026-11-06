@@ -229,15 +229,16 @@ export default function App() {
     // Only applies to logged-in non-admin active members who have a linked member profile
     if (!user || isAdmin || !linkedMember || membershipState !== 'active') return false;
 
-    // If marked as profile completed in private data or member record, not required
-    if (memberPrivate?.profileCompleted === true || linkedMember.profileCompleted === true) return false;
+    // A member must have completed the mandatory profile setup
+    const isMarkedCompleted = memberPrivate?.profileCompleted === true || linkedMember.profileCompleted === true;
 
     // Check mandatory fields: studentId, phone, and at least one track
     const hasStudentId = Boolean(linkedMember.studentId?.trim() || memberPrivate?.studentId?.trim());
     const hasPhone = Boolean(memberPrivate?.phone?.trim() || linkedMember.phone?.trim());
     const hasTracks = Boolean(linkedMember.tracks && linkedMember.tracks.length > 0);
 
-    return !hasStudentId || !hasPhone || !hasTracks;
+    // If not completed or any required credential is missing, mandatory modal must be shown
+    return !isMarkedCompleted || !hasStudentId || !hasPhone || !hasTracks;
   }, [user, isAdmin, linkedMember, memberPrivate, membershipState]);
 
   // Synchronize tab selection with History API (pushState) & LocalStorage
@@ -1533,6 +1534,17 @@ export default function App() {
           }
           memberPrivate={memberPrivate}
           onSignOut={signOutUser}
+          onProfileUpdated={(updated) => {
+            setLinkedMember(updated);
+            setMemberPrivate((prev) => ({
+              ...(prev || {}),
+              phone: updated.phone,
+              studentId: updated.studentId,
+              university: updated.university,
+              profileCompleted: true,
+              profileCompletedAt: new Date().toISOString(),
+            }));
+          }}
         />
       )}
 
