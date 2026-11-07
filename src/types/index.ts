@@ -40,6 +40,10 @@ export interface Member {
   leaderboardOptOut?: boolean;
   authUid?: string; // Linked Firebase Auth UID
   createdAt?: string;
+  githubUrl?: string;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  showLinksPublicly?: boolean;
   // Optional convenience / joined fields
   email?: string;
   phone?: string;
@@ -96,6 +100,16 @@ export interface UserProfile {
   memberId?: string; // Linked roster member ID
   approvedMemberId?: string; // Staged member ID waiting for applicant acceptance
   requestedNotes?: string; // Applicant handle or student ID submitted during sign-up
+  // Additive structured application fields
+  applicantName?: string;
+  applicantHandle?: string;
+  applicantStudentId?: string;
+  applicantTrack?: BuilderTrack;
+  applicantNote?: string;
+  githubUrl?: string;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  showLinksPublicly?: boolean;
   readAnnouncementIds?: string[];
   notificationPrefs?: UserNotificationPreferences;
   notificationPreferences?: UserNotificationPreferences;

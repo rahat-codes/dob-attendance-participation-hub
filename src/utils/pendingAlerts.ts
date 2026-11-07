@@ -1,38 +1,47 @@
 import { UserProfile } from '../types';
+import { isApplicationSubmitted } from './application';
 
 /**
- * Detects newly arriving pending membership requests while the admin has the portal open.
+ * Detects newly arriving or re-submitted pending membership requests while the admin has the portal open.
  * - Suppresses all existing requests during the initial snapshot.
- * - Deduplicates by user ID so each user only triggers an alert once.
+ * - Ignores users who just signed in without submitting an application.
+ * - Triggers once per submission timestamp (supporting re-applications).
  */
 export class PendingRequestDetector {
-  private seenUids = new Set<string>();
+  private seenSubmissions = new Map<string, string>();
   private isInitial = true;
 
   constructor(initialSeenUids?: string[]) {
     if (initialSeenUids && initialSeenUids.length > 0) {
-      initialSeenUids.forEach((id) => this.seenUids.add(id));
+      initialSeenUids.forEach((id) => this.seenSubmissions.set(id, 'initial'));
       this.isInitial = false;
     }
   }
 
   /**
    * Evaluates the latest list of users from the Firestore listener snapshot.
-   * Returns newly arrived pending users (empty on initial snapshot).
+   * Returns newly submitted or re-submitted pending applications (empty on initial snapshot).
    */
   public processUsers(users: UserProfile[]): UserProfile[] {
-    const currentPending = users.filter((u) => u.status === 'pending');
+    const currentSubmittedPending = users.filter(
+      (u) => u.status === 'pending' && isApplicationSubmitted(u)
+    );
 
     if (this.isInitial) {
-      currentPending.forEach((u) => this.seenUids.add(u.id));
+      currentSubmittedPending.forEach((u) => {
+        this.seenSubmissions.set(u.id, u.membershipRequestedAt || 'legacy');
+      });
       this.isInitial = false;
       return [];
     }
 
     const newArrivals: UserProfile[] = [];
-    for (const u of currentPending) {
-      if (!this.seenUids.has(u.id)) {
-        this.seenUids.add(u.id);
+    for (const u of currentSubmittedPending) {
+      const currentToken = u.membershipRequestedAt || 'submitted';
+      const lastToken = this.seenSubmissions.get(u.id);
+
+      if (!lastToken || lastToken !== currentToken) {
+        this.seenSubmissions.set(u.id, currentToken);
         newArrivals.push(u);
       }
     }
@@ -41,11 +50,11 @@ export class PendingRequestDetector {
   }
 
   public getSeenCount(): number {
-    return this.seenUids.size;
+    return this.seenSubmissions.size;
   }
 
   public reset(): void {
-    this.seenUids.clear();
+    this.seenSubmissions.clear();
     this.isInitial = true;
   }
 }

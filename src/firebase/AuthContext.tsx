@@ -16,12 +16,15 @@ import {
   SUPER_ADMIN_EMAIL,
   reRequestMembership,
   updateUserSelfProfile,
+  submitApplication,
   acceptMembershipInvitation as acceptOffer,
   declineMembershipInvitation as declineOffer,
   requestMembershipLink as requestLink,
 } from './firestoreService';
 import { captureAndStoreDeepLink } from '../utils/deepLink';
 import { singleFlight } from '../utils/singleFlight';
+import { ApplicationInput, isApplicationSubmitted } from '../utils/application';
+import { getUserState } from '../utils/userStateMachine';
 
 export type MembershipPhase =
   | 'loading'
@@ -35,6 +38,7 @@ export type MembershipPhase =
   | 'active'
   | 'declined'
   | 'suspended'
+  | 'deactivated'
   | 'error';
 
 interface AuthContextType {
@@ -58,7 +62,8 @@ interface AuthContextType {
   clearAuthError: () => void;
   refreshProfile: () => Promise<void>;
   submitApplicantNotes: (notes: string) => Promise<void>;
-  reRequestAccess: (notes?: string) => Promise<void>;
+  submitApplicationForm: (application: import('../utils/application').ApplicationInput) => Promise<void>;
+  reRequestAccess: (appOrNotes?: import('../utils/application').ApplicationInput | string) => Promise<void>;
   requestMembershipLink: (notes?: string, displayName?: string) => Promise<void>;
   acceptMembershipInvitation: () => Promise<void>;
   declineMembershipInvitation: () => Promise<void>;
@@ -85,6 +90,7 @@ const AuthContext = createContext<AuthContextType>({
   clearAuthError: () => {},
   refreshProfile: async () => {},
   submitApplicantNotes: async () => {},
+  submitApplicationForm: async () => {},
   reRequestAccess: async () => {},
   requestMembershipLink: async () => {},
   acceptMembershipInvitation: async () => {},
@@ -396,10 +402,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const reRequestAccess = async (notes?: string) => {
+  const submitApplicationForm = async (application: ApplicationInput) => {
     if (!user) return;
     try {
-      await reRequestMembership(user.uid, notes);
+      await submitApplication(user.uid, application);
+    } catch (err: any) {
+      setAuthError(err?.message || 'Failed to submit application.');
+      throw err;
+    }
+  };
+
+  const reRequestAccess = async (appOrNotes?: ApplicationInput | string) => {
+    if (!user) return;
+    try {
+      await reRequestMembership(user.uid, appOrNotes);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to re-submit membership request.');
       throw err;
@@ -439,7 +455,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isSuperAdmin =
     Boolean(user?.email && user.email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim());
 
-  // Derive authoritative phase state machine
+  // Derive authoritative phase state machine using pure state machine helper
   let membershipPhase: MembershipPhase = 'loading';
   if (registrationError) {
     membershipPhase = 'error';
@@ -451,24 +467,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     membershipPhase = 'loading_profile';
   } else if (isAdmin) {
     membershipPhase = 'active'; // Administrators have active hub access
-  } else if (profile.status === 'active') {
-    membershipPhase = 'active';
-  } else if (profile.status === 'approved_waiting_response') {
-    membershipPhase = 'approved_waiting_response';
-  } else if (profile.status === 'suspended') {
-    membershipPhase = 'suspended';
-  } else if (profile.status === 'declined') {
-    membershipPhase = 'declined';
   } else {
-    // If pending, check if unlinked (user has not submitted a requested handle/notes yet)
-    if (!profile.requestedNotes || !profile.requestedNotes.trim()) {
-      membershipPhase = 'unlinked';
+    const userState = getUserState(profile, linkedMember);
+    if (userState === 'active') {
+      membershipPhase = 'active';
+    } else if (userState === 'approved_waiting_response') {
+      membershipPhase = 'approved_waiting_response';
+    } else if (userState === 'suspended') {
+      membershipPhase = 'suspended';
+    } else if (userState === 'declined') {
+      membershipPhase = 'declined';
+    } else if (userState === 'deactivated') {
+      membershipPhase = 'deactivated';
     } else {
-      membershipPhase = 'pending';
+      // unlinked or pending: check whether user actually submitted the form
+      if (!isApplicationSubmitted(profile)) {
+        membershipPhase = 'unlinked';
+      } else {
+        membershipPhase = 'pending';
+      }
     }
   }
 
-  const isApprovedMember = Boolean(profile?.status === 'active' && profile?.memberId);
+  const isApprovedMember = Boolean(
+    profile?.status === 'active' &&
+    profile?.memberId &&
+    linkedMember?.status !== 'Inactive'
+  );
 
   return (
     <AuthContext.Provider
@@ -493,6 +518,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         clearAuthError,
         refreshProfile,
         submitApplicantNotes,
+        submitApplicationForm,
         reRequestAccess,
         requestMembershipLink,
         acceptMembershipInvitation,

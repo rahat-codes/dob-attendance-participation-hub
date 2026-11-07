@@ -41,6 +41,9 @@ import { buildPublicLeaderboardItems } from '../utils/stats';
 import { getSessionState, getSessionTemporalInfo, parseDateTimeInZone } from '../utils/sessionWindow';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHelpers';
+import { ApplicationInput, validateApplication, encodeApplication } from '../utils/application';
+import { nextUserState, getUserState } from '../utils/userStateMachine';
+import { PUBLIC_MEMBER_WHITELIST } from '../utils/repairTools';
 
 export { SUPER_ADMIN_EMAIL };
 
@@ -162,6 +165,32 @@ export async function createAuditLog(
   } catch (err) {
     console.warn('Failed to write audit log entry:', err);
   }
+}
+
+/**
+ * Appends an audit log operation to an existing WriteBatch so multi-document operations
+ * are atomic with their audit record.
+ */
+export function createAuditLogInBatch(
+  batch: ReturnType<typeof writeBatch>,
+  action: AuditAction,
+  details: string
+): void {
+  const currentUser = auth.currentUser;
+  if (!currentUser) return;
+
+  const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const logRef = doc(db, AUDIT_LOGS_COLLECTION, logId);
+  const entry: AuditLog = {
+    id: logId,
+    action,
+    performedBy: currentUser.uid,
+    performedByEmail: currentUser.email || 'unknown',
+    details,
+    timestamp: new Date().toISOString(),
+  };
+
+  batch.set(logRef, entry);
 }
 
 export function subscribeToAuditLogs(
@@ -474,14 +503,92 @@ export function subscribeToPendingUsers(
   );
 }
 
-export async function reRequestMembership(uid: string, requestedNotes?: string): Promise<void> {
+export async function submitApplication(
+  uid: string,
+  application: ApplicationInput
+): Promise<void> {
+  const validation = validateApplication(application);
+  if (!validation.valid || !validation.sanitized) {
+    const firstErr = Object.values(validation.errors)[0] || 'Invalid application data';
+    throw new Error(firstErr);
+  }
+  const sanitized = validation.sanitized;
+  const encodedSummary = encodeApplication(sanitized);
+  const now = new Date().toISOString();
+
   const userRef = doc(db, USERS_COLLECTION, uid);
+  try {
+    await updateDoc(
+      userRef,
+      removeUndefinedFields({
+        applicantName: sanitized.applicantName,
+        applicantHandle: sanitized.applicantHandle,
+        applicantStudentId: sanitized.applicantStudentId || undefined,
+        applicantTrack: sanitized.applicantTrack,
+        applicantNote: sanitized.applicantNote || undefined,
+        githubUrl: sanitized.githubUrl,
+        linkedinUrl: sanitized.linkedinUrl,
+        portfolioUrl: sanitized.portfolioUrl || undefined,
+        showLinksPublicly: sanitized.showLinksPublicly ?? true,
+        displayName: sanitized.applicantName,
+        requestedNotes: encodedSummary,
+        membershipRequestedAt: now,
+        updatedAt: now,
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
+  }
+}
+
+export async function reRequestMembership(
+  uid: string,
+  application?: ApplicationInput | string
+): Promise<void> {
+  const userRef = doc(db, USERS_COLLECTION, uid);
+  const now = new Date().toISOString();
+
+  if (application && typeof application === 'object') {
+    const validation = validateApplication(application);
+    if (!validation.valid || !validation.sanitized) {
+      const firstErr = Object.values(validation.errors)[0] || 'Invalid application data';
+      throw new Error(firstErr);
+    }
+    const sanitized = validation.sanitized;
+    const encodedSummary = encodeApplication(sanitized);
+
+    try {
+      await updateDoc(
+        userRef,
+        removeUndefinedFields({
+          status: 'pending',
+          applicantName: sanitized.applicantName,
+          applicantHandle: sanitized.applicantHandle,
+          applicantStudentId: sanitized.applicantStudentId || undefined,
+          applicantTrack: sanitized.applicantTrack,
+          applicantNote: sanitized.applicantNote || undefined,
+          githubUrl: sanitized.githubUrl,
+          linkedinUrl: sanitized.linkedinUrl,
+          portfolioUrl: sanitized.portfolioUrl || undefined,
+          showLinksPublicly: sanitized.showLinksPublicly ?? true,
+          displayName: sanitized.applicantName,
+          requestedNotes: encodedSummary,
+          membershipRequestedAt: now,
+          updatedAt: now,
+        })
+      );
+      return;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
+    }
+  }
+
   try {
     await updateDoc(userRef, {
       status: 'pending',
-      requestedNotes: requestedNotes || '',
-      membershipRequestedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      requestedNotes: typeof application === 'string' ? application : '',
+      membershipRequestedAt: now,
+      updatedAt: now,
     });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
@@ -572,50 +679,300 @@ export async function approveUserMembershipLink(
   userId: string,
   targetMemberId: string
 ): Promise<void> {
-  const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
-  const memSnap = await getDoc(memberRef);
-  let memberName = 'Builder Profile';
-  let shouldReactivate = false;
+  return approveExistingMember(userId, targetMemberId);
+}
 
-  if (memSnap.exists()) {
-    const existingMem = memSnap.data() as Member;
-    memberName = existingMem.name;
-    if (existingMem.authUid && existingMem.authUid !== userId) {
-      throw new Error(`Member record is already linked to another account.`);
-    }
-    if (existingMem.status === 'Inactive') {
-      shouldReactivate = true;
+export async function createMemberAndApprove(
+  userId: string,
+  memberInput: {
+    name: string;
+    handle: string;
+    role: BuilderRole;
+    tracks: BuilderTrack[];
+    email?: string;
+    phone?: string;
+    studentId?: string;
+    university?: string;
+    department?: string;
+    major?: string;
+    semester?: string;
+    avatarUrl?: string;
+    bio?: string;
+    githubUrl?: string;
+    linkedinUrl?: string;
+    portfolioUrl?: string;
+    showLinksPublicly?: boolean;
+    archiveOldMemberId?: string;
+  }
+): Promise<{ memberId: string }> {
+  if (!userId) throw new Error('User ID is required.');
+  if (!memberInput.name?.trim()) throw new Error('Full Name is required.');
+  if (!memberInput.handle?.trim()) throw new Error('Builder handle is required.');
+  if (!memberInput.tracks || memberInput.tracks.length === 0) {
+    throw new Error('At least one track discipline must be selected.');
+  }
+
+  // Pre-write handle & student ID uniqueness check across active roster
+  const cleanHandle = memberInput.handle.trim();
+  const snapAll = await getDocs(collection(db, MEMBERS_COLLECTION));
+  const existingMembers = snapAll.docs.map((d) => d.data() as Member);
+
+  const handleCheck = isHandleTaken(existingMembers, cleanHandle);
+  if (handleCheck.taken && handleCheck.conflictingMember) {
+    throw new Error(
+      `Builder handle "${cleanHandle}" is already in use by active builder ${handleCheck.conflictingMember.name} (${handleCheck.conflictingMember.status}).`
+    );
+  }
+
+  const cleanStudentId = memberInput.studentId?.trim();
+  if (cleanStudentId) {
+    const idCheck = isStudentIdTaken(existingMembers, cleanStudentId);
+    if (idCheck.taken && idCheck.conflictingMember) {
+      throw new Error(
+        `Student ID "${cleanStudentId}" is already registered to active builder ${idCheck.conflictingMember.name} (${idCheck.conflictingMember.status}).`
+      );
     }
   }
+
+  const memberId = `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
+  const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, memberId);
+  const userRef = doc(db, USERS_COLLECTION, userId);
+  const now = new Date().toISOString();
+
+  const safeAvatar = await ensureSafeAvatarUrl(memberInput.avatarUrl);
+
+  // Whitelisted public fields only: NO email, phone, counters, or private academic data
+  const publicData: Record<string, any> = {
+    id: memberId,
+    name: memberInput.name.trim(),
+    handle: cleanHandle,
+    role: memberInput.role || 'Member',
+    tracks: memberInput.tracks,
+    joinedDate: now.split('T')[0],
+    status: 'Active',
+    avatarUrl: safeAvatar || '',
+    bio: memberInput.bio?.trim() || 'New member of Den of Builders.',
+    leaderboardOptOut: false,
+    createdAt: now,
+  };
+  if (memberInput.githubUrl) publicData.githubUrl = memberInput.githubUrl;
+  if (memberInput.linkedinUrl) publicData.linkedinUrl = memberInput.linkedinUrl;
+  if (memberInput.portfolioUrl) publicData.portfolioUrl = memberInput.portfolioUrl;
+  if (memberInput.showLinksPublicly !== undefined) publicData.showLinksPublicly = memberInput.showLinksPublicly;
+
+  const privateData: Record<string, any> = {
+    createdAt: now,
+    updatedAt: now,
+  };
+  if (memberInput.email?.trim()) privateData.email = memberInput.email.trim().toLowerCase();
+  if (memberInput.phone?.trim()) privateData.phone = memberInput.phone.trim();
+  if (cleanStudentId) privateData.studentId = cleanStudentId;
+  if (memberInput.university?.trim()) privateData.university = memberInput.university.trim();
+  if (memberInput.department?.trim()) privateData.department = memberInput.department.trim();
+  if (memberInput.major?.trim()) privateData.major = memberInput.major.trim();
+  if (memberInput.semester?.trim()) privateData.semester = memberInput.semester.trim();
 
   const batch = writeBatch(db);
-  if (shouldReactivate) {
-    batch.update(memberRef, { status: 'Active' });
-  }
+  batch.set(memberRef, publicData);
+  batch.set(privRef, privateData);
 
-  const userRef = doc(db, USERS_COLLECTION, userId);
+  // Stage user in the same atomic batch
   batch.update(userRef, {
     status: 'approved_waiting_response',
-    approvedMemberId: targetMemberId,
-    approvedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    approvedMemberId: memberId,
+    approvedAt: now,
+    updatedAt: now,
   });
+
+  // If handle archival was requested for an old Inactive member, execute in the SAME batch
+  if (memberInput.archiveOldMemberId) {
+    const oldMemRef = doc(db, MEMBERS_COLLECTION, memberInput.archiveOldMemberId);
+    const oldMem = existingMembers.find((m) => m.id === memberInput.archiveOldMemberId);
+    if (oldMem) {
+      batch.update(oldMemRef, { handle: archiveHandle(oldMem.handle) });
+    }
+  }
+
+  createAuditLogInBatch(
+    batch,
+    'approve_user',
+    `Admin created member record ${memberId} (${memberInput.name} ${cleanHandle}) and approved applicant ${userId}`
+  );
 
   try {
     await batch.commit();
-    await createAuditLog(
-      'approve_user',
-      `Admin approved membership request for user ${userId} waiting for applicant acceptance (staged member: ${targetMemberId} - ${memberName}${shouldReactivate ? ' [Reactivated]' : ''})`
-    );
+    return { memberId };
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `members/${memberId}`);
+  }
+}
+
+export async function approveExistingMember(
+  userId: string,
+  memberId: string,
+  _options?: { confirmedByAdmin?: boolean }
+): Promise<void> {
+  const userRef = doc(db, USERS_COLLECTION, userId);
+  const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
+
+  const [userSnap, memSnap] = await Promise.all([getDoc(userRef), getDoc(memberRef)]);
+  if (!userSnap.exists()) throw new Error('Applicant user profile not found.');
+  if (!memSnap.exists()) throw new Error('Roster member record not found.');
+
+  const userData = userSnap.data() as UserProfile;
+  const memData = memSnap.data() as Member;
+
+  const transition = nextUserState(userData, memData, 'approve');
+  if (!transition.allowed) {
+    throw new Error(transition.reason || 'Cannot approve applicant in current state.');
+  }
+
+  if (memData.authUid && memData.authUid !== userId) {
+    throw new Error(`Member record is already linked to another active account.`);
+  }
+
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  let reactivated = false;
+  if (memData.status === 'Inactive') {
+    batch.update(memberRef, { status: 'Active' });
+    reactivated = true;
+  }
+
+  batch.update(userRef, {
+    status: 'approved_waiting_response',
+    approvedMemberId: memberId,
+    approvedAt: now,
+    updatedAt: now,
+  });
+
+  createAuditLogInBatch(
+    batch,
+    'approve_user',
+    `Admin approved membership request for user ${userId} waiting for applicant acceptance (staged member: ${memberId} - ${memData.name}${reactivated ? ' [Reactivated]' : ''})`
+  );
+
+  try {
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
   }
 }
 
-/**
- * Stage 2A: Applicant accepts the membership invitation.
- * Activates user status to 'active', links memberId, and binds authUid to member record.
- */
+export async function detachAndReuseMember(
+  userId: string,
+  memberId: string
+): Promise<void> {
+  const userRef = doc(db, USERS_COLLECTION, userId);
+  const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
+
+  const [userSnap, memSnap] = await Promise.all([getDoc(userRef), getDoc(memberRef)]);
+  if (!userSnap.exists()) throw new Error('Applicant user profile not found.');
+  if (!memSnap.exists()) throw new Error('Roster member record not found.');
+
+  const memData = memSnap.data() as Member;
+  const oldAuthUid = memData.authUid;
+
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  // Clear authUid on member and reactivate
+  batch.update(memberRef, {
+    authUid: deleteField(),
+    status: 'Active',
+  });
+
+  // Reset old linked account if different from new applicant
+  if (oldAuthUid && oldAuthUid !== userId) {
+    const oldUserRef = doc(db, USERS_COLLECTION, oldAuthUid);
+    batch.update(oldUserRef, {
+      status: 'declined',
+      memberId: deleteField(),
+      approvedMemberId: deleteField(),
+      updatedAt: now,
+    });
+  }
+
+  // Stage new user
+  batch.update(userRef, {
+    status: 'approved_waiting_response',
+    approvedMemberId: memberId,
+    approvedAt: now,
+    updatedAt: now,
+  });
+
+  createAuditLogInBatch(
+    batch,
+    'approve_user',
+    `Admin detached member ${memberId} from previous account and staged for applicant ${userId}`
+  );
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `members/${memberId}`);
+  }
+}
+
+export async function activateDirectly(
+  userId: string,
+  targetMemberId: string
+): Promise<void> {
+  if (!userId) throw new Error('User ID is required.');
+  if (!targetMemberId) throw new Error('Target member ID is required.');
+
+  const userRef = doc(db, USERS_COLLECTION, userId);
+  const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
+
+  const [userSnap, memSnap] = await Promise.all([getDoc(userRef), getDoc(memberRef)]);
+  if (!userSnap.exists()) throw new Error('Target user profile not found.');
+  if (!memSnap.exists()) throw new Error('Target member record not found in roster.');
+
+  const userData = userSnap.data() as UserProfile;
+  const memData = memSnap.data() as Member;
+
+  const transition = nextUserState(userData, memData, 'activate_directly');
+  if (!transition.allowed) {
+    throw new Error(transition.reason || 'Direct activation is not allowed in current state.');
+  }
+
+  if (memData.authUid && memData.authUid !== userId) {
+    throw new Error('Member record is already linked to another account.');
+  }
+
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  batch.update(userRef, {
+    status: 'active',
+    memberId: targetMemberId,
+    approvedMemberId: targetMemberId,
+    approvedAt: now,
+    respondedAt: now,
+    updatedAt: now,
+  });
+
+  const memberUpdates: Record<string, any> = { authUid: userId };
+  if (memData.status === 'Inactive') {
+    memberUpdates.status = 'Active';
+  }
+  batch.update(memberRef, memberUpdates);
+
+  createAuditLogInBatch(
+    batch,
+    'approve_user',
+    `Admin directly activated member link for user ${userId} to member ${targetMemberId}`
+  );
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
+  }
+}
+
 export async function acceptMembershipInvitation(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
   const userSnap = await getDoc(userRef);
@@ -649,7 +1006,6 @@ export async function acceptMembershipInvitation(userId: string): Promise<void> 
     if (err?.message?.includes('already linked')) {
       throw err;
     }
-    // Non-fatal pre-read: Firestore security rules validate authUid during atomic batch commit
   }
 
   const batch = writeBatch(db);
@@ -666,16 +1022,11 @@ export async function acceptMembershipInvitation(userId: string): Promise<void> 
 
   try {
     await batch.commit();
-    await createAuditLog('update_member', `Applicant ${userId} accepted membership invitation for member ${memberId}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
   }
 }
 
-/**
- * Stage 2B: Applicant declines the membership invitation.
- * Updates user status to 'declined'. Leaves roster record unlinked.
- */
 export async function declineMembershipInvitation(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
   try {
@@ -684,7 +1035,6 @@ export async function declineMembershipInvitation(userId: string): Promise<void>
       respondedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    await createAuditLog('decline_user', `Applicant ${userId} declined membership invitation`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
   }
@@ -706,70 +1056,23 @@ export async function approveAndLinkUser(
   }
 ): Promise<void> {
   if (newMemberData) {
-    const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
-    const memberDocData: Member = {
-      id: targetMemberId,
-      name: newMemberData.name.trim(),
-      handle: newMemberData.handle.trim(),
+    await createMemberAndApprove(userId, {
+      name: newMemberData.name,
+      handle: newMemberData.handle,
       role: newMemberData.role,
       tracks: newMemberData.tracks,
-      joinedDate: new Date().toISOString().split('T')[0],
-      status: 'Active',
-      createdAt: new Date().toISOString(),
-    };
-    await setDoc(memberRef, memberDocData);
-    if (newMemberData.email) {
-      const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
-      await setDoc(privRef, { email: newMemberData.email.trim().toLowerCase() });
-    }
+      email: newMemberData.email,
+    });
+    return;
   }
-  await approveUserMembershipLink(userId, targetMemberId);
+  await approveExistingMember(userId, targetMemberId);
 }
 
 export async function directActivateUserMembership(
   userId: string,
   targetMemberId: string
 ): Promise<void> {
-  if (!userId) throw new Error('User ID is required.');
-  if (!targetMemberId) throw new Error('Target member ID is required.');
-
-  const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
-  const memSnap = await getDoc(memberRef);
-  if (!memSnap.exists()) {
-    throw new Error('Target member record not found in roster.');
-  }
-
-  const existingMem = memSnap.data() as Member;
-  if (existingMem.authUid && existingMem.authUid !== userId) {
-    throw new Error('Member record is already linked to another account.');
-  }
-
-  const userRef = doc(db, USERS_COLLECTION, userId);
-  const now = new Date().toISOString();
-  const batch = writeBatch(db);
-
-  batch.update(userRef, {
-    status: 'active',
-    memberId: targetMemberId,
-    approvedMemberId: targetMemberId,
-    approvedAt: now,
-    respondedAt: now,
-    updatedAt: now,
-  });
-
-  batch.update(memberRef, {
-    authUid: userId,
-  });
-
-  try {
-    await batch.commit();
-    await createAuditLog(
-      'approve_user',
-      `Admin directly activated member link for user ${userId} to member ${targetMemberId}`
-    );
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
-  }
+  return activateDirectly(userId, targetMemberId);
 }
 
 export async function declineUserRequest(userId: string): Promise<void> {
@@ -781,19 +1084,7 @@ export async function declineUserRequest(userId: string): Promise<void> {
     updatedAt: new Date().toISOString(),
   });
 
-  const currentUser = auth.currentUser;
-  if (currentUser) {
-    const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const logRef = doc(db, AUDIT_LOGS_COLLECTION, logId);
-    batch.set(logRef, {
-      id: logId,
-      action: 'decline_user',
-      performedBy: currentUser.uid,
-      performedByEmail: currentUser.email || 'unknown',
-      details: `Declined applicant request for user ${userId}`,
-      timestamp: new Date().toISOString(),
-    });
-  }
+  createAuditLogInBatch(batch, 'decline_user', `Declined applicant request for user ${userId}`);
 
   try {
     await batch.commit();
@@ -817,12 +1108,20 @@ export async function suspendUser(userId: string): Promise<void> {
 
 export async function unsuspendUser(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
+  const snap = await getDoc(userRef);
+  if (!snap.exists()) {
+    throw new Error('User profile not found.');
+  }
+  const profile = snap.data() as UserProfile;
+  const transition = nextUserState(profile, null, 'unsuspend');
+  const targetStatus = transition.nextUserStatus || 'pending';
+
   try {
     await updateDoc(userRef, {
-      status: 'active',
+      status: targetStatus,
       updatedAt: new Date().toISOString(),
     });
-    await createAuditLog('unsuspend_user', `Unsuspended user ${userId}`);
+    await createAuditLog('unsuspend_user', `Unsuspended user ${userId} -> restored to ${targetStatus}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
   }

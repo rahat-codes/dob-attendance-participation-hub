@@ -20,6 +20,9 @@ import {
 import { Field } from '../ui/Field';
 import { BuilderTrack } from '../types';
 import { parseApplicantNotes } from '../utils/reuseHelpers';
+import { ApplicationForm } from './ApplicationForm';
+import { SafeExternalLink } from './common/SafeExternalLink';
+import { decodeApplication } from '../utils/application';
 
 interface LoginViewProps {
   onContinueAsGuest?: () => void;
@@ -37,7 +40,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     registrationError,
     retryRegistration,
     refreshProfile,
-    requestMembershipLink,
+    submitApplicationForm,
     acceptMembershipInvitation,
     declineMembershipInvitation,
     signingIn,
@@ -45,31 +48,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     reRequestAccess,
   } = useAuth();
 
-  const [requestedHandle, setRequestedHandle] = useState('');
-  const [requestedName, setRequestedName] = useState(user?.displayName || '');
-  const [requestedStudentId, setRequestedStudentId] = useState('');
-  const [selectedTrack, setSelectedTrack] = useState<BuilderTrack>('Software & Systems');
-  const [requestNotes, setRequestNotes] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
-  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
-  const [requestSubmittedSuccess, setRequestSubmittedSuccess] = useState(false);
   const [isEditingPendingHandle, setIsEditingPendingHandle] = useState(false);
-  const [reApplyNotes, setReApplyNotes] = useState('');
-  const [isReApplying, setIsReApplying] = useState(false);
   const [isRespondingToOffer, setIsRespondingToOffer] = useState(false);
   const [respondError, setRespondError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (user?.displayName && !requestedName) {
-      setRequestedName(user.displayName);
-    }
-  }, [user?.displayName, requestedName]);
-
-  useEffect(() => {
-    if (membershipState === 'declined' && profile?.requestedNotes && !reApplyNotes) {
-      setReApplyNotes(profile.requestedNotes);
-    }
-  }, [membershipState, profile?.requestedNotes, reApplyNotes]);
 
   const handleAcceptOffer = async () => {
     setIsRespondingToOffer(true);
@@ -95,49 +77,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
       setRespondError(err.message || 'Failed to decline membership invitation.');
     } finally {
       setIsRespondingToOffer(false);
-    }
-  };
-
-  const handleSubmitLinkRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanName = requestedName.trim() || user?.displayName || '';
-    if (!cleanName) {
-      setLinkError('Full Name is required.');
-      return;
-    }
-
-    const cleanHandleRaw = requestedHandle.trim().replace(/\s+/g, '_');
-    if (!cleanHandleRaw || cleanHandleRaw === '@') {
-      setLinkError('Builder handle is required.');
-      return;
-    }
-    const cleanHandle = cleanHandleRaw.startsWith('@') ? cleanHandleRaw : `@${cleanHandleRaw}`;
-    const cleanStudentId = requestedStudentId.trim();
-    const payload = `${cleanHandle} · ID: ${cleanStudentId || 'N/A'} · Track: ${selectedTrack}${cleanName ? ` · Name: ${cleanName}` : ''}${requestNotes.trim() ? ` · Note: ${requestNotes.trim()}` : ''}`;
-
-    setIsSubmittingRequest(true);
-    setLinkError(null);
-    try {
-      await requestMembershipLink(payload, cleanName);
-      setRequestSubmittedSuccess(true);
-      setIsEditingPendingHandle(false);
-    } catch (err: any) {
-      setLinkError(err?.message || 'Failed to submit membership request.');
-    } finally {
-      setIsSubmittingRequest(false);
-    }
-  };
-
-  const handleReApply = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsReApplying(true);
-    setLinkError(null);
-    try {
-      await reRequestAccess(reApplyNotes.trim());
-    } catch (err: any) {
-      setLinkError(err?.message || 'Failed to submit membership re-application.');
-    } finally {
-      setIsReApplying(false);
     }
   };
 
@@ -321,7 +260,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 6: Authenticated but Not Linked to Member (New Member Registration) */}
-        {user && !loading && membershipState === 'unlinked' && (
+        {user && !loading && membershipState === 'unlinked' && profile && (
           <div className="bg-zinc-900/90 border border-[#b5ff00]/30 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] shrink-0">
@@ -346,78 +285,19 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               </div>
             )}
 
-            {requestSubmittedSuccess ? (
-              <div className="p-4 rounded-xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-xs text-zinc-200 space-y-1">
-                <p className="font-bold text-[#b5ff00] flex items-center gap-1.5">
-                  <ShieldCheck className="h-4 w-4" />
-                  Registration Submitted Successfully
-                </p>
-                <p className="text-[11px] text-zinc-400">
-                  Please inform a club organizer at today's meeting to verify and approve your builder pass.
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmitLinkRequest} className="space-y-3.5">
-                <Field
-                  label="Full Name"
-                  required
-                  value={requestedName}
-                  onChange={(e) => setRequestedName(e.target.value)}
-                  placeholder="e.g. Alex Morgan"
-                />
-
-                <Field
-                  label="Builder Handle"
-                  required
-                  value={requestedHandle}
-                  onChange={(e) => setRequestedHandle(e.target.value)}
-                  placeholder="e.g. @alex or alex"
-                />
-
-                <Field
-                  label="Student ID (Recommended)"
-                  value={requestedStudentId}
-                  onChange={(e) => setRequestedStudentId(e.target.value)}
-                  placeholder="e.g. 20241089"
-                />
-
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5 font-mono">
-                    Specialty Track <span className="text-[#b5ff00]">*</span>
-                  </label>
-                  <select
-                    value={selectedTrack}
-                    onChange={(e) => setSelectedTrack(e.target.value as BuilderTrack)}
-                    className="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#b5ff00]/60 transition-colors font-mono cursor-pointer"
-                  >
-                    <option value="Software & Systems">Software &amp; Systems</option>
-                    <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
-                    <option value="AI & Embedded">AI &amp; Embedded</option>
-                    <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
-                  </select>
-                </div>
-
-                <Field
-                  label="Note to Organizers (Optional)"
-                  value={requestNotes}
-                  onChange={(e) => setRequestNotes(e.target.value)}
-                  placeholder="e.g. Attending workshop today"
-                />
-
-                <button
-                  type="submit"
-                  disabled={isSubmittingRequest || !requestedHandle.trim()}
-                  className="btn-glossy-primary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 mt-1"
-                >
-                  {isSubmittingRequest ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Send className="h-3.5 w-3.5" />
-                  )}
-                  <span>Submit Builder Registration</span>
-                </button>
-              </form>
-            )}
+            <ApplicationForm
+              user={profile}
+              onSubmit={async (appData) => {
+                setLinkError(null);
+                try {
+                  await submitApplicationForm(appData);
+                } catch (err: any) {
+                  setLinkError(err?.message || 'Failed to submit application.');
+                  throw err;
+                }
+              }}
+              onSignOut={signOutUser}
+            />
 
             <div className="flex items-center justify-between pt-3 border-t border-zinc-800/80 gap-2">
               <button
@@ -475,7 +355,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 7: Membership Pending Admin Approval */}
-        {user && !loading && membershipState === 'pending' && !registrationError && (
+        {user && !loading && membershipState === 'pending' && profile && !registrationError && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 mx-auto">
               <RefreshCw className="h-6 w-6 animate-spin" />
@@ -498,114 +378,118 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               </div>
             )}
 
-            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs space-y-2 font-mono">
-              <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                <span className="text-zinc-400">Account:</span>
-                <span className="text-white truncate max-w-[200px]">{user.email}</span>
-              </div>
-              {(() => {
-                const notes = profile?.requestedNotes || '';
-                const handlePart = notes.split('·')[0]?.trim() || '';
-                const idMatch = notes.match(/ID:\s*([A-Za-z0-9_-]+)/i);
-                const trackMatch = notes.match(/Track:\s*([^·]+)/i);
-                const nameMatch = notes.match(/Name:\s*([^·]+)/i);
-
-                return (
-                  <>
-                    {nameMatch && (
-                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                        <span className="text-zinc-400">Full Name:</span>
-                        <span className="text-zinc-200 font-bold truncate max-w-[200px]">{nameMatch[1].trim()}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                      <span className="text-zinc-400">Builder Handle:</span>
-                      <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">
-                        {handlePart || notes || 'Awaiting entry'}
-                      </span>
-                    </div>
-                    {idMatch && idMatch[1] !== 'N/A' && (
-                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                        <span className="text-zinc-400">Student ID:</span>
-                        <span className="text-zinc-200 font-mono truncate max-w-[200px]">{idMatch[1].trim()}</span>
-                      </div>
-                    )}
-                    {trackMatch && (
-                      <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
-                        <span className="text-zinc-400">Specialty Track:</span>
-                        <span className="text-zinc-200 truncate max-w-[200px]">{trackMatch[1].trim()}</span>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-400">Submitted at:</span>
-                <span className="text-zinc-300">
-                  {profile?.membershipRequestedAt || profile?.createdAt
-                    ? new Date((profile.membershipRequestedAt || profile.createdAt) as string).toLocaleString()
-                    : new Date().toLocaleString()}
-                </span>
-              </div>
-            </div>
-
             {isEditingPendingHandle ? (
-              <form onSubmit={handleSubmitLinkRequest} className="space-y-3 pt-2 text-left">
-                <Field
-                  label="Builder Handle"
-                  required
-                  value={requestedHandle}
-                  onChange={(e) => setRequestedHandle(e.target.value)}
-                  placeholder="@yourhandle"
-                />
-                <Field
-                  label="Full Name"
-                  required
-                  value={requestedName}
-                  onChange={(e) => setRequestedName(e.target.value)}
-                  placeholder="Full Name"
-                />
-                <Field
-                  label="Student ID"
-                  value={requestedStudentId}
-                  onChange={(e) => setRequestedStudentId(e.target.value)}
-                  placeholder="Student ID"
-                />
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="submit"
-                    disabled={isSubmittingRequest || !requestedHandle.trim()}
-                    className="btn-glossy-primary flex-1 py-2 px-3 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    {isSubmittingRequest ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                    <span>Save Updates</span>
-                  </button>
+              <div className="pt-2 text-left space-y-3">
+                <div className="flex items-center justify-between pb-1 border-b border-zinc-800">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">Edit Application</span>
                   <button
                     type="button"
                     onClick={() => setIsEditingPendingHandle(false)}
-                    className="btn-glossy-secondary py-2 px-4 rounded-full text-xs font-semibold text-zinc-300 cursor-pointer"
+                    className="text-xs text-zinc-400 hover:text-white cursor-pointer"
                   >
                     Cancel
                   </button>
                 </div>
-              </form>
-            ) : (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const parsed = parseApplicantNotes(profile?.requestedNotes);
-                    setRequestedHandle(parsed.handle ? `@${parsed.handle}` : '');
-                    if (parsed.name) setRequestedName(parsed.name);
-                    if (parsed.studentId) setRequestedStudentId(parsed.studentId);
-                    if (parsed.track) setSelectedTrack(parsed.track as BuilderTrack);
-                    setIsEditingPendingHandle(true);
+                <ApplicationForm
+                  user={profile}
+                  initialValues={decodeApplication(profile)}
+                  onSubmit={async (appData) => {
+                    setLinkError(null);
+                    try {
+                      await submitApplicationForm(appData);
+                      setIsEditingPendingHandle(false);
+                    } catch (err: any) {
+                      setLinkError(err?.message || 'Failed to update application.');
+                      throw err;
+                    }
                   }}
-                  className="text-xs text-[#b5ff00] hover:underline font-mono cursor-pointer"
-                >
-                  Edit handle / details
-                </button>
+                  onSignOut={signOutUser}
+                />
               </div>
+            ) : (
+              <>
+                <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs space-y-2 font-mono">
+                  <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                    <span className="text-zinc-400">Account:</span>
+                    <span className="text-white truncate max-w-[200px]">{user.email}</span>
+                  </div>
+                  {(() => {
+                    const app = decodeApplication(profile);
+                    return (
+                      <>
+                        <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                          <span className="text-zinc-400">Full Name:</span>
+                          <span className="text-zinc-200 font-bold truncate max-w-[200px]">{app.applicantName || user.displayName}</span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                          <span className="text-zinc-400">Builder Handle:</span>
+                          <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">
+                            {app.applicantHandle || '@builder'}
+                          </span>
+                        </div>
+                        {app.applicantStudentId && (
+                          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                            <span className="text-zinc-400">Student ID:</span>
+                            <span className="text-zinc-200 font-mono truncate max-w-[200px]">{app.applicantStudentId}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                          <span className="text-zinc-400">Specialty Track:</span>
+                          <span className="text-zinc-200 truncate max-w-[200px]">{app.applicantTrack}</span>
+                        </div>
+                        {app.githubUrl && (
+                          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                            <span className="text-zinc-400">GitHub:</span>
+                            <SafeExternalLink href={app.githubUrl} className="text-[#b5ff00] hover:underline truncate max-w-[200px]">
+                              {app.githubUrl.replace('https://github.com/', '@')}
+                            </SafeExternalLink>
+                          </div>
+                        )}
+                        {app.linkedinUrl && (
+                          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                            <span className="text-zinc-400">LinkedIn:</span>
+                            <SafeExternalLink href={app.linkedinUrl} className="text-blue-400 hover:underline truncate max-w-[200px]">
+                              {app.linkedinUrl.replace('https://www.linkedin.com/in/', '')}
+                            </SafeExternalLink>
+                          </div>
+                        )}
+                        {app.portfolioUrl && (
+                          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                            <span className="text-zinc-400">Portfolio:</span>
+                            <SafeExternalLink href={app.portfolioUrl} className="text-cyan-400 hover:underline truncate max-w-[200px]">
+                              {app.portfolioUrl.replace(/^https?:\/\//, '')}
+                            </SafeExternalLink>
+                          </div>
+                        )}
+                        {app.applicantNote && (
+                          <div className="border-b border-zinc-800/80 pb-2">
+                            <span className="text-zinc-400 block mb-0.5">Note to Organizers:</span>
+                            <p className="text-zinc-300 font-sans text-[11px] leading-relaxed break-words">{app.applicantNote}</p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-400">Submitted at:</span>
+                    <span className="text-zinc-300">
+                      {profile?.membershipRequestedAt || profile?.createdAt
+                        ? new Date((profile.membershipRequestedAt || profile.createdAt) as string).toLocaleString()
+                        : new Date().toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingPendingHandle(true)}
+                    className="text-xs text-[#b5ff00] hover:underline font-mono cursor-pointer"
+                  >
+                    Edit application details
+                  </button>
+                </div>
+              </>
             )}
 
             <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs text-zinc-400">
@@ -722,22 +606,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         )}
 
         {/* State 7C: Declined Membership */}
-        {user && !loading && membershipState === 'declined' && (
-          <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-4 text-center">
+        {user && !loading && membershipState === 'declined' && profile && (
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
             <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
               <AlertCircle className="h-6 w-6" />
             </div>
             <h2 className="text-base font-bold text-white">Membership Invitation Declined</h2>
             <p className="text-xs text-zinc-400">
-              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If you wish to join or update your details, you can re-apply below with your builder handle.
+              The membership invitation for <span className="text-zinc-200 font-mono">{user.email}</span> was declined. If you wish to join or update your details, you can re-apply below.
             </p>
-
-            {profile?.requestedNotes && (
-              <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 text-left text-xs font-mono">
-                <span className="text-zinc-500 block text-[10px] uppercase">Previous Application Details:</span>
-                <span className="text-[#b5ff00] font-semibold">{profile.requestedNotes}</span>
-              </div>
-            )}
 
             {linkError && (
               <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
@@ -746,31 +623,61 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               </div>
             )}
 
-            <form onSubmit={handleReApply} className="space-y-3 pt-1 text-left">
-              <Field
-                label="Builder Handle / Re-application Details"
-                value={reApplyNotes}
-                onChange={(e) => setReApplyNotes(e.target.value)}
-                placeholder="@yourhandle · ID: 20241234"
+            <div className="pt-1 text-left">
+              <ApplicationForm
+                user={profile}
+                initialValues={decodeApplication(profile)}
+                isReapplying={true}
+                onSubmit={async (appData) => {
+                  setLinkError(null);
+                  try {
+                    await reRequestAccess(appData);
+                  } catch (err: any) {
+                    setLinkError(err?.message || 'Failed to submit re-application.');
+                    throw err;
+                  }
+                }}
+                onSignOut={signOutUser}
               />
-              <div className="flex gap-2 justify-center pt-2">
-                <button
-                  type="submit"
-                  disabled={isReApplying || !reApplyNotes.trim()}
-                  className="py-2.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  {isReApplying ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                  <span>Re-apply for Membership</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={signOutUser}
-                  className="py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Sign Out
-                </button>
+            </div>
+          </div>
+        )}
+
+        {/* State 7D: Deactivated Member */}
+        {user && !loading && membershipState === 'deactivated' && profile && (
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
+            <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="text-base font-bold text-white">Account Deactivated</h2>
+            <p className="text-xs text-zinc-400">
+              Your builder record has been deactivated. You can submit a new application below to rejoin the roster.
+            </p>
+
+            {linkError && (
+              <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                <span>{linkError}</span>
               </div>
-            </form>
+            )}
+
+            <div className="pt-1 text-left">
+              <ApplicationForm
+                user={profile}
+                initialValues={decodeApplication(profile)}
+                isReapplying={true}
+                onSubmit={async (appData) => {
+                  setLinkError(null);
+                  try {
+                    await reRequestAccess(appData);
+                  } catch (err: any) {
+                    setLinkError(err?.message || 'Failed to submit re-application.');
+                    throw err;
+                  }
+                }}
+                onSignOut={signOutUser}
+              />
+            </div>
           </div>
         )}
 

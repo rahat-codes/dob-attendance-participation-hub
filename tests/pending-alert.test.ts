@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { PendingRequestDetector } from '../src/utils/pendingAlerts';
 import { UserProfile } from '../src/types';
 
-function makeMockUser(id: string, status: UserProfile['status'], name = `User ${id}`): UserProfile {
+function makeMockUser(id: string, status: UserProfile['status'], name = `User ${id}`, isSubmitted = true): UserProfile {
   return {
     id,
     email: `${id}@example.com`,
@@ -10,6 +10,7 @@ function makeMockUser(id: string, status: UserProfile['status'], name = `User ${
     status,
     readAnnouncementIds: [],
     notificationPrefs: { enabled: true, announcements: true, reminders: true },
+    membershipRequestedAt: isSubmitted && status === 'pending' ? new Date().toISOString() : undefined,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -99,6 +100,36 @@ console.log('--- RUNNING PENDING REQUEST DETECTOR TESTS ---');
   const alerts = detector.processUsers([makeMockUser('uid-1', 'pending'), makeMockUser('uid-2', 'pending')]);
   assert.equal(alerts.length, 0, 'After reset, next snapshot is treated as initial');
   console.log('✓ Detector reset passed');
+}
+
+// Test 6: Unsubmitted sign-ins (pending without membershipRequestedAt) NEVER trigger alerts
+{
+  const detector = new PendingRequestDetector();
+  detector.processUsers([makeMockUser('uid-1', 'pending')]);
+
+  // User signs in but never submitted application form
+  const unsubmittedUser = makeMockUser('uid-new', 'pending', 'Phantom User', false);
+  const alerts = detector.processUsers([
+    makeMockUser('uid-1', 'pending'),
+    unsubmittedUser,
+  ]);
+  assert.equal(alerts.length, 0, 'Unsubmitted first sign-in must NEVER trigger alert');
+  console.log('✓ Unsubmitted sign-in suppression passed');
+}
+
+// Test 7: Re-submission by a user triggers a fresh alert
+{
+  const detector = new PendingRequestDetector();
+  const initial = makeMockUser('uid-reapply', 'pending', 'Reapplicant', true);
+  initial.membershipRequestedAt = '2026-11-06T10:00:00Z';
+  detector.processUsers([initial]);
+
+  // Later user re-submits with a new timestamp
+  const resubmitted = makeMockUser('uid-reapply', 'pending', 'Reapplicant', true);
+  resubmitted.membershipRequestedAt = '2026-11-06T12:00:00Z';
+  const alerts = detector.processUsers([resubmitted]);
+  assert.equal(alerts.length, 1, 'Re-submission with new timestamp must trigger alert');
+  console.log('✓ Re-submission alert detection passed');
 }
 
 console.log('ALL PENDING REQUEST DETECTOR TESTS PASSED SUCCESSFULLY!');
