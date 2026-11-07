@@ -376,21 +376,25 @@ export async function ensureUserProfile(uid: string, email: string, displayName:
   const userRef = doc(db, USERS_COLLECTION, uid);
   try {
     const snap = await getDoc(userRef);
-    const safePhoto = await ensureSafeAvatarUrl(photoURL);
     if (snap.exists()) {
       const existing = snap.data() as UserProfile;
-      if (safePhoto && !existing.photoURL) {
-        updateDoc(userRef, { photoURL: safePhoto, updatedAt: new Date().toISOString() }).catch(() => {});
-        existing.photoURL = safePhoto;
+      if (photoURL && !existing.photoURL) {
+        ensureSafeAvatarUrl(photoURL).then((safe) => {
+          if (safe) {
+            updateDoc(userRef, { photoURL: safe, updatedAt: new Date().toISOString() }).catch(() => {});
+          }
+        }).catch(() => {});
       }
       return existing;
     }
 
+    // Write minimal profile first without blocking on avatar compression
+    const rawPhoto = photoURL || '';
     const newProfile: UserProfile = {
       id: uid,
-      email: email.trim().toLowerCase(),
-      displayName: displayName || 'Club Builder',
-      photoURL: safePhoto || '',
+      email: (email || '').trim().toLowerCase(),
+      displayName: (displayName || '').trim() || 'Club Builder',
+      photoURL: rawPhoto,
       status: 'pending', // Initial state machine phase: always pending
       readAnnouncementIds: [],
       notificationPrefs: {
@@ -402,8 +406,24 @@ export async function ensureUserProfile(uid: string, email: string, displayName:
       updatedAt: new Date().toISOString(),
     };
 
-    await setDoc(userRef, newProfile);
-    return newProfile;
+    try {
+      await setDoc(userRef, newProfile);
+      if (rawPhoto) {
+        ensureSafeAvatarUrl(rawPhoto).then((safe) => {
+          if (safe && safe !== rawPhoto) {
+            updateDoc(userRef, { photoURL: safe, updatedAt: new Date().toISOString() }).catch(() => {});
+          }
+        }).catch(() => {});
+      }
+      return newProfile;
+    } catch (writeErr: any) {
+      // If the write failed (e.g. concurrent creation race), re-read immediately
+      const recheck = await getDoc(userRef);
+      if (recheck.exists()) {
+        return recheck.data() as UserProfile;
+      }
+      throw writeErr;
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
   }

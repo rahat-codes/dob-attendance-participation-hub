@@ -21,6 +21,7 @@ import {
   requestMembershipLink as requestLink,
 } from './firestoreService';
 import { captureAndStoreDeepLink } from '../utils/deepLink';
+import { singleFlight } from '../utils/singleFlight';
 
 export type MembershipPhase =
   | 'loading'
@@ -152,74 +153,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  // Resolves user profile and subscribes to real-time status updates
+  // Resolves user profile and subscribes to real-time status updates using singleFlight deduplication
   const attachUserListeners = useCallback(
     async (currentUser: User) => {
-      try {
-        const adminStatus = await checkIsAdmin(currentUser.uid, currentUser.email);
-        setIsAdmin(adminStatus);
-
-        let initProfile: UserProfile;
+      return singleFlight(currentUser.uid, async () => {
         try {
-          // Ensure user document exists with least privilege
-          initProfile = await ensureUserProfile(
-            currentUser.uid,
-            currentUser.email || '',
-            currentUser.displayName || 'Club Builder',
-            currentUser.photoURL || undefined
-          );
-          setProfile(initProfile);
-          setRegistrationError(null);
-        } catch (ensureErr: any) {
-          console.error('Failed to register/ensure user profile:', ensureErr);
-          const code = ensureErr?.code || (ensureErr?.message?.includes('permission-denied') ? 'permission-denied' : 'registration-failed');
-          const errorMsg = `We could not register your request: [${code}]. Please try again or contact an admin.`;
-          setRegistrationError({ code, message: errorMsg });
-          setAuthError(errorMsg);
-          setLoading(false);
-          return;
-        }
+          const adminStatus = await checkIsAdmin(currentUser.uid, currentUser.email);
+          if (auth.currentUser?.uid !== currentUser.uid) return;
+          setIsAdmin(adminStatus);
 
-        if (initProfile.memberId) {
-          loadMemberData(initProfile.memberId);
-        }
-
-        // Real-time listener for user profile
-        if (profileUnsubRef.current) {
-          profileUnsubRef.current();
-        }
-
-        const userRef = doc(db, 'users', currentUser.uid);
-        profileUnsubRef.current = onSnapshot(
-          userRef,
-          async (snap) => {
-            if (snap.exists()) {
-              const updatedProfile = snap.data() as UserProfile;
-              setProfile(updatedProfile);
-
-              // Check if admin status changed
-              const freshAdmin = await checkIsAdmin(currentUser.uid, currentUser.email);
-              setIsAdmin(freshAdmin);
-
-              if (updatedProfile.memberId) {
-                loadMemberData(updatedProfile.memberId);
-              } else {
-                setLinkedMember(null);
-                setMemberPrivate(null);
-              }
-            }
+          let initProfile: UserProfile;
+          try {
+            // Ensure user document exists with least privilege and idempotent create-first
+            initProfile = await ensureUserProfile(
+              currentUser.uid,
+              currentUser.email || '',
+              currentUser.displayName || 'Club Builder',
+              currentUser.photoURL || undefined
+            );
+            if (auth.currentUser?.uid !== currentUser.uid) return;
+            setProfile(initProfile);
+            setRegistrationError(null);
+          } catch (ensureErr: any) {
+            if (auth.currentUser?.uid !== currentUser.uid) return;
+            console.error('Failed to register/ensure user profile:', ensureErr);
+            const code = ensureErr?.code || (ensureErr?.message?.includes('permission-denied') ? 'permission-denied' : 'registration-failed');
+            const errorMsg = `We could not register your request: [${code}]. Please try again or contact an admin.`;
+            setRegistrationError({ code, message: errorMsg });
+            setAuthError(errorMsg);
             setLoading(false);
-          },
-          (err) => {
-            console.warn('Profile listener error:', err);
-            setLoading(false);
+            return;
           }
-        );
-      } catch (err: any) {
-        console.error('Failed to attach user profile:', err);
-        setAuthError(err?.message || 'Failed to initialize account.');
-        setLoading(false);
-      }
+
+          if (initProfile.memberId) {
+            loadMemberData(initProfile.memberId);
+          }
+
+          // Real-time listener for user profile
+          if (profileUnsubRef.current) {
+            profileUnsubRef.current();
+          }
+
+          const userRef = doc(db, 'users', currentUser.uid);
+          profileUnsubRef.current = onSnapshot(
+            userRef,
+            async (snap) => {
+              if (auth.currentUser?.uid !== currentUser.uid) return;
+              if (snap.exists()) {
+                const updatedProfile = snap.data() as UserProfile;
+                setProfile(updatedProfile);
+
+                // Check if admin status changed
+                const freshAdmin = await checkIsAdmin(currentUser.uid, currentUser.email);
+                if (auth.currentUser?.uid !== currentUser.uid) return;
+                setIsAdmin(freshAdmin);
+
+                if (updatedProfile.memberId) {
+                  loadMemberData(updatedProfile.memberId);
+                } else {
+                  setLinkedMember(null);
+                  setMemberPrivate(null);
+                }
+              }
+              setLoading(false);
+            },
+            (err) => {
+              if (auth.currentUser?.uid !== currentUser.uid) return;
+              console.warn('Profile listener error:', err);
+              const code = (err as any)?.code || (err?.message?.includes('permission-denied') ? 'permission-denied' : 'listener-error');
+              setRegistrationError({
+                code,
+                message: `Unable to sync user profile [${code}]. Please check permissions or contact an admin.`,
+              });
+              setLoading(false);
+            }
+          );
+        } catch (err: any) {
+          if (auth.currentUser?.uid !== currentUser.uid) return;
+          console.error('Failed to attach user profile:', err);
+          setAuthError(err?.message || 'Failed to initialize account.');
+          setLoading(false);
+        }
+      });
     },
     [loadMemberData]
   );
@@ -234,12 +249,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Authentication state watcher and redirect result handler
   useEffect(() => {
-    // Check if returning from a mobile redirect sign-in flow
+    // Check if returning from a mobile redirect sign-in flow (only reports errors; onAuthStateChanged handles attach)
     getRedirectResult(auth)
-      .then(async (result) => {
-        if (result?.user) {
-          await attachUserListeners(result.user);
-        }
+      .then((_result) => {
+        // onAuthStateChanged is the authoritative listener attacher
       })
       .catch((err: any) => {
         console.error('Redirect sign-in error detail:', err);
@@ -290,11 +303,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // Call signInWithPopup DIRECTLY with NO await or async work before it
       const result = await signInWithPopup(auth, googleProvider);
-      if (result.user) {
-        await attachUserListeners(result.user);
-        return true;
-      }
-      return false;
+      return Boolean(result.user);
     } catch (err: any) {
       const code = err?.code || '';
       console.error('Sign-in error detail:', code, err);
@@ -348,7 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setSigningIn(false);
     }
-  }, [attachUserListeners]);
+  }, []);
 
   const signOutUser = async (): Promise<void> => {
     try {
