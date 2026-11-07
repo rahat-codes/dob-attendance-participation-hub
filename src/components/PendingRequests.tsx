@@ -124,18 +124,15 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     if (!chosenMemberId) {
       // If no member selected, launch add member modal with prefilled data
       if (onOpenAddMemberWithPrefill) {
-        const rawHandle = (user.requestedNotes || '').split('·')[0].trim();
-        const studentIdMatch = (user.requestedNotes || '').match(/ID:\s*(\w+)/i) || (user.requestedNotes || '').match(/\b(20\d{6,8})\b/);
-        const extractedStudentId = studentIdMatch ? studentIdMatch[1] : undefined;
+        const parsed = parseApplicantNotes(user.requestedNotes);
+        const cleanHandle = parsed.handle || user.email?.split('@')[0] || 'builder';
 
         onOpenAddMemberWithPrefill({
-          name: user.displayName,
+          name: parsed.name || user.displayName,
           email: user.email,
-          handle: rawHandle.startsWith('@')
-            ? rawHandle
-            : `@${rawHandle || user.email?.split('@')[0] || 'builder'}`,
+          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
           authUid: user.id,
-          studentId: extractedStudentId,
+          studentId: parsed.studentId,
           university: 'Tongmyong University',
         });
       }
@@ -165,18 +162,15 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     if (!chosenMemberId) {
       // If no member chosen, open add member modal so admin can register & activate
       if (onOpenAddMemberWithPrefill) {
-        const rawHandle = (user.requestedNotes || '').split('·')[0].trim();
-        const studentIdMatch = (user.requestedNotes || '').match(/ID:\s*(\w+)/i) || (user.requestedNotes || '').match(/\b(20\d{6,8})\b/);
-        const extractedStudentId = studentIdMatch ? studentIdMatch[1] : undefined;
+        const parsed = parseApplicantNotes(user.requestedNotes);
+        const cleanHandle = parsed.handle || user.email?.split('@')[0] || 'builder';
 
         onOpenAddMemberWithPrefill({
-          name: user.displayName,
+          name: parsed.name || user.displayName,
           email: user.email,
-          handle: rawHandle.startsWith('@')
-            ? rawHandle
-            : `@${rawHandle || user.email?.split('@')[0] || 'builder'}`,
+          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
           authUid: user.id,
-          studentId: extractedStudentId,
+          studentId: parsed.studentId,
           university: 'Tongmyong University',
         });
       }

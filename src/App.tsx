@@ -163,6 +163,7 @@ export default function App() {
     isApprovedMember,
     signInWithGoogle,
     signOutUser,
+    refreshProfile,
   } = useAuth();
 
   const [isAdminLoginOpen, setIsAdminLoginOpen] = useState(false);
@@ -1534,16 +1535,8 @@ export default function App() {
           }
           memberPrivate={memberPrivate}
           onSignOut={signOutUser}
-          onProfileUpdated={(updated) => {
-            setLinkedMember(updated);
-            setMemberPrivate((prev) => ({
-              ...(prev || {}),
-              phone: updated.phone,
-              studentId: updated.studentId,
-              university: updated.university,
-              profileCompleted: true,
-              profileCompletedAt: new Date().toISOString(),
-            }));
+          onProfileUpdated={() => {
+            refreshProfile();
           }}
         />
       )}

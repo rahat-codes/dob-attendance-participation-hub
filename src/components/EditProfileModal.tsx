@@ -222,6 +222,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     <ModalSheet
       isOpen={isOpen}
       onClose={isMandatory ? () => {} : onClose}
+      hideCloseButton={isMandatory}
       title={isMandatory ? 'Mandatory Builder Profile Setup' : 'Edit Builder Profile'}
       subtitle={
         isMandatory
