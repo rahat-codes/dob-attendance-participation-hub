@@ -224,9 +224,15 @@ export default function App() {
   const [editingMember, setEditingMember] = useState<Member | null>(null);
   const [attendanceConfirmation, setAttendanceConfirmation] = useState<AttendanceConfirmationData | null>(null);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [mandatoryProfileDismissed, setMandatoryProfileDismissed] = useState(false);
+
+  useEffect(() => {
+    setMandatoryProfileDismissed(false);
+  }, [user?.uid]);
 
   // Check if an approved/active builder must complete the mandatory profile form
   const isMandatoryProfileRequired = useMemo(() => {
+    if (mandatoryProfileDismissed) return false;
     // Only applies to logged-in non-admin active members who have a linked member profile
     if (!user || isAdmin || !linkedMember || membershipState !== 'active') return false;
 
@@ -240,7 +246,7 @@ export default function App() {
 
     // If not completed or any required credential is missing, mandatory modal must be shown
     return !isMarkedCompleted || !hasStudentId || !hasPhone || !hasTracks;
-  }, [user, isAdmin, linkedMember, memberPrivate, membershipState]);
+  }, [user, isAdmin, linkedMember, memberPrivate, membershipState, mandatoryProfileDismissed]);
 
   // Synchronize tab selection with History API (pushState) & LocalStorage
   const handleSelectTab = useCallback(
@@ -1517,10 +1523,13 @@ export default function App() {
         <EditProfileModal
           isOpen={isEditProfileOpen || isMandatoryProfileRequired}
           isMandatory={isMandatoryProfileRequired}
-          onClose={() => setIsEditProfileOpen(false)}
+          onClose={() => {
+            setIsEditProfileOpen(false);
+            setMandatoryProfileDismissed(true);
+          }}
           member={
             linkedMember || {
-              id: user.uid,
+              id: profile?.memberId || profile?.approvedMemberId || user.uid,
               name: user.displayName || 'Club Builder',
               handle: `@${user.email?.split('@')[0] || 'builder'}`,
               email: user.email || '',
@@ -1535,8 +1544,11 @@ export default function App() {
           }
           memberPrivate={memberPrivate}
           onSignOut={signOutUser}
-          onProfileUpdated={() => {
+          onProfileUpdated={(updated) => {
             refreshProfile();
+            if (updated) {
+              setSelectedPassMember(updated);
+            }
           }}
         />
       )}

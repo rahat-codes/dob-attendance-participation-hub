@@ -2040,61 +2040,108 @@ export async function updateMemberSelfProfile(
   }
 ): Promise<{ success: boolean; message?: string }> {
   try {
-    const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
-    const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, memberId);
-    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
-    const batch = writeBatch(db);
+    let targetMemberId = (memberId || '').trim();
+    if (!targetMemberId || targetMemberId === 'undefined' || !targetMemberId.startsWith('mem_')) {
+      if (auth.currentUser) {
+        const userSnap = await getDoc(doc(db, USERS_COLLECTION, auth.currentUser.uid));
+        if (userSnap.exists()) {
+          const userData = userSnap.data() as UserProfile;
+          if (userData.memberId) {
+            targetMemberId = userData.memberId;
+          } else if (userData.approvedMemberId) {
+            targetMemberId = userData.approvedMemberId;
+          }
+        }
+        if (!targetMemberId || !targetMemberId.startsWith('mem_')) {
+          const q = query(
+            collection(db, MEMBERS_COLLECTION),
+            where('authUid', '==', auth.currentUser.uid),
+            limit(1)
+          );
+          const mSnap = await getDocs(q);
+          if (!mSnap.empty) {
+            targetMemberId = mSnap.docs[0].id;
+          }
+        }
+      }
+    }
+
+    if (!targetMemberId) {
+      return { success: false, message: 'No linked builder profile ID found to update.' };
+    }
+
+    const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
+    const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
 
     const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
 
-    batch.update(memberRef, removeUndefinedFields({
-      name: details.name,
+    const memberUpdates: Record<string, any> = {
+      name: details.name.trim(),
       avatarUrl: safeAvatar || '',
-      bio: details.bio || '',
-      tracks: details.tracks,
+      bio: details.bio?.trim() || '',
+      tracks: details.tracks && details.tracks.length > 0 ? details.tracks : ['Software & Systems'],
       leaderboardOptOut: details.leaderboardOptOut ?? false,
-      studentId: details.studentId?.trim() || undefined,
-      university: details.university?.trim() || 'Tongmyong University',
-    }));
-
-    batch.set(privRef, removeUndefinedFields({
-      email: details.email,
-      phone: details.phone,
-      studentId: details.studentId?.trim() || undefined,
-      university: details.university?.trim() || 'Tongmyong University',
-      department: details.department,
-      major: details.major,
-      semester: details.semester,
-      profileCompleted: true,
-      profileCompletedAt: new Date().toISOString(),
-    }), { merge: true });
-
-    if (details.leaderboardOptOut === true) {
-      batch.delete(pubRef);
-    } else {
-      batch.set(pubRef, removeUndefinedFields({
-        displayName: details.name,
-        name: details.name,
-        avatar: safeAvatar || '',
-        avatarUrl: safeAvatar || '',
-        lastUpdated: new Date().toISOString(),
-      }), { merge: true });
+    };
+    if (details.studentId?.trim()) {
+      memberUpdates.studentId = details.studentId.trim();
+    }
+    if (details.university?.trim()) {
+      memberUpdates.university = details.university.trim();
     }
 
+    const privUpdates: Record<string, any> = {
+      profileCompleted: true,
+      profileCompletedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (details.email?.trim()) privUpdates.email = details.email.trim().toLowerCase();
+    if (details.phone?.trim()) privUpdates.phone = details.phone.trim();
+    if (details.studentId?.trim()) privUpdates.studentId = details.studentId.trim();
+    if (details.university?.trim()) privUpdates.university = details.university.trim();
+    if (details.department?.trim()) privUpdates.department = details.department.trim();
+    if (details.major?.trim()) privUpdates.major = details.major.trim();
+    if (details.semester?.trim()) privUpdates.semester = details.semester.trim();
+
+    // 1. Core Profile Update (Member + MemberPrivate)
+    const batch = writeBatch(db);
+    batch.update(memberRef, memberUpdates);
+    batch.set(privRef, privUpdates, { merge: true });
     await batch.commit();
 
+    // 2. Safe Public Leaderboard Sync (Active members can only update existing docs; creation is admin-only)
+    try {
+      const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
+      const pubSnap = await getDoc(pubRef);
+      if (pubSnap.exists()) {
+        if (details.leaderboardOptOut === true) {
+          await deleteDoc(pubRef).catch(() => {});
+        } else {
+          await updateDoc(pubRef, removeUndefinedFields({
+            displayName: details.name.trim(),
+            name: details.name.trim(),
+            avatar: safeAvatar || '',
+            avatarUrl: safeAvatar || '',
+            lastUpdated: new Date().toISOString(),
+          })).catch(() => {});
+        }
+      }
+    } catch (pubErr) {
+      console.warn('Public leaderboard display sync notice:', pubErr);
+    }
+
+    // 3. User Document & Auth Display Name Sync
     if (auth.currentUser) {
       try {
         if (safeAvatar !== undefined) {
           await updateProfile(auth.currentUser, {
-            displayName: details.name || auth.currentUser.displayName || undefined,
+            displayName: details.name.trim() || auth.currentUser.displayName || undefined,
             photoURL: safeAvatar || '',
           }).catch(() => {});
         }
         const userRef = doc(db, USERS_COLLECTION, auth.currentUser.uid);
         await updateDoc(userRef, {
           photoURL: safeAvatar || '',
-          displayName: details.name,
+          displayName: details.name.trim(),
           updatedAt: new Date().toISOString(),
         }).catch(() => {});
       } catch (authErr) {
@@ -2104,6 +2151,7 @@ export async function updateMemberSelfProfile(
 
     return { success: true };
   } catch (err: any) {
+    console.error('updateMemberSelfProfile error:', err);
     return { success: false, message: err?.message || 'Failed to update profile' };
   }
 }

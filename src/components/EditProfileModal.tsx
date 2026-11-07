@@ -258,7 +258,8 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           )}
 
           <button
-            type="button"
+            type="submit"
+            form="edit-profile-form"
             onClick={() => {
               const form = document.getElementById('edit-profile-form') as HTMLFormElement | null;
               if (form) form.requestSubmit();

@@ -125,7 +125,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       memberRef,
       (snap) => {
         if (snap.exists()) {
-          setLinkedMember(snap.data() as Member);
+          const data = snap.data() as Member;
+          setLinkedMember({
+            ...data,
+            id: snap.id || data.id,
+          });
         } else {
           setLinkedMember(null);
         }
