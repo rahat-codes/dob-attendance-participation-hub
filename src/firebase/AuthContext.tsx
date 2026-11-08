@@ -471,7 +471,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const userState = getUserState(profile, linkedMember);
     if (userState === 'active') {
       membershipPhase = 'active';
-    } else if (userState === 'approved_waiting_response') {
+    } else if (userState === 'approved_waiting') {
       membershipPhase = 'approved_waiting_response';
     } else if (userState === 'suspended') {
       membershipPhase = 'suspended';

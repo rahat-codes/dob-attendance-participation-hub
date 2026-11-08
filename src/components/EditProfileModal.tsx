@@ -260,10 +260,6 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           <button
             type="submit"
             form="edit-profile-form"
-            onClick={() => {
-              const form = document.getElementById('edit-profile-form') as HTMLFormElement | null;
-              if (form) form.requestSubmit();
-            }}
             disabled={saving}
             className="btn-glossy-primary flex-1 sm:flex-initial px-6 py-2.5 rounded-full text-black font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 min-h-11 shadow-[0_0_20px_rgba(181,255,0,0.35)]"
           >

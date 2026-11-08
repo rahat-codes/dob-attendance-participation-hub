@@ -33,6 +33,8 @@ import {
   subscribeToUserNotifications,
   checkAndSend30MinuteReminders,
   approveUserMembershipLink,
+  approveExistingMember,
+  createMemberAndApprove,
   rejectUserMembershipLink,
   addMemberToFirestore,
   updateMemberInFirestore,
@@ -45,6 +47,7 @@ import {
   initializeFirestoreWithDefaults,
   backfillPublicLeaderboard,
 } from './firebase/firestoreService';
+import { decodeApplication, isApplicationSubmitted } from './utils/application';
 import { Navbar, NavigationTab } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
 import { IslandNav } from './ui/IslandNav';
@@ -377,7 +380,7 @@ export default function App() {
           setAllUsers(remoteUsers);
           if (!hasCheckedInitialPendingRef.current) {
             hasCheckedInitialPendingRef.current = true;
-            const initialCount = remoteUsers.filter((u) => u.status === 'pending').length;
+            const initialCount = remoteUsers.filter((u) => u.status === 'pending' && isApplicationSubmitted(u)).length;
             if (initialCount > 0) {
               setInitialPendingToastCount(initialCount);
             }
@@ -586,18 +589,40 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can register builders.');
     }
     try {
-      const createdMemberId = await addMemberToFirestore(newMember, {
-        email: newMember.email,
-        phone: newMember.phone,
-        studentId: newMember.studentId,
-        university: newMember.university || 'Tongmyong University',
-        department: newMember.department,
-        major: newMember.major,
-        semester: newMember.semester,
-      });
-      const targetMemberId = createdMemberId || newMember.id;
-      if (newMember.authUid && targetMemberId) {
-        await approveUserMembershipLink(newMember.authUid, targetMemberId);
+      if (newMember.authUid) {
+        // Atomic create and approve in a single writeBatch (R6, R7, R15)
+        await createMemberAndApprove(
+          newMember.authUid,
+          {
+            name: newMember.name,
+            handle: newMember.handle,
+            email: newMember.email,
+            phone: newMember.phone,
+            studentId: newMember.studentId,
+            role: newMember.role,
+            tracks: newMember.tracks,
+            university: newMember.university,
+            department: newMember.department,
+            major: newMember.major,
+            semester: newMember.semester,
+            avatarUrl: newMember.avatarUrl,
+            bio: newMember.bio,
+            githubUrl: newMember.githubUrl,
+            linkedinUrl: newMember.linkedinUrl,
+            portfolioUrl: newMember.portfolioUrl,
+            showLinksPublicly: newMember.showLinksPublicly,
+          }
+        );
+      } else {
+        await addMemberToFirestore(newMember, {
+          email: newMember.email,
+          phone: newMember.phone,
+          studentId: newMember.studentId,
+          university: newMember.university || 'Tongmyong University',
+          department: newMember.department,
+          major: newMember.major,
+          semester: newMember.semester,
+        });
       }
       setIsAddMemberOpen(false);
       setPrefillMember(null);
@@ -614,18 +639,17 @@ export default function App() {
     if (!isAdmin) return;
     try {
       if (matchedMemberId) {
-        await approveUserMembershipLink(req.id, matchedMemberId);
+        await approveExistingMember(req.id, matchedMemberId);
         setFirestoreError(null);
       } else {
+        const decoded = decodeApplication(req);
         setEditingMember(null);
         setPrefillMember({
-          name: req.displayName,
+          name: decoded.applicantName || req.displayName,
           email: req.email,
-          handle: req.requestedNotes?.startsWith('@')
-            ? req.requestedNotes
-            : `@${req.requestedNotes || req.email?.split('@')[0] || 'builder'}`,
+          handle: decoded.applicantHandle || `@${req.email?.split('@')[0] || 'builder'}`,
           authUid: req.id,
-          studentId: (/^\d+$/.test(req.requestedNotes?.trim() || '')) ? req.requestedNotes?.trim() : undefined,
+          studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
         });
         setIsAddMemberOpen(true);
@@ -957,7 +981,7 @@ export default function App() {
   }
 
   const pendingRequestsCount = allUsers.filter(
-    (u) => u.status === 'pending' || u.status === 'approved_waiting_response'
+    (u) => (u.status === 'pending' || u.status === 'approved_waiting_response') && isApplicationSubmitted(u)
   ).length;
   const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
 
@@ -1607,6 +1631,8 @@ export default function App() {
       <AdminBackupModal
         isOpen={isBackupOpen}
         onClose={() => setIsBackupOpen(false)}
+        members={members}
+        users={allUsers}
       />
       </Suspense>
     </div>

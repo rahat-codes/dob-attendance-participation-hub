@@ -43,7 +43,7 @@ import { processProfilePhoto } from '../utils/imageUtils';
 import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHelpers';
 import { ApplicationInput, validateApplication, encodeApplication } from '../utils/application';
 import { nextUserState, getUserState } from '../utils/userStateMachine';
-import { PUBLIC_MEMBER_WHITELIST } from '../utils/repairTools';
+import { PUBLIC_MEMBER_WHITELIST, MemberDataRepairItem, UserStateRepairItem } from '../utils/repairTools';
 
 export { SUPER_ADMIN_EMAIL };
 
@@ -2421,13 +2421,23 @@ export async function updateMemberSelfProfile(
     if (details.major?.trim()) privUpdates.major = details.major.trim();
     if (details.semester?.trim()) privUpdates.semester = details.semester.trim();
 
-    // 1. Core Profile Update (Member + MemberPrivate)
-    const batch = writeBatch(db);
-    batch.update(memberRef, memberUpdates);
-    batch.set(privRef, privUpdates, { merge: true });
-    await batch.commit();
+    // 1. Core Private Profile Update (MemberPrivate stores studentId, phone, department, major, semester, profileCompleted)
+    try {
+      await setDoc(privRef, privUpdates, { merge: true });
+    } catch (privErr) {
+      console.error('Failed to update memberPrivate:', privErr);
+      return { success: false, message: (privErr as any)?.message || 'Failed to update private profile credentials.' };
+    }
 
-    // 2. Safe Public Leaderboard Sync (Active members can only update existing docs; creation is admin-only)
+    // 2. Public Member Document Update (whitelisted fields only)
+    try {
+      await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
+    } catch (memberErr) {
+      console.warn('Member public doc update notice (may contain legacy non-whitelisted fields):', memberErr);
+      // Non-fatal if memberPrivate was updated successfully
+    }
+
+    // 3. Safe Public Leaderboard Sync (Active members can only update existing docs; creation is admin-only)
     try {
       const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
       const pubSnap = await getDoc(pubRef);
@@ -2576,4 +2586,64 @@ export const initializeFirestoreWithDefaults = async (
     console.warn('Initial session seeding notice:', err);
   }
 };
+
+/**
+ * Executes a prepared member data repair plan to purge legacy private PII from public member documents
+ * and sync it safely to memberPrivate. Batched in chunks of at most 200 items (400 ops).
+ */
+export async function executeMemberDataRepair(items: MemberDataRepairItem[]): Promise<number> {
+  let modifiedCount = 0;
+  const chunkSize = 200;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    for (const item of chunk) {
+      const memberRef = doc(db, MEMBERS_COLLECTION, item.memberId);
+      batch.set(memberRef, item.cleanedPublicData);
+      if (Object.keys(item.privateFieldsToSet).length > 0) {
+        const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, item.memberId);
+        batch.set(privRef, item.privateFieldsToSet, { merge: true });
+      }
+      modifiedCount++;
+    }
+    await batch.commit();
+  }
+  await createAuditLog('member_data_repair', `Executed member data repair on ${modifiedCount} documents to purge private fields`);
+  return modifiedCount;
+}
+
+/**
+ * Executes a prepared user state repair plan to align inconsistent user accounts
+ * with their authoritative roster documents. Batched in chunks of at most 400 writes.
+ */
+export async function executeUserStateRepair(items: UserStateRepairItem[]): Promise<number> {
+  let modifiedCount = 0;
+  const chunkSize = 400;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    for (const item of chunk) {
+      const userRef = doc(db, USERS_COLLECTION, item.userId);
+      const updates: Record<string, any> = {
+        status: item.proposedStatus,
+        updatedAt: new Date().toISOString(),
+      };
+      if (item.proposedMemberId === null) {
+        updates.memberId = deleteField();
+      } else if (item.proposedMemberId !== undefined) {
+        updates.memberId = item.proposedMemberId;
+      }
+      if (item.proposedApprovedMemberId === null) {
+        updates.approvedMemberId = deleteField();
+      } else if (item.proposedApprovedMemberId !== undefined) {
+        updates.approvedMemberId = item.proposedApprovedMemberId;
+      }
+      batch.update(userRef, updates);
+      modifiedCount++;
+    }
+    await batch.commit();
+  }
+  await createAuditLog('user_state_repair', `Executed user state repair on ${modifiedCount} user documents`);
+  return modifiedCount;
+}
 

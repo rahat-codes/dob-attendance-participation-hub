@@ -11,23 +11,45 @@ import {
   ShieldAlert,
   CheckCircle,
   ExternalLink,
+  Wrench,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { ModalSheet } from './ModalSheet';
-import { exportFullBackupJSON } from '../firebase/firestoreService';
+import { exportFullBackupJSON, executeMemberDataRepair, executeUserStateRepair } from '../firebase/firestoreService';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { useAuth } from '../firebase/AuthContext';
+import { Member, UserProfile } from '../types';
+import {
+  prepareMemberDataRepair,
+  prepareUserStateRepair,
+  MemberDataRepairItem,
+  UserStateRepairItem,
+} from '../utils/repairTools';
 
 interface AdminBackupModalProps {
   isOpen: boolean;
   onClose: () => void;
+  members?: Member[];
+  users?: UserProfile[];
 }
 
-export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onClose }) => {
+export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
+  isOpen,
+  onClose,
+  members = [],
+  users = [],
+}) => {
   const { user } = useAuth();
   const [exporting, setExporting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showPiiConfirm, setShowPiiConfirm] = useState(false);
+
+  // Repair tool state
+  const [memberRepairPlan, setMemberRepairPlan] = useState<MemberDataRepairItem[] | null>(null);
+  const [userRepairPlan, setUserRepairPlan] = useState<UserStateRepairItem[] | null>(null);
+  const [repairing, setRepairing] = useState(false);
 
   const isSuperAdmin = user?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim();
 
@@ -50,6 +72,54 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
     }
   };
 
+  const handlePreviewMemberRepair = () => {
+    setErrorMessage(null);
+    const plan = prepareMemberDataRepair(members);
+    setMemberRepairPlan(plan);
+    if (plan.length === 0) {
+      setStatusMessage('Member Data Integrity Check: All member documents match public whitelist. No private fields found in public docs.');
+    }
+  };
+
+  const handleExecuteMemberRepair = async () => {
+    if (!memberRepairPlan || memberRepairPlan.length === 0) return;
+    setRepairing(true);
+    setErrorMessage(null);
+    try {
+      const count = await executeMemberDataRepair(memberRepairPlan);
+      setStatusMessage(`Member Data Repair Completed: Safely purged private fields from ${count} member documents (synced to memberPrivate).`);
+      setMemberRepairPlan(null);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to execute member data repair.');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const handlePreviewUserRepair = () => {
+    setErrorMessage(null);
+    const plan = prepareUserStateRepair(users, members);
+    setUserRepairPlan(plan);
+    if (plan.length === 0) {
+      setStatusMessage('User State Integrity Check: All user accounts are properly synchronized with the roster.');
+    }
+  };
+
+  const handleExecuteUserRepair = async () => {
+    if (!userRepairPlan || userRepairPlan.length === 0) return;
+    setRepairing(true);
+    setErrorMessage(null);
+    try {
+      const count = await executeUserStateRepair(userRepairPlan);
+      setStatusMessage(`User State Repair Completed: Synchronized ${count} user account documents.`);
+      setUserRepairPlan(null);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to execute user state repair.');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <ModalSheet
       isOpen={isOpen}
@@ -57,12 +127,14 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
         setShowPiiConfirm(false);
         setErrorMessage(null);
         setStatusMessage(null);
+        setMemberRepairPlan(null);
+        setUserRepairPlan(null);
         onClose();
       }}
-      title="Database Backup & Export"
-      subtitle="Super Administrator Data Operations"
+      title="Database Operations & Integrity"
+      subtitle="Super Administrator Data Operations & Repair"
       icon={<Database className="w-5 h-5 text-[#b5ff00]" />}
-      maxWidth="xl"
+      maxWidth="2xl"
       footer={
         <div className="flex items-center justify-end w-full">
           <button
@@ -100,7 +172,7 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
               <span>Restricted Access</span>
             </div>
             <p>
-              Database backups are restricted to the Super Administrator.
+              Database backups and integrity repairs are restricted to the Super Administrator.
               Your current logged-in account does not hold database export privileges.
             </p>
           </div>
@@ -121,90 +193,189 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({ isOpen, onCl
               </div>
             )}
 
-            {/* PII Confirmation Modal Dialog */}
-            {showPiiConfirm ? (
-              <div className="p-4 rounded-xl bg-red-950/30 border border-red-500/50 text-xs text-red-200 space-y-3">
-                <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-red-400 font-mono">
-                  <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
-                  <span>Warning: Personal Data (PII) Export</span>
+            {/* Section 1: Backup Exports */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-1.5">
+                <Download className="w-4 h-4 text-[#b5ff00]" />
+                <span>Database JSON Backups</span>
+              </h3>
+
+              {showPiiConfirm ? (
+                <div className="p-4 rounded-xl bg-red-950/30 border border-red-500/50 text-xs text-red-200 space-y-3">
+                  <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-red-400 font-mono">
+                    <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+                    <span>Warning: Personal Data (PII) Export</span>
+                  </div>
+                  <p className="leading-relaxed text-zinc-200">
+                    This backup file contains confidential and personally identifiable information (PII), including:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-1 text-zinc-300 font-mono text-[11px]">
+                    <li>Member email addresses and phone numbers</li>
+                    <li>Student identification numbers &amp; university majors</li>
+                    <li>Private user profile documents and Google UID mappings</li>
+                  </ul>
+                  <div className="flex items-center gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      disabled={exporting}
+                      onClick={() => handleExport(true)}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer min-h-10 disabled:opacity-50"
+                    >
+                      {exporting ? 'Exporting...' : 'I Confirm, Export PII'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={exporting}
+                      onClick={() => setShowPiiConfirm(false)}
+                      className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer min-h-10"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-                <p className="leading-relaxed text-zinc-200">
-                  This backup file contains confidential and personally identifiable information (PII), including:
-                </p>
-                <ul className="list-disc pl-5 space-y-1 text-zinc-300 font-mono text-[11px]">
-                  <li>Member email addresses and phone numbers</li>
-                  <li>Student identification numbers &amp; university majors</li>
-                  <li>Private user profile documents and Google UID mappings</li>
-                </ul>
-                <p className="text-zinc-300">
-                  Confirm that you have authorized administrative cause to export this personal data and will store it securely in accordance with data privacy regulations.
-                </p>
-                <div className="flex items-center gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    disabled={exporting}
-                    onClick={() => handleExport(true)}
-                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer min-h-10 disabled:opacity-50"
-                  >
-                    {exporting ? 'Exporting...' : 'I Confirm, Export PII'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={exporting}
-                    onClick={() => setShowPiiConfirm(false)}
-                    className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer min-h-10"
-                  >
-                    Cancel
-                  </button>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {/* Sanitized Export */}
+                  <div className="p-4 rounded-xl bg-zinc-900/70 border border-white/10 space-y-3 flex flex-col justify-between">
+                    <div className="space-y-1.5">
+                      <div className="font-bold text-xs text-white uppercase tracking-wider font-mono">
+                        Sanitized Backup
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Exports public rosters, sessions, and attendance history. Excludes all private member personal info.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={exporting}
+                      onClick={() => handleExport(false)}
+                      className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-white/10 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11 disabled:opacity-50"
+                    >
+                      <Download className="w-4 h-4 text-[#b5ff00]" />
+                      <span>{exporting ? 'Exporting...' : 'Download Sanitized JSON'}</span>
+                    </button>
+                  </div>
+
+                  {/* Full Export with PII */}
+                  <div className="p-4 rounded-xl bg-zinc-900/70 border border-red-500/20 space-y-3 flex flex-col justify-between">
+                    <div className="space-y-1.5">
+                      <div className="font-bold text-xs text-red-300 uppercase tracking-wider font-mono">
+                        Full Backup (With PII)
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed">
+                        Complete database snapshot including builder contact directories, student IDs, and user accounts.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={exporting}
+                      onClick={() => setShowPiiConfirm(true)}
+                      className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-950/40 hover:bg-red-900/40 text-red-300 border border-red-500/40 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11 disabled:opacity-50"
+                    >
+                      <AlertTriangle className="w-4 h-4 text-red-400" />
+                      <span>Export Full (With PII)</span>
+                    </button>
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {/* Section 2: Data Integrity & Repair Tools (Dry-Run First) */}
+            <div className="space-y-3 pt-3 border-t border-zinc-800">
+              <div className="space-y-1">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono flex items-center gap-1.5">
+                  <Wrench className="w-4 h-4 text-[#b5ff00]" />
+                  <span>Data Integrity &amp; Repair Operations (Dry-Run First)</span>
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Scans database records for legacy private PII or inconsistent state bindings. Repairs are dry-run first, batched in atomic transactions, and logged to audit logs.
+                </p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
-                {/* Option 1: Sanitized Export */}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Tool 1: Member Data Repair */}
                 <div className="p-4 rounded-xl bg-zinc-900/70 border border-white/10 space-y-3 flex flex-col justify-between">
                   <div className="space-y-1.5">
-                    <div className="font-bold text-xs text-white uppercase tracking-wider font-mono flex items-center gap-1.5">
-                      <Download className="w-3.5 h-3.5 text-[#b5ff00]" />
-                      <span>Sanitized Backup</span>
-                    </div>
+                    <span className="font-bold text-xs text-white uppercase tracking-wider font-mono block">
+                      Member PII Purge &amp; Sync
+                    </span>
                     <p className="text-xs text-zinc-400 leading-relaxed">
-                      Exports sessions, attendance history, announcements, audit logs, and settings. Excludes all private member personal info (<span className="font-mono text-zinc-300">memberPrivate</span> &amp; <span className="font-mono text-zinc-300">users</span>).
+                      Removes sensitive PII (emails, phone numbers, counters) from public <span className="font-mono text-zinc-300">members</span> docs and preserves them in <span className="font-mono text-zinc-300">memberPrivate</span>.
                     </p>
+                    {memberRepairPlan && (
+                      <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
+                        Dry run result: <strong>{memberRepairPlan.length}</strong> member documents require cleanup.
+                      </div>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    disabled={exporting}
-                    onClick={() => handleExport(false)}
-                    className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-white/10 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11 disabled:opacity-50"
-                  >
-                    <Download className="w-4 h-4 text-[#b5ff00]" />
-                    <span>{exporting ? 'Exporting...' : 'Download Sanitized JSON'}</span>
-                  </button>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      disabled={repairing}
+                      onClick={handlePreviewMemberRepair}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold cursor-pointer min-h-10 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-[#b5ff00]" />
+                      <span>Preview Member Repair (Dry Run)</span>
+                    </button>
+
+                    {memberRepairPlan && memberRepairPlan.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={repairing}
+                        onClick={handleExecuteMemberRepair}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black text-xs font-bold uppercase tracking-wider cursor-pointer min-h-10 disabled:opacity-50"
+                      >
+                        {repairing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                        <span>Execute Repair ({memberRepairPlan.length} Docs)</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {/* Option 2: Full Export with PII */}
-                <div className="p-4 rounded-xl bg-zinc-900/70 border border-red-500/20 space-y-3 flex flex-col justify-between">
+                {/* Tool 2: User State Alignment */}
+                <div className="p-4 rounded-xl bg-zinc-900/70 border border-white/10 space-y-3 flex flex-col justify-between">
                   <div className="space-y-1.5">
-                    <div className="font-bold text-xs text-red-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
-                      <span>Full Backup (With PII)</span>
-                    </div>
+                    <span className="font-bold text-xs text-white uppercase tracking-wider font-mono block">
+                      User State Alignment
+                    </span>
                     <p className="text-xs text-zinc-400 leading-relaxed">
-                      Complete database snapshot including builder contact directories, student IDs, and user accounts. Requires explicit confirmation.
+                      Detects active accounts with inactive or missing roster records, or declined accounts with lingering IDs, and brings them into alignment.
                     </p>
+                    {userRepairPlan && (
+                      <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300">
+                        Dry run result: <strong>{userRepairPlan.length}</strong> user accounts require state alignment.
+                      </div>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    disabled={exporting}
-                    onClick={() => setShowPiiConfirm(true)}
-                    className="w-full flex items-center justify-center gap-2 px-3.5 py-2.5 rounded-xl bg-red-950/40 hover:bg-red-900/40 text-red-300 border border-red-500/40 text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-11 disabled:opacity-50"
-                  >
-                    <AlertTriangle className="w-4 h-4 text-red-400" />
-                    <span>Export Full (With PII)</span>
-                  </button>
+
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      disabled={repairing}
+                      onClick={handlePreviewUserRepair}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold cursor-pointer min-h-10 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-[#b5ff00]" />
+                      <span>Preview User State Repair (Dry Run)</span>
+                    </button>
+
+                    {userRepairPlan && userRepairPlan.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={repairing}
+                        onClick={handleExecuteUserRepair}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black text-xs font-bold uppercase tracking-wider cursor-pointer min-h-10 disabled:opacity-50"
+                      >
+                        {repairing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                        <span>Execute State Repair ({userRepairPlan.length} Users)</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
           </>
         )}
       </div>

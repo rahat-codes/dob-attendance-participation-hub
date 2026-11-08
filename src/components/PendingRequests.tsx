@@ -13,17 +13,24 @@ import {
   RefreshCw,
   Users,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
-import { UserProfile, Member } from '../types';
+import { UserProfile, Member, BuilderTrack } from '../types';
 import {
   subscribeToPendingUsers,
-  approveUserMembershipLink,
+  approveExistingMember,
   rejectUserMembershipLink,
-  directActivateUserMembership,
+  activateDirectly,
   archiveMemberHandle,
 } from '../firebase/firestoreService';
 import { SecureAvatar } from './common/SecureAvatar';
+import { SafeExternalLink } from './common/SafeExternalLink';
 import { findReuseCandidates, parseApplicantNotes } from '../utils/reuseHelpers';
+import { decodeApplication, isApplicationSubmitted } from '../utils/application';
+import { getUserState } from '../utils/userStateMachine';
 
 interface PendingRequestsProps {
   members: Member[];
@@ -35,7 +42,6 @@ interface PendingRequestsProps {
     studentId?: string;
     university?: string;
   }) => void;
-  // Optional external callback
   onStatusChange?: () => void;
 }
 
@@ -62,10 +68,14 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
-  // Rejection confirmation dialog state
+  // Modals state
   const [confirmRejectUser, setConfirmRejectUser] = useState<UserProfile | null>(null);
+  const [linkConfirmTarget, setLinkConfirmTarget] = useState<{ user: UserProfile; member: Member } | null>(null);
 
-  // 1. Snapshot Listener for all users with status == 'pending'
+  // Unsubmitted sign-ins accordion collapse state
+  const [showUnsubmitted, setShowUnsubmitted] = useState(false);
+
+  // 1. Snapshot Listener for all users
   useEffect(() => {
     setLoading(true);
     const unsubscribe = subscribeToPendingUsers(
@@ -87,29 +97,9 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     };
   }, []);
 
-  // Helper: auto-detect matching member from members roster
-  const getAutoMatchMember = (req: UserProfile): Member | undefined => {
-    if (req.email) {
-      const emailMatch = members.find(
-        (m) => m.email && m.email.toLowerCase().trim() === req.email.toLowerCase().trim()
-      );
-      if (emailMatch) return emailMatch;
-    }
-
-    if (req.requestedNotes) {
-      const rawHandle = req.requestedNotes.split('·')[0].trim();
-      const cleanReqHandle = rawHandle.toLowerCase().replace('@', '').trim();
-      const handleMatch = members.find(
-        (m) =>
-          m.handle.toLowerCase().replace('@', '').trim() === cleanReqHandle ||
-          m.name.toLowerCase().trim() === req.requestedNotes?.toLowerCase().trim() ||
-          m.name.toLowerCase().trim() === rawHandle.toLowerCase()
-      );
-      if (handleMatch) return handleMatch;
-    }
-
-    return undefined;
-  };
+  // Separate submitted applications from users who only signed in
+  const submittedApplications = pendingUsers.filter((u) => isApplicationSubmitted(u));
+  const unsubmittedUsers = pendingUsers.filter((u) => !isApplicationSubmitted(u));
 
   const handleSelectMember = (userId: string, memberId: string) => {
     setSelectedMatches((prev) => ({
@@ -120,34 +110,44 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
 
   // 2. Action: Approve and set status to Approved — Waiting for User Response
   const handleApprove = async (user: UserProfile, targetMemberId?: string) => {
-    const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId || getAutoMatchMember(user)?.id;
+    const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId;
     if (!chosenMemberId) {
-      // If no member selected, launch add member modal with prefilled data
+      // If no member selected, launch add member modal with prefilled application data
       if (onOpenAddMemberWithPrefill) {
-        const parsed = parseApplicantNotes(user.requestedNotes);
-        const cleanHandle = parsed.handle || user.email?.split('@')[0] || 'builder';
-
+        const decoded = decodeApplication(user);
         onOpenAddMemberWithPrefill({
-          name: parsed.name || user.displayName,
+          name: decoded.applicantName || user.displayName,
           email: user.email,
-          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
+          handle: decoded.applicantHandle || `@${user.email?.split('@')[0] || 'builder'}`,
           authUid: user.id,
-          studentId: parsed.studentId,
+          studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
         });
       }
       return;
     }
 
+    const targetMember = members.find((m) => m.id === chosenMemberId);
+    if (targetMember && !targetMemberId) {
+      // Show explicit confirmation modal before linking existing builder
+      setLinkConfirmTarget({ user, member: targetMember });
+      return;
+    }
+
+    await executeApproveLink(user, chosenMemberId);
+  };
+
+  const executeApproveLink = async (user: UserProfile, chosenMemberId: string) => {
     setProcessingId(user.id);
     setError(null);
     try {
-      await approveUserMembershipLink(user.id, chosenMemberId);
+      await approveExistingMember(user.id, chosenMemberId);
       const matchedName = members.find((m) => m.id === chosenMemberId)?.name || 'Builder Profile';
       setActionSuccessMessage(
         `Approved request for ${user.displayName || user.email} (Linked to ${matchedName}). Status set to 'Approved — Waiting for User Response'.`
       );
       setTimeout(() => setActionSuccessMessage(null), 5000);
+      setLinkConfirmTarget(null);
       onStatusChange?.();
     } catch (err: any) {
       console.error('Failed to approve user:', err);
@@ -158,19 +158,16 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
   };
 
   const handleDirectActivate = async (user: UserProfile, targetMemberId?: string) => {
-    const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId || getAutoMatchMember(user)?.id;
+    const chosenMemberId = targetMemberId || selectedMatches[user.id] || user.approvedMemberId;
     if (!chosenMemberId) {
-      // If no member chosen, open add member modal so admin can register & activate
       if (onOpenAddMemberWithPrefill) {
-        const parsed = parseApplicantNotes(user.requestedNotes);
-        const cleanHandle = parsed.handle || user.email?.split('@')[0] || 'builder';
-
+        const decoded = decodeApplication(user);
         onOpenAddMemberWithPrefill({
-          name: parsed.name || user.displayName,
+          name: decoded.applicantName || user.displayName,
           email: user.email,
-          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
+          handle: decoded.applicantHandle || `@${user.email?.split('@')[0] || 'builder'}`,
           authUid: user.id,
-          studentId: parsed.studentId,
+          studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
         });
       }
@@ -180,7 +177,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     setProcessingId(user.id);
     setError(null);
     try {
-      await directActivateUserMembership(user.id, chosenMemberId);
+      await activateDirectly(user.id, chosenMemberId);
       const matchedName = members.find((m) => m.id === chosenMemberId)?.name || 'Builder Profile';
       setActionSuccessMessage(
         `Directly activated ${user.displayName || user.email} and linked to ${matchedName}. Status is now Active.`
@@ -207,15 +204,13 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       setTimeout(() => setActionSuccessMessage(null), 6000);
 
       if (onOpenAddMemberWithPrefill) {
-        const parsed = parseApplicantNotes(user.requestedNotes);
-        const cleanHandle = parsed.handle || oldMember.handle.replace(/^@/, '');
-
+        const decoded = decodeApplication(user);
         onOpenAddMemberWithPrefill({
-          name: parsed.name || user.displayName || oldMember.name,
+          name: decoded.applicantName || user.displayName || oldMember.name,
           email: user.email || oldMember.email,
-          handle: cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`,
+          handle: decoded.applicantHandle || oldMember.handle,
           authUid: user.id,
-          studentId: parsed.studentId || oldMember.studentId,
+          studentId: decoded.applicantStudentId || oldMember.studentId,
           university: oldMember.university || 'Tongmyong University',
         });
       }
@@ -235,7 +230,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     setError(null);
     try {
       await rejectUserMembershipLink(userId);
-      setActionSuccessMessage(`Membership request for ${confirmRejectUser.email} has been rejected.`);
+      setActionSuccessMessage(`Membership request for ${confirmRejectUser.email} has been declined.`);
       setTimeout(() => setActionSuccessMessage(null), 4000);
       setConfirmRejectUser(null);
       onStatusChange?.();
@@ -247,7 +242,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     }
   };
 
-  const filteredUsers = pendingUsers.filter((req) => {
+  const filteredUsers = submittedApplications.filter((req) => {
     // 1. Status filter
     if (statusFilter === 'actionable') {
       if (req.status !== 'pending' && req.status !== 'approved_waiting_response' && req.status) {
@@ -264,9 +259,13 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
     // 2. Search query filter
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
+    const app = decodeApplication(req);
     return (
       Boolean(req.displayName?.toLowerCase().includes(q)) ||
       Boolean(req.email?.toLowerCase().includes(q)) ||
+      Boolean(app.applicantName?.toLowerCase().includes(q)) ||
+      Boolean(app.applicantHandle?.toLowerCase().includes(q)) ||
+      Boolean(app.applicantStudentId?.toLowerCase().includes(q)) ||
       Boolean(req.requestedNotes?.toLowerCase().includes(q))
     );
   });
@@ -285,11 +284,11 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
             </h1>
             <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
-              <span>{pendingUsers.length} Pending</span>
+              <span>{submittedApplications.filter((r) => r.status === 'pending' || !r.status).length} Actionable</span>
             </span>
           </div>
           <p className="text-xs text-zinc-400 mt-1">
-            Real-time listener on <span className="font-mono text-zinc-300">users</span> collection with status <span className="font-mono text-amber-400">'pending'</span>
+            Submitted applications awaiting organizer review and roster verification.
           </p>
         </div>
 
@@ -324,27 +323,27 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       {/* Stats Counter Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3.5 font-mono text-xs">
         <div className="p-4 rounded-2xl glass-panel neu-raised-sm space-y-1 spatial-card">
-          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Total Open Requests</span>
+          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Submitted Applications</span>
           <span className="text-xl font-bold text-white tabular-nums">
-            {pendingUsers.length}
+            {submittedApplications.length}
           </span>
         </div>
         <div className="p-4 rounded-2xl glass-panel neu-raised-sm space-y-1 spatial-card">
           <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Awaiting Admin Action</span>
           <span className="text-xl font-bold text-amber-400 tabular-nums">
-            {pendingUsers.filter((r) => r.status === 'pending' || !r.status).length}
+            {submittedApplications.filter((r) => r.status === 'pending' || !r.status).length}
           </span>
         </div>
         <div className="p-4 rounded-2xl glass-panel neu-raised-sm space-y-1 spatial-card">
           <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Waiting for User Response</span>
           <span className="text-xl font-bold text-cyan-400 tabular-nums">
-            {pendingUsers.filter((r) => r.status === 'approved_waiting_response').length}
+            {submittedApplications.filter((r) => r.status === 'approved_waiting_response').length}
           </span>
         </div>
         <div className="p-4 rounded-2xl glass-panel neu-raised-sm space-y-1 spatial-card">
-          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Auto-Matched to Roster</span>
-          <span className="text-xl font-bold text-[#b5ff00] tabular-nums">
-            {pendingUsers.filter((r) => !!getAutoMatchMember(r)).length}
+          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">Signed In (No Form Yet)</span>
+          <span className="text-xl font-bold text-zinc-400 tabular-nums">
+            {unsubmittedUsers.length}
           </span>
         </div>
       </div>
@@ -360,7 +359,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
           }`}
         >
-          Active Queue ({pendingUsers.filter((r) => r.status === 'pending' || r.status === 'approved_waiting_response' || !r.status).length})
+          Active Queue ({submittedApplications.filter((r) => r.status === 'pending' || r.status === 'approved_waiting_response' || !r.status).length})
         </button>
         <button
           type="button"
@@ -371,7 +370,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
           }`}
         >
-          Awaiting Admin ({pendingUsers.filter((r) => r.status === 'pending' || !r.status).length})
+          Awaiting Admin ({submittedApplications.filter((r) => r.status === 'pending' || !r.status).length})
         </button>
         <button
           type="button"
@@ -382,7 +381,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
           }`}
         >
-          Waiting on User ({pendingUsers.filter((r) => r.status === 'approved_waiting_response').length})
+          Waiting on User ({submittedApplications.filter((r) => r.status === 'approved_waiting_response').length})
         </button>
         <button
           type="button"
@@ -393,7 +392,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
           }`}
         >
-          Declined ({pendingUsers.filter((r) => r.status === 'declined' || r.status === 'suspended').length})
+          Declined ({submittedApplications.filter((r) => r.status === 'declined' || r.status === 'suspended').length})
         </button>
         <button
           type="button"
@@ -404,7 +403,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               : 'bg-zinc-900/60 text-zinc-400 hover:text-white border border-white/5'
           }`}
         >
-          All ({pendingUsers.length})
+          All ({submittedApplications.length})
         </button>
       </div>
 
@@ -422,11 +421,11 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-white font-display uppercase tracking-tight">
-              {pendingUsers.length === 0 ? 'No Pending Membership Requests' : 'No Matching Requests Found'}
+              {submittedApplications.length === 0 ? 'No Pending Membership Applications' : 'No Matching Requests Found'}
             </h3>
             <p className="text-xs text-zinc-400 max-w-sm mx-auto mt-1">
-              {pendingUsers.length === 0
-                ? 'All club members who signed in are currently approved or linked. When new builders sign in during workshop meetings, their requests will appear here automatically.'
+              {submittedApplications.length === 0
+                ? 'All club applicants have been reviewed. When new builders submit the registration form, their applications will appear here.'
                 : 'Try adjusting your search query.'}
             </p>
           </div>
@@ -435,10 +434,10 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
         /* Requests Grid */
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredUsers.map((req) => {
-            const autoMatch = getAutoMatchMember(req);
-            const currentlyChosenMemberId =
-              selectedMatches[req.id] || (autoMatch ? autoMatch.id : '');
+            const app = decodeApplication(req);
+            const currentlyChosenMemberId = selectedMatches[req.id] || req.approvedMemberId || '';
             const isProcessing = processingId === req.id;
+            const reuseCandidates = findReuseCandidates(members, req);
 
             return (
               <div
@@ -461,7 +460,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="text-sm font-bold text-white truncate">
-                            {req.displayName || 'Google Account'}
+                            {app.applicantName || req.displayName || 'Google Account'}
                           </h3>
                           {req.status === 'approved_waiting_response' ? (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 uppercase font-bold flex items-center gap-1">
@@ -501,10 +500,10 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       </div>
                     </div>
 
-                    {req.membershipRequestedAt && (
+                    {(req.membershipRequestedAt || req.createdAt) && (
                       <span className="text-[10px] font-mono text-zinc-500 shrink-0 flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {new Date(req.membershipRequestedAt).toLocaleDateString()}
+                        {new Date((req.membershipRequestedAt || req.createdAt) as string).toLocaleDateString()}
                       </span>
                     )}
                   </div>
@@ -535,57 +534,107 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                     </div>
                   )}
 
-                  {/* Claimed Handle / Request Notes */}
-                  {req.requestedNotes && (
-                    <div className="p-3 rounded-2xl bg-[#0d0f15]/80 border border-white/5 neu-inset text-xs">
-                      <span className="text-xs text-zinc-400 uppercase font-mono block">
-                        Claimed Builder Handle / Notes:
-                      </span>
-                      <span className="text-white font-mono font-semibold">
-                        {req.requestedNotes}
-                      </span>
+                  {/* Structured Application Details Card */}
+                  <div className="p-3.5 rounded-2xl bg-[#0d0f15]/80 border border-white/5 neu-inset text-xs space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2">
+                      <div>
+                        <span className="text-[10px] text-zinc-400 uppercase font-mono block">Builder Handle:</span>
+                        <span className="text-[#b5ff00] font-mono font-bold text-sm">
+                          {app.applicantHandle || '@builder'}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-zinc-400 uppercase font-mono block">Track:</span>
+                        <span className="text-zinc-200 font-semibold">{app.applicantTrack}</span>
+                      </div>
                     </div>
-                  )}
+
+                    {app.applicantStudentId && (
+                      <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                        <span className="text-zinc-400 font-mono text-[11px]">Student ID:</span>
+                        <span className="text-zinc-200 font-mono font-semibold">{app.applicantStudentId}</span>
+                      </div>
+                    )}
+
+                    {/* Verified External Profile Links */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {app.githubUrl && (
+                        <SafeExternalLink
+                          href={app.githubUrl}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-200 hover:text-white hover:border-[#b5ff00]"
+                        >
+                          <span>GitHub</span>
+                          <ExternalLink className="h-3 w-3 text-zinc-500" />
+                        </SafeExternalLink>
+                      )}
+                      {app.linkedinUrl && (
+                        <SafeExternalLink
+                          href={app.linkedinUrl}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-blue-300 hover:text-blue-200 hover:border-blue-500"
+                        >
+                          <span>LinkedIn</span>
+                          <ExternalLink className="h-3 w-3 text-zinc-500" />
+                        </SafeExternalLink>
+                      )}
+                      {app.portfolioUrl && (
+                        <SafeExternalLink
+                          href={app.portfolioUrl}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-cyan-300 hover:text-cyan-200 hover:border-cyan-500"
+                        >
+                          <span>Portfolio</span>
+                          <ExternalLink className="h-3 w-3 text-zinc-500" />
+                        </SafeExternalLink>
+                      )}
+                      {app.showLinksPublicly && (
+                        <span className="text-[10px] font-mono text-zinc-500 ml-auto">
+                          Links: Public
+                        </span>
+                      )}
+                    </div>
+
+                    {app.applicantNote && (
+                      <div className="pt-1.5 border-t border-white/5">
+                        <span className="text-[10.5px] text-zinc-400 uppercase font-mono block mb-0.5">Note to Organizers:</span>
+                        <p className="text-zinc-300 text-[11px] leading-relaxed break-words font-sans">{app.applicantNote}</p>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Previous Builder Record Found (Reuse Candidates) */}
-                  {(() => {
-                    const reuseCandidates = findReuseCandidates(members, req);
-                    if (reuseCandidates.length === 0) return null;
-                    const cand = reuseCandidates[0];
-
-                    return (
-                      <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
-                        <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                          <Sparkles className="h-4 w-4 shrink-0 text-amber-400" />
-                          <span>Previous builder record found ({cand.totalCheckIns || 0} check-ins)</span>
-                        </div>
-                        <p className="text-[11.5px] text-zinc-300 leading-relaxed">
-                          Matching record: <strong className="text-white">{cand.name}</strong> ({cand.handle}) with status{' '}
-                          <span className="font-mono text-amber-300 font-semibold">{cand.status}</span>. You can restore this builder's previous participation history or archive the old handle to create a fresh record.
-                        </p>
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          <button
-                            type="button"
-                            onClick={() => handleApprove(req, cand.id)}
-                            disabled={isProcessing}
-                            className="px-3 py-1.5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                          >
-                            <UserCheck className="h-3.5 w-3.5" />
-                            <span>Reuse Record (Restores History)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleArchiveAndCreateNew(req, cand)}
-                            disabled={isProcessing}
-                            className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                          >
-                            <UserPlus className="h-3.5 w-3.5" />
-                            <span>Create New Record (Archives Old Handle)</span>
-                          </button>
-                        </div>
+                  {reuseCandidates.length > 0 && (
+                    <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                        <Sparkles className="h-4 w-4 shrink-0 text-amber-400" />
+                        <span>Previous builder record found ({reuseCandidates[0].totalCheckIns || 0} check-ins)</span>
                       </div>
-                    );
-                  })()}
+                      <p className="text-[11.5px] text-zinc-300 leading-relaxed">
+                        Matching record: <strong className="text-white">{reuseCandidates[0].name}</strong> ({reuseCandidates[0].handle}) with status{' '}
+                        <span className="font-mono text-amber-300 font-semibold">{reuseCandidates[0].status}</span>. You can restore this builder's previous participation history or archive the old handle to create a fresh record.
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLinkConfirmTarget({ user: req, member: reuseCandidates[0] });
+                          }}
+                          disabled={isProcessing}
+                          className="px-3 py-1.5 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <UserCheck className="h-3.5 w-3.5" />
+                          <span>Reuse Record (Restores History)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleArchiveAndCreateNew(req, reuseCandidates[0])}
+                          disabled={isProcessing}
+                          className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs uppercase tracking-wider flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          <span>Create New Record (Archives Old Handle)</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Target Member Linking Dropdown */}
                   <div className="space-y-1.5">
@@ -598,22 +647,17 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       disabled={isProcessing}
                       className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-base sm:text-xs text-zinc-200 focus:outline-none focus:border-[#b5ff00] cursor-pointer min-h-11"
                     >
-                      <option value="">-- Select Member or Register New --</option>
+                      <option value="">-- Register New Member Profile --</option>
                       {members.map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.name} ({m.handle}) — {m.role}
+                          {m.name} ({m.handle}) — {m.role} [{m.status}]
                         </option>
                       ))}
                     </select>
 
-                    {autoMatch && !selectedMatches[req.id] ? (
-                      <p className="text-xs text-[#b5ff00] font-mono flex items-center gap-1">
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                        <span>Auto-suggested: {autoMatch.name} ({autoMatch.handle})</span>
-                      </p>
-                    ) : !currentlyChosenMemberId ? (
+                    {!currentlyChosenMemberId ? (
                       <p className="text-xs text-zinc-400">
-                        No member selected. Click &quot;Register &amp; Link New&quot; below to create a new profile for this user.
+                        Click &quot;Register &amp; Link New&quot; below to add this applicant to the roster.
                       </p>
                     ) : null}
                   </div>
@@ -677,6 +721,123 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Collapsed Section: Signed in, no application yet */}
+      {unsubmittedUsers.length > 0 && (
+        <div className="pt-4 border-t border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setShowUnsubmitted((prev) => !prev)}
+            className="w-full flex items-center justify-between p-4 rounded-2xl bg-zinc-950/60 hover:bg-zinc-900/60 border border-zinc-800/80 transition-colors text-left cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-zinc-800 text-zinc-400">
+                <Users className="h-4 w-4" />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider block font-mono">
+                  Signed in, no application submitted yet ({unsubmittedUsers.length})
+                </span>
+                <span className="text-[11px] text-zinc-500">
+                  Users who signed in with Google but haven't submitted the registration form yet.
+                </span>
+              </div>
+            </div>
+            {showUnsubmitted ? (
+              <ChevronUp className="h-4 w-4 text-zinc-400" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-zinc-400" />
+            )}
+          </button>
+
+          {showUnsubmitted && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {unsubmittedUsers.map((u) => (
+                <div
+                  key={u.id}
+                  className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800/80 space-y-2 text-xs"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <SecureAvatar
+                      src={u.photoURL}
+                      name={u.displayName}
+                      alt={u.displayName || 'Google User'}
+                      size={32}
+                      shape="rounded"
+                      className="border border-white/5"
+                    />
+                    <div className="min-w-0">
+                      <p className="font-semibold text-zinc-200 truncate">{u.displayName || 'Google User'}</p>
+                      <p className="text-[11px] text-zinc-500 font-mono truncate">{u.email}</p>
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-zinc-900 flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+                    <span>Signed in: {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'Recent'}</span>
+                    <span className="text-amber-500/80 font-semibold">Awaiting form</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Link Existing Member Confirmation Modal */}
+      {linkConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xl p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-3xl glass-modal border border-cyan-500/40 p-6 space-y-4 shadow-[0_25px_60px_rgba(0,0,0,0.95)] text-zinc-100 spatial-card">
+            <div className="flex items-center gap-3 border-b border-white/10 pb-3">
+              <div className="p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+                <UserCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase font-display tracking-tight">
+                  Link Existing Builder Profile
+                </h3>
+                <p className="text-xs text-zinc-400 font-mono mt-0.5 truncate max-w-[260px]">
+                  {linkConfirmTarget.user.email}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 space-y-2 text-xs font-mono">
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Applicant:</span>
+                <span className="text-white font-semibold truncate max-w-[200px]">{linkConfirmTarget.user.displayName || linkConfirmTarget.user.email}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Target Member:</span>
+                <span className="text-[#b5ff00] font-bold truncate max-w-[200px]">{linkConfirmTarget.member.name} ({linkConfirmTarget.member.handle})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-zinc-400">Member Status:</span>
+                <span className="text-zinc-300">{linkConfirmTarget.member.status}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              This action will link the applicant&apos;s Google account UID to this builder record and send them an invitation to accept ownership.
+            </p>
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setLinkConfirmTarget(null)}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-[#141720] hover:bg-[#191c27] border border-white/10 text-xs text-zinc-300 font-semibold uppercase tracking-wider transition-colors cursor-pointer min-h-11"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => executeApproveLink(linkConfirmTarget.user, linkConfirmTarget.member.id)}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-11 shadow-[0_0_15px_rgba(181,255,0,0.3)]"
+              >
+                Confirm Link &amp; Invite
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

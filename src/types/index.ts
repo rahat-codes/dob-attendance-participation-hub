@@ -302,7 +302,9 @@ export type AuditAction =
   | 'deactivate_member'
   | 'delete_member'
   | 'update_settings'
-  | 'recompute_leaderboard';
+  | 'recompute_leaderboard'
+  | 'member_data_repair'
+  | 'user_state_repair';
 
 export interface AuditLog {
   id: string;
