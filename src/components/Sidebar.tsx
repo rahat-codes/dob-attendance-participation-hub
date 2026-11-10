@@ -21,6 +21,7 @@ import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { SecureAvatar } from './common/SecureAvatar';
+import { CLOSE_SIDEBAR_ON_SELECT } from '../utils/navChrome';
 
 interface SidebarProps {
   activeTab: NavigationTab;
@@ -34,6 +35,9 @@ interface SidebarProps {
   className?: string;
   isMobileDrawer?: boolean;
   onCloseMobileDrawer?: () => void;
+  isDrawer?: boolean;
+  onClose?: () => void;
+  closeButtonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -48,13 +52,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   className = '',
   isMobileDrawer = false,
   onCloseMobileDrawer,
+  isDrawer = false,
+  onClose,
+  closeButtonRef,
 }) => {
   const { user, linkedMember, isAdmin, signOutUser } = useAuth();
 
+  const handleClose = onClose || onCloseMobileDrawer;
+  const isAnyDrawer = isDrawer || isMobileDrawer;
+
   const handleItemClick = (tab: NavigationTab) => {
     onSelectTab(tab);
-    if (isMobileDrawer && onCloseMobileDrawer) {
-      onCloseMobileDrawer();
+    if (isAnyDrawer && handleClose && CLOSE_SIDEBAR_ON_SELECT) {
+      handleClose();
     }
   };
 
@@ -119,34 +129,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
       aria-label="Primary Navigation Sidebar"
       className={`flex flex-col bg-[#0c0e14]/90 backdrop-blur-2xl border-r border-white/[0.08] ${className}`}
     >
-      {/* Sidebar Header / Brand (Only in Mobile Drawer mode; Desktop has top navbar) */}
-      {isMobileDrawer && (
+      {/* Sidebar Header / Brand (Rendered in Drawer mode: Desktop and Mobile) */}
+      {isAnyDrawer && (
         <div className="p-4 border-b border-white/[0.08] flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1 rounded-xl bg-zinc-900/60 border border-white/10 neu-raised-sm">
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close navigation menu"
+            className="flex items-center gap-2.5 text-left group cursor-pointer rounded-xl focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none p-1 transition-all"
+          >
+            <div className="p-1 rounded-xl bg-zinc-900/60 border border-white/10 neu-raised-sm group-hover:border-[#b5ff00]/40 transition-all">
               <img
                 src="/dob_logo-192.png"
                 alt="Den of Builders"
-                className="w-7 h-7 object-contain drop-shadow-[0_0_8px_rgba(181,255,0,0.3)]"
+                className="w-7 h-7 object-contain drop-shadow-[0_0_8px_rgba(181,255,0,0.3)] group-hover:rotate-12 transition-transform duration-500"
                 width={28}
                 height={28}
               />
             </div>
             <div>
-              <span className="font-display font-black text-sm uppercase text-white tracking-tight block leading-tight">
+              <span className="font-display font-black text-sm uppercase text-white tracking-tight block leading-tight group-hover:text-[#b5ff00] transition-colors">
                 Den of Builders
               </span>
               <span className="text-[10px] font-mono text-[#b5ff00] uppercase tracking-wider block">
                 Primary Navigation
               </span>
             </div>
-          </div>
-          {onCloseMobileDrawer && (
+          </button>
+          {handleClose && (
             <button
+              ref={closeButtonRef}
               type="button"
-              onClick={onCloseMobileDrawer}
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
-              aria-label="Close sidebar menu"
+              onClick={handleClose}
+              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+              aria-label="Close navigation menu"
             >
               ✕
             </button>
@@ -253,7 +269,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={() => {
                     onOpenAuditLogs();
-                    if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                    if (isAnyDrawer && handleClose) handleClose();
                   }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-purple-400 focus-visible:outline-none"
                 >
@@ -271,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={() => {
                     onOpenBackup();
-                    if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                    if (isAnyDrawer && handleClose) handleClose();
                   }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
                 >
@@ -298,7 +314,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               type="button"
               onClick={() => {
                 onOpenGuide();
-                if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                if (isAnyDrawer && handleClose) handleClose();
               }}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
             >
@@ -318,7 +334,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={() => {
                   onViewPass();
-                  if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                  if (isAnyDrawer && handleClose) handleClose();
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-[#b5ff00] hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
               >
@@ -362,7 +378,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 type="button"
                 onClick={() => {
                   onOpenEditProfile();
-                  if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+                  if (isAnyDrawer && handleClose) handleClose();
                 }}
                 className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer shrink-0"
                 title="Edit Profile"
@@ -376,7 +392,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={async () => {
-              if (isMobileDrawer && onCloseMobileDrawer) onCloseMobileDrawer();
+              if (isAnyDrawer && handleClose) handleClose();
               await signOutUser();
             }}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-red-950/20 hover:bg-red-950/50 border border-red-500/20 hover:border-red-500/40 text-red-300 hover:text-red-200 text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer min-h-10 focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:outline-none"

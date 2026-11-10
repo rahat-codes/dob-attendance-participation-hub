@@ -115,7 +115,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-zinc-400 font-mono mt-0.5">
-                {member.handle} · {member.email}
+                {member.handle}{member.email ? ` · ${member.email}` : ''}
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2">
                 {member.tracks.map((track) => (

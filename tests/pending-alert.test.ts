@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { PendingRequestDetector } from '../src/utils/pendingAlerts';
 import { UserProfile } from '../src/types';
 
-function makeMockUser(id: string, status: UserProfile['status'], name = `User ${id}`, isSubmitted = true): UserProfile {
+function makeMockUser(id: string, status: UserProfile['status'], name = `User ${id}`, isSubmitted = true, submittedTime = '2026-01-01T00:00:00.000Z'): UserProfile {
   return {
     id,
     email: `${id}@example.com`,
@@ -10,9 +10,9 @@ function makeMockUser(id: string, status: UserProfile['status'], name = `User ${
     status,
     readAnnouncementIds: [],
     notificationPrefs: { enabled: true, announcements: true, reminders: true },
-    membershipRequestedAt: isSubmitted && status === 'pending' ? new Date().toISOString() : undefined,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    membershipRequestedAt: isSubmitted && status === 'pending' ? submittedTime : undefined,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   };
 }
 

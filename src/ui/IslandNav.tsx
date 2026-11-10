@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { NavigationTab } from '../components/Navbar';
 import { useAuth } from '../firebase/AuthContext';
+import { m } from 'motion/react';
+import { useMotionSafe } from '../motion/useMotionSafe';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { SecureAvatar } from '../components/common/SecureAvatar';
 import { IconOrb } from './IconOrb';
@@ -43,6 +45,10 @@ export interface IslandNavProps {
   pendingRequestsCount?: number;
   unreadNotificationsCount?: number;
   isModalOpen?: boolean;
+  onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
+  isDesktopTopBarVisible?: boolean;
+  logoButtonRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export const IslandNav: React.FC<IslandNavProps> = ({
@@ -61,8 +67,13 @@ export const IslandNav: React.FC<IslandNavProps> = ({
   pendingRequestsCount = 0,
   unreadNotificationsCount = 0,
   isModalOpen = false,
+  onToggleSidebar,
+  isSidebarOpen = false,
+  isDesktopTopBarVisible = true,
+  logoButtonRef,
 }) => {
   const { user, profile, linkedMember, isAdmin, signOutUser, handleSignIn, signingIn } = useAuth();
+  const { reduced: reducedMotion } = useMotionSafe();
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -252,29 +263,52 @@ export const IslandNav: React.FC<IslandNavProps> = ({
           2. DESKTOP FLOATING TOP ISLANDS (>= lg / 1024px and up)
           Centered detached pill for primary tabs + top-right utility island
           ========================================================================= */}
-      <header
+      <m.header
         aria-label="Desktop Island Navigation"
-        className={`hidden lg:flex fixed top-[calc(env(safe-area-inset-top)+14px)] inset-x-8 z-40 items-center justify-between pointer-events-none transition-all duration-200 ${
-          isModalOpen ? 'opacity-30 pointer-events-none' : 'opacity-100'
+        initial={false}
+        animate={{
+          opacity: isDesktopTopBarVisible ? (isModalOpen ? 0.3 : 1) : 0,
+          y: isDesktopTopBarVisible ? 0 : -20,
+        }}
+        transition={{
+          duration: reducedMotion ? 0 : 0.2,
+          ease: [0.22, 1, 0.36, 1],
+        }}
+        inert={!isDesktopTopBarVisible || undefined}
+        aria-hidden={!isDesktopTopBarVisible ? true : undefined}
+        className={`hidden lg:flex fixed top-[calc(env(safe-area-inset-top)+14px)] inset-x-8 z-40 items-center justify-between pointer-events-none ${
+          !isDesktopTopBarVisible ? 'pointer-events-none' : ''
         }`}
       >
-        {/* Left: Brand Identity Pill */}
-        <div className="pointer-events-auto island-nav rounded-full px-4 py-2 flex items-center gap-3">
-          <img
-            src="/dob_logo-192.png"
-            alt="Den of Builders"
-            className="w-7 h-7 object-contain drop-shadow-[0_0_10px_rgba(181,255,0,0.4)]"
-            width={28}
-            height={28}
-          />
-          <div>
-            <span className="font-display font-black text-xs uppercase tracking-tight text-white block leading-none">
-              Den of Builders
-            </span>
-            <span className="text-[9px] font-mono text-[#b5ff00] uppercase tracking-widest block mt-0.5">
-              Attendance Hub
-            </span>
-          </div>
+        {/* Left: Brand Identity Pill & Sidebar Opener Button */}
+        <div className="pointer-events-auto island-nav rounded-full p-1 pl-1 pr-3 flex items-center">
+          <button
+            ref={logoButtonRef}
+            type="button"
+            onClick={onToggleSidebar}
+            aria-label="Open navigation menu"
+            aria-expanded={isSidebarOpen}
+            aria-controls="primary-sidebar-drawer"
+            className="flex items-center gap-3 cursor-pointer rounded-full p-1.5 focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none transition-all group"
+          >
+            <div className="p-1 rounded-xl bg-zinc-900/60 border border-white/10 neu-raised-sm group-hover:border-[#b5ff00]/40 transition-all">
+              <img
+                src="/dob_logo-192.png"
+                alt="Den of Builders"
+                className="w-7 h-7 object-contain drop-shadow-[0_0_10px_rgba(181,255,0,0.4)] group-hover:rotate-12 transition-transform duration-500"
+                width={28}
+                height={28}
+              />
+            </div>
+            <div className="text-left">
+              <span className="font-display font-black text-xs uppercase tracking-tight text-white block leading-none group-hover:text-[#b5ff00] transition-colors">
+                Den of Builders
+              </span>
+              <span className="text-[9px] font-mono text-[#b5ff00] uppercase tracking-widest block mt-0.5">
+                Attendance Hub
+              </span>
+            </div>
+          </button>
         </div>
 
         {/* Center: Primary Navigation Island (Max 720px) */}
@@ -509,7 +543,7 @@ export const IslandNav: React.FC<IslandNavProps> = ({
             />
           )}
         </div>
-      </header>
+      </m.header>
     </>
   );
 };

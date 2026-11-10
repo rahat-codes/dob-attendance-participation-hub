@@ -135,6 +135,40 @@ export const MemberPassModal: React.FC<MemberPassModalProps> = ({ member, onClos
               </span>
             </div>
 
+            {/* Member Identity & Academic Details */}
+            <div className="rounded-2xl bg-[#0d0f15] border border-white/5 neu-inset p-3.5 space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-zinc-400">Builder Role:</span>
+                <span className="px-2 py-0.5 rounded-full bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] font-bold uppercase text-[10px]">
+                  {member.role || 'Member'}
+                </span>
+              </div>
+              {member.tracks && member.tracks.length > 0 && (
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-zinc-400">Tracks:</span>
+                  <div className="flex flex-wrap gap-1 justify-end max-w-[200px]">
+                    {member.tracks.map((t) => (
+                      <span key={t} className="px-1.5 py-0.2 rounded bg-zinc-900 border border-white/10 text-[10px] text-zinc-300">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {member.studentId && (
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-zinc-400">Student ID:</span>
+                  <span className="text-zinc-200 font-bold">{member.studentId}</span>
+                </div>
+              )}
+              {member.university && (
+                <div className="flex items-center justify-between text-xs font-mono">
+                  <span className="text-zinc-400">University:</span>
+                  <span className="text-zinc-300 truncate max-w-[180px]">{member.university}</span>
+                </div>
+              )}
+            </div>
+
             {/* Stats Bar */}
             <div className="grid grid-cols-2 gap-2 text-center rounded-2xl bg-[#0d0f15] border border-white/5 neu-inset p-3.5">
               <div>

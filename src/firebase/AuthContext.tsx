@@ -110,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const profileUnsubRef = useRef<(() => void) | null>(null);
   const memberUnsubRef = useRef<(() => void) | null>(null);
+  const privateUnsubRef = useRef<(() => void) | null>(null);
 
   // Capture any incoming deep link params (?s=...&t=...) immediately on load
   useEffect(() => {
@@ -120,11 +121,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
   }, []);
 
-  // Loads linked member profile and private data
-  const loadMemberData = useCallback(async (memberId: string) => {
+  // Loads linked member profile and private data in real time
+  const loadMemberData = useCallback((memberId: string) => {
     if (memberUnsubRef.current) {
       memberUnsubRef.current();
       memberUnsubRef.current = null;
+    }
+    if (privateUnsubRef.current) {
+      privateUnsubRef.current();
+      privateUnsubRef.current = null;
     }
 
     const memberRef = doc(db, 'members', memberId);
@@ -133,10 +138,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       (snap) => {
         if (snap.exists()) {
           const data = snap.data() as Member;
-          setLinkedMember({
+          setLinkedMember((prev) => ({
             ...data,
             id: snap.id || data.id,
-          });
+            // Keep any real-time private attributes merged in
+            studentId: data.studentId || prev?.studentId,
+            phone: data.phone || prev?.phone,
+            university: data.university || prev?.university,
+            department: data.department || prev?.department,
+            major: data.major || prev?.major,
+            semester: data.semester || prev?.semester,
+            profileCompleted: data.profileCompleted || prev?.profileCompleted,
+          }));
         } else {
           setLinkedMember(null);
         }
@@ -146,17 +159,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    try {
-      const privRef = doc(db, 'memberPrivate', memberId);
-      const privSnap = await getDoc(privRef);
-      if (privSnap.exists()) {
-        setMemberPrivate(privSnap.data() as MemberPrivate);
-      } else {
+    const privRef = doc(db, 'memberPrivate', memberId);
+    privateUnsubRef.current = onSnapshot(
+      privRef,
+      (privSnap) => {
+        if (privSnap.exists()) {
+          const pData = privSnap.data() as MemberPrivate;
+          setMemberPrivate(pData);
+          setLinkedMember((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              studentId: pData.studentId || prev.studentId,
+              phone: pData.phone || prev.phone,
+              university: pData.university || prev.university,
+              department: pData.department || prev.department,
+              major: pData.major || prev.major,
+              semester: pData.semester || prev.semester,
+              profileCompleted: pData.profileCompleted ?? prev.profileCompleted,
+            };
+          });
+        } else {
+          setMemberPrivate(null);
+        }
+      },
+      (err) => {
+        console.warn('Member private subscription notice:', err);
         setMemberPrivate(null);
       }
-    } catch {
-      setMemberPrivate(null);
-    }
+    );
   }, []);
 
   // Resolves user profile and subscribes to real-time status updates using singleFlight deduplication
@@ -369,8 +400,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       if (profileUnsubRef.current) profileUnsubRef.current();
       if (memberUnsubRef.current) memberUnsubRef.current();
+      if (privateUnsubRef.current) privateUnsubRef.current();
       profileUnsubRef.current = null;
       memberUnsubRef.current = null;
+      privateUnsubRef.current = null;
 
       await signOut(auth);
     } catch (err: any) {

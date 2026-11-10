@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useReducer, Suspense, lazy } from 'react';
 import {
   Member,
   Session,
@@ -53,6 +53,8 @@ import { Sidebar } from './components/Sidebar';
 import { IslandNav } from './ui/IslandNav';
 import { m, AnimatePresence } from 'motion/react';
 import { fadeUp, fade, spring } from './motion/presets';
+import { useMotionSafe } from './motion/useMotionSafe';
+import { navChromeReducer, getNavChromeState } from './utils/navChrome';
 import { BottomTabBar } from './components/BottomTabBar';
 import { MobileMoreSheet } from './components/MobileMoreSheet';
 import { LoginView } from './components/LoginView';
@@ -164,6 +166,7 @@ export default function App() {
     membershipState,
     isAdmin,
     isApprovedMember,
+    loading,
     signInWithGoogle,
     signOutUser,
     refreshProfile,
@@ -251,6 +254,98 @@ export default function App() {
     return !isMarkedCompleted || !hasStudentId || !hasPhone || !hasTracks;
   }, [user, isAdmin, linkedMember, memberPrivate, membershipState, mandatoryProfileDismissed]);
 
+  // Motion safe hook for respecting prefers-reduced-motion
+  const { reduced: reducedMotion } = useMotionSafe();
+
+  // Desktop media query (>= 1024px) with cleanup
+  const [isDesktop, setIsDesktop] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(min-width: 1024px)').matches;
+  });
+
+  // Focus management refs for drawer accessibility
+  const desktopLogoButtonRef = useRef<HTMLButtonElement | null>(null);
+  const desktopSidebarCloseRef = useRef<HTMLButtonElement | null>(null);
+  const wasSidebarOpenRef = useRef(false);
+
+  // App blocked state (profile completion gate, loading, guest hub, signed out)
+  const isAppBlocked = useMemo(() => {
+    return Boolean(
+      loading ||
+      !user ||
+      membershipState !== 'active' ||
+      isMandatoryProfileRequired
+    );
+  }, [loading, user, membershipState, isMandatoryProfileRequired]);
+
+  // Unified chrome state reducer
+  const [chromeState, dispatchChrome] = useReducer(navChromeReducer, {
+    isDesktop: typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : false,
+    isSidebarOpen: false,
+    isBlocked: false,
+  });
+
+  // Keep chrome reducer state synchronized with media query and blocked state
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia('(min-width: 1024px)');
+    const handleMediaChange = (e: MediaQueryListEvent) => {
+      setIsDesktop(e.matches);
+      if (e.matches) {
+        dispatchChrome({ type: 'resizeToDesktop' });
+      } else {
+        dispatchChrome({ type: 'resizeToMobile' });
+      }
+    };
+
+    mql.addEventListener('change', handleMediaChange);
+    return () => mql.removeEventListener('change', handleMediaChange);
+  }, []);
+
+  useEffect(() => {
+    if (isAppBlocked) {
+      dispatchChrome({ type: 'blocked' });
+    }
+  }, [isAppBlocked]);
+
+  // Derive top bar and sidebar visibility
+  const navChrome = useMemo(() => {
+    return getNavChromeState({
+      isDesktop,
+      isSidebarOpen: chromeState.isSidebarOpen,
+      isBlocked: isAppBlocked,
+    });
+  }, [isDesktop, chromeState.isSidebarOpen, isAppBlocked]);
+
+  // Focus trap and restore on open / close
+  useEffect(() => {
+    if (navChrome.sidebarVisible) {
+      wasSidebarOpenRef.current = true;
+      // Focus close button on open
+      requestAnimationFrame(() => {
+        desktopSidebarCloseRef.current?.focus();
+      });
+    } else if (wasSidebarOpenRef.current) {
+      wasSidebarOpenRef.current = false;
+      // Return focus to logo button when top bar becomes visible again
+      requestAnimationFrame(() => {
+        desktopLogoButtonRef.current?.focus();
+      });
+    }
+  }, [navChrome.sidebarVisible]);
+
+  // Lock body scroll while desktop sidebar is open
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (navChrome.sidebarVisible) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [navChrome.sidebarVisible]);
+
   // Synchronize tab selection with History API (pushState) & LocalStorage
   const handleSelectTab = useCallback(
     (tab: NavigationTab, pushHistory = true) => {
@@ -270,6 +365,9 @@ export default function App() {
         }
       }
 
+      // Close sidebar if open
+      dispatchChrome({ type: 'selectDestination' });
+
       // Scroll to top on tab change
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -281,6 +379,7 @@ export default function App() {
   // Popstate listener for real browser Back/Forward button navigation
   useEffect(() => {
     const handlePopState = () => {
+      dispatchChrome({ type: 'routeChange' });
       const hashTab = getTabFromHash();
       if (hashTab) {
         handleSelectTab(hashTab, false);
@@ -1033,6 +1132,10 @@ export default function App() {
           if (linkedMember) setSelectedPassMember(linkedMember);
         }}
         isModalOpen={isAnyModalOpen}
+        onToggleSidebar={() => dispatchChrome({ type: 'toggleFromLogo' })}
+        isSidebarOpen={chromeState.isSidebarOpen}
+        isDesktopTopBarVisible={navChrome.topBarVisible}
+        logoButtonRef={desktopLogoButtonRef}
       />
 
 
@@ -1162,23 +1265,8 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Workspace Content Shell: Desktop Persistent Sidebar for Primary Sections + Main Views */}
+      {/* Workspace Content Shell: Full Width Main Viewport (Sidebar opens as an overlay drawer) */}
       <div className="flex-1 flex w-full max-w-7xl mx-auto items-stretch">
-        {/* Desktop Sidebar for Primary Sections (>= lg) */}
-        <Sidebar
-          activeTab={activeTab}
-          onSelectTab={handleSelectTab}
-          pendingRequestsCount={pendingRequestsCount}
-          onOpenGuide={() => setIsGuideOpen(true)}
-          onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
-          onOpenBackup={() => setIsBackupOpen(true)}
-          onViewPass={() => {
-            if (linkedMember) setSelectedPassMember(linkedMember);
-          }}
-          onOpenEditProfile={() => setIsEditProfileOpen(true)}
-          className="hidden lg:flex w-64 shrink-0 self-start sticky top-16 h-[calc(100dvh-4rem)] border-r border-white/[0.08]"
-        />
-
         {/* Main Viewport Content */}
         <main
           id="main"
@@ -1438,23 +1526,43 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Mobile Collapsible Sidebar Drawer (< lg) */}
+      {/* Unified Primary Navigation Sidebar Drawer (Desktop Overlay at >= lg, Mobile Drawer at < lg) */}
       <AnimatePresence>
-        {isMoreOpen && (
+        {(isMoreOpen || navChrome.sidebarVisible) && (
           <div
+            id="primary-sidebar-drawer"
             role="dialog"
             aria-modal="true"
             aria-label="Primary Navigation Menu"
-            className="lg:hidden fixed inset-0 z-50 flex"
+            className="fixed inset-0 z-50 flex"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+                if (navChrome.sidebarVisible) {
+                  dispatchChrome({ type: 'escape' });
+                }
+                if (isMoreOpen) {
+                  setIsMoreOpen(false);
+                }
+              }
+            }}
           >
-            {/* Backdrop */}
+            {/* Backdrop Scrim */}
             <m.div
               variants={fade}
               initial="hidden"
               animate="show"
               exit="exit"
+              transition={{ duration: reducedMotion ? 0 : 0.2 }}
               className="fixed inset-0 bg-black/80 backdrop-blur-md"
-              onClick={() => setIsMoreOpen(false)}
+              onClick={() => {
+                if (navChrome.sidebarVisible) {
+                  dispatchChrome({ type: 'scrimClick' });
+                }
+                if (isMoreOpen) {
+                  setIsMoreOpen(false);
+                }
+              }}
               aria-hidden="true"
             />
 
@@ -1463,34 +1571,54 @@ export default function App() {
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
-              transition={spring.sheet}
-              className="relative w-80 max-w-[85vw] h-full flex flex-col z-10 shadow-2xl"
+              transition={reducedMotion ? { duration: 0 } : spring.sheet}
+              className="relative w-80 max-w-[85vw] h-full flex flex-col z-10 shadow-2xl bg-[#0c0e14]"
             >
               <Sidebar
                 activeTab={activeTab}
                 onSelectTab={(tab) => {
                   handleSelectTab(tab);
-                  setIsMoreOpen(false);
+                  if (navChrome.sidebarVisible) {
+                    dispatchChrome({ type: 'selectDestination' });
+                  }
+                  if (isMoreOpen) {
+                    setIsMoreOpen(false);
+                  }
                 }}
                 pendingRequestsCount={pendingRequestsCount}
                 onOpenGuide={() => {
-                  setIsMoreOpen(false);
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
                   setIsGuideOpen(true);
                 }}
                 onOpenAuditLogs={() => {
-                  setIsMoreOpen(false);
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
                   setIsAuditLogsOpen(true);
                 }}
+                onOpenBackup={() => {
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
+                  setIsBackupOpen(true);
+                }}
                 onViewPass={() => {
-                  setIsMoreOpen(false);
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
                   if (linkedMember) setSelectedPassMember(linkedMember);
                 }}
                 onOpenEditProfile={() => {
-                  setIsMoreOpen(false);
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
                   setIsEditProfileOpen(true);
                 }}
-                isMobileDrawer={true}
+                isDrawer={true}
+                isMobileDrawer={isMoreOpen}
+                onClose={() => {
+                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                  if (isMoreOpen) setIsMoreOpen(false);
+                }}
                 onCloseMobileDrawer={() => setIsMoreOpen(false)}
+                closeButtonRef={desktopSidebarCloseRef}
                 className="h-full w-full border-r border-white/10"
               />
             </m.div>
