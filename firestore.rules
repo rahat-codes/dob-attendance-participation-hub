@@ -15,9 +15,12 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Super Admin: Enforces email_verified and Google OAuth provider
     function isSuper() {
       return signedIn() &&
              request.auth.token.email != null &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.firebase.sign_in_provider == 'google.com' &&
              request.auth.token.email.lower() == 'rahatmdmahadihasan@gmail.com';
     }
 
@@ -59,8 +62,54 @@ service cloud.firestore {
 
     function tokenValid(sid, t) {
       let k = get(/databases/$(database)/documents/sessionTokens/$(sid)).data;
-      return (t == k.token && request.time <= k.rotatedAt + duration.value(75, 's')) ||
-             (t == k.prevToken && request.time <= k.rotatedAt + duration.value(30, 's'));
+      return t is string &&
+             t.size() == 8 &&
+             t.matches('^[A-Z0-9]{8}$') && (
+               (t == k.token && request.time <= k.rotatedAt + duration.value(75, 's')) ||
+               (k.prevToken is string && k.prevToken.size() == 8 && k.prevToken.matches('^[A-Z0-9]{8}$') && t == k.prevToken && request.time <= k.rotatedAt + duration.value(30, 's'))
+             );
+    }
+
+    function isMatchingMonthKey(sid, monthKey) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      return monthKey is string &&
+             monthKey.matches('^[0-9]{4}-[0-9]{2}$') &&
+             s.date is string &&
+             s.date.size() >= 7 &&
+             monthKey == s.date[0:7];
+    }
+
+    function isValidCheckInStatus(sid, status) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      let lateAt = s.startAt + duration.value(s.lateAfterMinutes, 'm');
+      return (status == 'present' && request.time <= lateAt + duration.value(15, 's')) ||
+             (status == 'late' && request.time >= lateAt - duration.value(15, 's'));
+    }
+
+    function isValidGitHub(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 100 &&
+        url.matches('^https://github\\.com/[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$')
+      );
+    }
+
+    function isValidLinkedIn(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 150 &&
+        url.matches('^https://www\\.linkedin\\.com/in/[a-zA-Z0-9_%-]{3,100}/?$')
+      );
+    }
+
+    function isValidPortfolio(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 200 &&
+        url.matches('^https://[a-zA-Z0-9_\\-\\.]+\\.[a-zA-Z]{2,}(/.*)?$') &&
+        !url.matches('.*[@\\\\:0-9].*localhost.*') &&
+        !url.matches('^https://(localhost|127\\.|10\\.|192\\.168\\.|172\\.).*')
+      );
     }
 
     // ==========================================
@@ -69,21 +118,40 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['id', 'email', 'displayName', 'status']) &&
-             data.keys().hasOnly(['id', 'email', 'displayName', 'photoURL', 'status', 'memberId', 'approvedMemberId', 'requestedNotes', 'readAnnouncementIds', 'notificationPrefs', 'createdAt', 'updatedAt', 'approvedAt', 'respondedAt', 'membershipRequestedAt']) &&
+             data.keys().hasOnly([
+               'id', 'email', 'displayName', 'photoURL', 'status', 'memberId', 'approvedMemberId',
+               'requestedNotes', 'readAnnouncementIds', 'notificationPrefs', 'createdAt', 'updatedAt',
+               'approvedAt', 'respondedAt', 'membershipRequestedAt',
+               'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+               'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+             ]) &&
              data.id is string && data.id.size() <= 128 &&
              data.email is string && data.email.size() <= 150 &&
              data.displayName is string && data.displayName.size() <= 100 &&
+             (!('photoURL' in data) || data.photoURL == '' || (data.photoURL.size() <= 500 && data.photoURL.matches('^https://.+'))) &&
+             (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
+             (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
+             (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
              data.status in ['pending', 'approved_waiting_response', 'active', 'declined', 'suspended'];
     }
 
+    // Transition schema: accepts legacy studentId and university alongside new social links
     function isValidMember(data) {
       return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
-             data.keys().hasOnly(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'avatarUrl', 'bio', 'leaderboardOptOut', 'authUid', 'createdAt', 'studentId', 'university']) &&
+             data.keys().hasOnly([
+               'id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'avatarUrl', 'bio',
+               'leaderboardOptOut', 'authUid', 'createdAt', 'studentId', 'university',
+               'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+             ]) &&
              data.id is string && isValidId(data.id) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50 &&
              data.role in ['Member', 'Project Leader', 'Vice President', 'President', 'Founder', 'Lead', 'Builder', 'Apprentice'] &&
              data.tracks is list && data.tracks.size() > 0 && data.tracks.size() <= 10 &&
+             (!('avatarUrl' in data) || data.avatarUrl == '' || (data.avatarUrl.size() <= 500 && data.avatarUrl.matches('^https://.+'))) &&
+             (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
+             (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
+             (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
              data.status in ['Active', 'Probationary', 'Inactive'];
     }
 
@@ -115,11 +183,14 @@ service cloud.firestore {
           request.auth.uid == userId &&
           isValidUser(request.resource.data) &&
           (
-            // Normal profile update without changing status or memberId
+            // Normal profile update / application submission without changing status or memberId
             (
               request.resource.data.status == resource.data.status &&
               request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                'displayName', 'photoURL', 'requestedNotes', 'membershipRequestedAt', 'notificationPrefs', 'readAnnouncementIds', 'updatedAt'
+                'displayName', 'photoURL', 'requestedNotes', 'membershipRequestedAt',
+                'notificationPrefs', 'readAnnouncementIds', 'updatedAt',
+                'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+                'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
               ])
             ) ||
             // Applicant accepting an approved invitation
@@ -145,7 +216,9 @@ service cloud.firestore {
               resource.data.status == 'declined' &&
               request.resource.data.status == 'pending' &&
               request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-                'status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt'
+                'status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt',
+                'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+                'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
               ])
             )
           )
@@ -161,16 +234,18 @@ service cloud.firestore {
       allow write: if isSuper() && isValidId(adminUid);
     }
 
-    // Members Collection
+    // Members Collection (Transition Version)
     match /members/{memberId} {
       allow read: if isAdmin() || isActiveMember() || (
         signedIn() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approvedMemberId == memberId
       );
-      allow create, delete: if isAdmin() && isValidId(memberId);
 
-      allow update: if isAdmin() || (
+      allow create: if isAdmin() && isValidId(memberId) && isValidMember(request.resource.data);
+      allow delete: if isAdmin() && isValidId(memberId);
+
+      allow update: if (isAdmin() && isValidMember(request.resource.data)) || (
         signedIn() &&
         request.auth.uid == request.resource.data.authUid &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -187,7 +262,8 @@ service cloud.firestore {
         request.resource.data.role == resource.data.role &&
         request.resource.data.status == resource.data.status &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut', 'studentId', 'university'
+          'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut', 'studentId', 'university',
+          'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
         ])
       );
     }
@@ -201,35 +277,60 @@ service cloud.firestore {
       );
     }
 
-    // Sessions Collection
+    // Sessions Collection: split create, update, delete
     match /sessions/{sessionId} {
       allow read: if isAdmin() || isActiveMember();
-      allow write: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
+      allow create: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
+      allow update: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
+      allow delete: if isAdmin() && isValidId(sessionId);
     }
 
-    // Session Tokens: Kiosk rotating tokens (admin-only)
+    // Session Tokens: Kiosk rotating tokens (split create, update, delete)
     match /sessionTokens/{sessionId} {
       allow read: if isAdmin();
-      allow write: if isAdmin() &&
-                      isValidId(sessionId) &&
-                      request.resource.data.rotatedAt == request.time &&
-                      request.resource.data.keys().hasAll(['token', 'prevToken', 'rotatedAt']);
+      allow create, update: if isAdmin() &&
+                              isValidId(sessionId) &&
+                              request.resource.data.rotatedAt == request.time &&
+                              request.resource.data.token is string &&
+                              request.resource.data.token.matches('^[A-Z0-9]{8}$') &&
+                              request.resource.data.prevToken is string &&
+                              request.resource.data.prevToken.matches('^[A-Z0-9]{8}$') &&
+                              request.resource.data.keys().hasOnly(['token', 'prevToken', 'rotatedAt']);
+      allow delete: if isAdmin() && isValidId(sessionId);
     }
 
-    // Check-Ins Collection
+    // Check-Ins Collection: Finding G fix, tolerance, date-bound monthKey, and strict allowlists
     match /checkIns/{checkInId} {
       allow read: if isAdmin() || (
-        isActiveMember() && resource.data.memberId == myMemberId()
+        isActiveMember() && (
+          resource == null
+            ? checkInId.matches('^.*_' + myMemberId() + '$')
+            : resource.data.memberId == myMemberId()
+        )
       );
 
       allow create: if (
         // Admin manual door check-in
         (
           isAdmin() &&
+          checkInId == request.resource.data.sessionId + '_' + request.resource.data.memberId &&
           request.resource.data.id == checkInId &&
-          request.resource.data.method == 'manual_entry'
+          request.resource.data.method == 'manual_entry' &&
+          request.resource.data.verifiedBy == request.auth.uid &&
+          request.resource.data.checkedInAt == request.time &&
+          exists(/databases/$(database)/documents/members/$(request.resource.data.memberId)) &&
+          exists(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)) &&
+          isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
+          request.resource.data.status in ['present', 'late'] &&
+          request.resource.data.keys().hasAll([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'status', 'monthKey', 'checkedInAt', 'verifiedBy'
+          ]) &&
+          request.resource.data.keys().hasOnly([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token',
+            'checkedInAt', 'status', 'monthKey', 'notes', 'verifiedBy'
+          ])
         ) ||
-        // Member self check-in
+        // Member self check-in (notes and verifiedBy strictly forbidden)
         (
           isActiveMember() &&
           checkInId == request.resource.data.sessionId + '_' + myMemberId() &&
@@ -237,16 +338,17 @@ service cloud.firestore {
           request.resource.data.memberId == myMemberId() &&
           request.resource.data.authUid == request.auth.uid &&
           request.resource.data.checkedInAt == request.time &&
+          request.resource.data.method in ['camera_scan', 'code_input'] &&
+          isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
+          request.resource.data.keys().hasAll([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token', 'checkedInAt', 'status', 'monthKey'
+          ]) &&
+          request.resource.data.keys().hasOnly([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token', 'checkedInAt', 'status', 'monthKey'
+          ]) &&
           sessionOpen(request.resource.data.sessionId) &&
           tokenValid(request.resource.data.sessionId, request.resource.data.token) &&
-          (
-            request.resource.data.status == (
-              request.time > get(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.startAt +
-              duration.value(get(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)).data.lateAfterMinutes, 'm')
-              ? 'late'
-              : 'present'
-            )
-          )
+          isValidCheckInStatus(request.resource.data.sessionId, request.resource.data.status)
         )
       );
 
@@ -279,8 +381,12 @@ service cloud.firestore {
         isActiveMember() &&
         memberId == myMemberId() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'displayName', 'name', 'avatar', 'avatarUrl', 'handle', 'lastUpdated'
-        ])
+          'displayName', 'name', 'avatar', 'avatarUrl', 'handle', 'lastUpdated',
+          'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+        ]) &&
+        (!('githubUrl' in request.resource.data) || isValidGitHub(request.resource.data.githubUrl)) &&
+        (!('linkedinUrl' in request.resource.data) || isValidLinkedIn(request.resource.data.linkedinUrl)) &&
+        (!('portfolioUrl' in request.resource.data) || isValidPortfolio(request.resource.data.portfolioUrl))
       );
     }
 

@@ -430,8 +430,9 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               >
                 {selectedPeriod === 'all_time' && (
                   <m.div
-                    layoutId="activePublicPeriodTabIndicator"
-                    transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.2 }}
                     className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#E879F9] shadow-[0_0_16px_rgba(232,121,249,0.35)] -z-10"
                   />
                 )}
@@ -447,8 +448,9 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               >
                 {selectedPeriod === 'this_month' && (
                   <m.div
-                    layoutId="activePublicPeriodTabIndicator"
-                    transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.2 }}
                     className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#FFB36B] via-[#FF7A1A] to-[#FF4D2E] shadow-[0_0_16px_rgba(255,122,26,0.35)] -z-10"
                   />
                 )}

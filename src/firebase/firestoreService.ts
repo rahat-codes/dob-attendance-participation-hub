@@ -44,6 +44,7 @@ import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHe
 import { ApplicationInput, validateApplication, encodeApplication } from '../utils/application';
 import { nextUserState, getUserState } from '../utils/userStateMachine';
 import { PUBLIC_MEMBER_WHITELIST, MemberDataRepairItem, UserStateRepairItem } from '../utils/repairTools';
+import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
 
 export { SUPER_ADMIN_EMAIL };
 
@@ -732,6 +733,18 @@ export async function createMemberAndApprove(
         `Student ID "${cleanStudentId}" is already registered to active builder ${idCheck.conflictingMember.name} (${idCheck.conflictingMember.status}).`
       );
     }
+    const privDocs = await getDocs(
+      query(collection(db, MEMBER_PRIVATE_COLLECTION), where('studentId', '==', cleanStudentId), limit(1))
+    );
+    if (!privDocs.empty) {
+      const conflictId = privDocs.docs[0].id;
+      const activeConflict = existingMembers.find((m) => m.id === conflictId && m.status !== 'Inactive');
+      if (activeConflict) {
+        throw new Error(
+          `Student ID "${cleanStudentId}" is already registered to active builder ${activeConflict.name} (${activeConflict.status}).`
+        );
+      }
+    }
   }
 
   const memberId = `mem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -1192,6 +1205,18 @@ export async function addMemberToFirestore(
         `Student ID "${cleanStudentId}" is already registered to active builder ${idCheck.conflictingMember.name} (${idCheck.conflictingMember.status}).`
       );
     }
+    const privDocs = await getDocs(
+      query(collection(db, MEMBER_PRIVATE_COLLECTION), where('studentId', '==', cleanStudentId), limit(1))
+    );
+    if (!privDocs.empty) {
+      const conflictId = privDocs.docs[0].id;
+      const activeConflict = existingMembers.find((m) => m.id === conflictId && m.status !== 'Inactive');
+      if (activeConflict) {
+        throw new Error(
+          `Student ID "${cleanStudentId}" is already registered to active builder ${activeConflict.name} (${activeConflict.status}).`
+        );
+      }
+    }
   }
 
   const memberId = (publicData as any).id && typeof (publicData as any).id === 'string' && (publicData as any).id.trim().length > 0
@@ -1211,8 +1236,6 @@ export async function addMemberToFirestore(
     id: memberId,
     name: publicData.name.trim(),
     handle: cleanHandle,
-    studentId: publicData.studentId?.trim() || privateData?.studentId?.trim() || undefined,
-    university: defaultUni,
     authUid: rawAuthUid || undefined,
     createdAt: new Date().toISOString(),
   });
@@ -1781,13 +1804,13 @@ export async function recordAdminManualCheckIn(
   const status: CheckInStatus = isLateCheck ? 'late' : 'present';
   const monthKey = session?.date ? session.date.substring(0, 7) : new Date().toISOString().substring(0, 7);
 
-  const newRecord: CheckInRecord = {
+  const newRecord = {
     id: checkInId,
     sessionId,
     memberId,
     authUid: currentUser.uid,
-    method: 'manual_entry',
-    checkedInAt: new Date().toISOString(),
+    method: 'manual_entry' as CheckInMethod,
+    checkedInAt: serverTimestamp(),
     status,
     monthKey,
     notes,
@@ -1801,7 +1824,10 @@ export async function recordAdminManualCheckIn(
     return {
       success: true,
       message: 'Manual check-in confirmed.',
-      record: newRecord,
+      record: {
+        ...newRecord,
+        checkedInAt: new Date().toISOString(),
+      } as any,
     };
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `checkIns/${checkInId}`);
@@ -2356,6 +2382,10 @@ export async function updateMemberSelfProfile(
     bio?: string;
     tracks: BuilderTrack[];
     leaderboardOptOut?: boolean;
+    githubUrl?: string;
+    linkedinUrl?: string;
+    portfolioUrl?: string;
+    showLinksPublicly?: boolean;
   }
 ): Promise<{ success: boolean; message?: string }> {
   try {
@@ -2392,21 +2422,48 @@ export async function updateMemberSelfProfile(
     const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
 
+    // Normalize and strictly validate social & portfolio links with profileLinks.ts
+    let canonicalGithub = '';
+    if (details.githubUrl && details.githubUrl.trim()) {
+      const res = normalizeGitHubUrl(details.githubUrl);
+      if (!res.valid || !res.canonicalUrl) {
+        return { success: false, message: res.error || 'Invalid GitHub URL format.' };
+      }
+      canonicalGithub = res.canonicalUrl;
+    }
+
+    let canonicalLinkedin = '';
+    if (details.linkedinUrl && details.linkedinUrl.trim()) {
+      const res = normalizeLinkedInUrl(details.linkedinUrl);
+      if (!res.valid || !res.canonicalUrl) {
+        return { success: false, message: res.error || 'Invalid LinkedIn URL format.' };
+      }
+      canonicalLinkedin = res.canonicalUrl;
+    }
+
+    let canonicalPortfolio = '';
+    if (details.portfolioUrl && details.portfolioUrl.trim()) {
+      const res = normalizePortfolioUrl(details.portfolioUrl);
+      if (!res.valid) {
+        return { success: false, message: res.error || 'Invalid Portfolio URL format.' };
+      }
+      canonicalPortfolio = res.canonicalUrl || '';
+    }
+
     const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
 
+    // STOP writing studentId and university to members now. Only write whitelisted public fields!
     const memberUpdates: Record<string, any> = {
       name: details.name.trim(),
       avatarUrl: safeAvatar || '',
       bio: details.bio?.trim() || '',
       tracks: details.tracks && details.tracks.length > 0 ? details.tracks : ['Software & Systems'],
       leaderboardOptOut: details.leaderboardOptOut ?? false,
+      githubUrl: canonicalGithub,
+      linkedinUrl: canonicalLinkedin,
+      portfolioUrl: canonicalPortfolio,
+      showLinksPublicly: details.showLinksPublicly ?? false,
     };
-    if (details.studentId?.trim()) {
-      memberUpdates.studentId = details.studentId.trim();
-    }
-    if (details.university?.trim()) {
-      memberUpdates.university = details.university.trim();
-    }
 
     const privUpdates: Record<string, any> = {
       profileCompleted: true,
@@ -2421,41 +2478,53 @@ export async function updateMemberSelfProfile(
     if (details.major?.trim()) privUpdates.major = details.major.trim();
     if (details.semester?.trim()) privUpdates.semester = details.semester.trim();
 
-    // 1. Core Private Profile Update (MemberPrivate stores studentId, phone, department, major, semester, profileCompleted)
-    try {
-      await setDoc(privRef, privUpdates, { merge: true });
-    } catch (privErr) {
-      console.error('Failed to update memberPrivate:', privErr);
-      return { success: false, message: (privErr as any)?.message || 'Failed to update private profile credentials.' };
-    }
+    // 1. Core Private Profile Update (MemberPrivate stores studentId, phone, department, major, semester)
+    await setDoc(privRef, privUpdates, { merge: true });
 
-    // 2. Public Member Document Update (whitelisted fields only)
+    // 2. Member & Leaderboard Projection in ONE writeBatch
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
+    let pubExists = false;
     try {
-      await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
-    } catch (memberErr) {
-      console.warn('Member public doc update notice (may contain legacy non-whitelisted fields):', memberErr);
-      // Non-fatal if memberPrivate was updated successfully
-    }
-
-    // 3. Safe Public Leaderboard Sync (Active members can only update existing docs; creation is admin-only)
-    try {
-      const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
       const pubSnap = await getDoc(pubRef);
-      if (pubSnap.exists()) {
-        if (details.leaderboardOptOut === true) {
-          await deleteDoc(pubRef).catch(() => {});
-        } else {
-          await updateDoc(pubRef, removeUndefinedFields({
-            displayName: details.name.trim(),
-            name: details.name.trim(),
-            avatar: safeAvatar || '',
-            avatarUrl: safeAvatar || '',
-            lastUpdated: new Date().toISOString(),
-          })).catch(() => {});
-        }
+      pubExists = pubSnap.exists();
+    } catch (err: any) {
+      if (err?.code !== 'not-found') {
+        throw err;
       }
-    } catch (pubErr) {
-      console.warn('Public leaderboard display sync notice:', pubErr);
+    }
+
+    const batch = writeBatch(db);
+    batch.update(memberRef, removeUndefinedFields(memberUpdates));
+
+    if (pubExists) {
+      if (details.leaderboardOptOut === true) {
+        batch.delete(pubRef);
+      } else {
+        const pubUpdates: Record<string, any> = {
+          displayName: details.name.trim(),
+          name: details.name.trim(),
+          avatar: safeAvatar || '',
+          avatarUrl: safeAvatar || '',
+          lastUpdated: new Date().toISOString(),
+          githubUrl: details.showLinksPublicly ? canonicalGithub : '',
+          linkedinUrl: details.showLinksPublicly ? canonicalLinkedin : '',
+          portfolioUrl: details.showLinksPublicly ? canonicalPortfolio : '',
+          showLinksPublicly: details.showLinksPublicly ?? false,
+        };
+        batch.update(pubRef, removeUndefinedFields(pubUpdates));
+      }
+    }
+
+    try {
+      await batch.commit();
+    } catch (batchErr: any) {
+      if (batchErr?.code === 'not-found' && pubExists) {
+        // If projection doc was deleted concurrently, update member alone
+        await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
+      } else {
+        // Show permission or schema validation error directly
+        throw batchErr;
+      }
     }
 
     // 3. User Document & Auth Display Name Sync
@@ -2532,8 +2601,6 @@ export const updateMemberInFirestore = async (member: Member): Promise<void> => 
       bio: member.bio,
       tracks: member.tracks,
       leaderboardOptOut: member.leaderboardOptOut,
-      studentId: member.studentId?.trim() || undefined,
-      university: member.university?.trim() || 'Tongmyong University',
     },
     {
       email: member.email,

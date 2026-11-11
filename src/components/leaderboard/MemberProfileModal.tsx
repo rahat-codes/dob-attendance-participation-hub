@@ -51,9 +51,11 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
   const hasFirstCheckIn = totalCheckIns >= 1;
   const hasThreeStreak = bestStreak >= 3 || currentStreak >= 3;
 
-  const monthlyEntries = Object.entries(item.monthlyCheckIns || {}).sort((a, b) =>
-    b[0].localeCompare(a[0])
-  );
+  const monthlyEntries = Object.entries(
+    (typeof item.monthlyCheckIns === 'object' && item.monthlyCheckIns !== null
+      ? item.monthlyCheckIns
+      : item.monthlyScores || {}) as Record<string, number>
+  ).sort((a, b) => b[0].localeCompare(a[0]));
 
   return (
     <AnimatePresence>
@@ -129,7 +131,7 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
             {/* Tracks */}
             {item.tracks && item.tracks.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1.5">
-                {item.tracks.map((t) => (
+                {item.tracks.map((t: string) => (
                   <span
                     key={t}
                     className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] text-[10px] font-rajdhani text-white/40"

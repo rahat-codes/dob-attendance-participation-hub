@@ -48,6 +48,27 @@ function testMemberDataRepair() {
   assert(plan[0].cleanedPublicData.totalCheckIns === undefined, 'cleaned doc omits totalCheckIns');
   assert(plan[0].cleanedPublicData.email === undefined, 'cleaned doc omits email');
 
+  // Test studentId & university isolation
+  const legacyMember: (Member & Record<string, any>)[] = [
+    {
+      id: 'mem_legacy',
+      name: 'Legacy Student',
+      handle: '@legacy',
+      role: 'Member',
+      tracks: ['Software & Systems'],
+      joinedDate: '2026-01-01',
+      status: 'Active',
+      studentId: '20249876',
+      university: 'Tongmyong University',
+      department: 'CSE',
+    },
+  ];
+  const legacyPlan = prepareMemberDataRepair(legacyMember);
+  assert(legacyPlan.length === 1, 'Legacy member must be flagged');
+  assert(legacyPlan[0].privateFieldsToSet.studentId === '20249876', 'studentId migrated to private');
+  assert(legacyPlan[0].privateFieldsToSet.university === 'Tongmyong University', 'university migrated to private');
+  assert(legacyPlan[0].privateFieldsToSet.department === 'CSE', 'department migrated to private');
+
   // Idempotence test: running repair on already clean members returns empty plan
   const cleanPlan = prepareMemberDataRepair([plan[0].cleanedPublicData as Member]);
   assert(cleanPlan.length === 0, 'Clean member returns empty repair plan');

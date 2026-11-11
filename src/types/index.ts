@@ -44,7 +44,7 @@ export interface Member {
   linkedinUrl?: string;
   portfolioUrl?: string;
   showLinksPublicly?: boolean;
-  // Optional convenience / joined fields
+  // Optional convenience / joined fields (legacy values being migrated to memberPrivate)
   email?: string;
   phone?: string;
   studentId?: string;
@@ -74,6 +74,7 @@ export interface MemberPrivate {
   semester?: string;
   profileCompleted?: boolean;
   profileCompletedAt?: string;
+  updatedAt?: string;
 }
 
 export type UserStatus = 'pending' | 'approved_waiting_response' | 'active' | 'declined' | 'suspended';
@@ -161,6 +162,7 @@ export interface Session {
   host: string;
   createdAt?: string;
   createdBy?: string;
+  updatedAt?: string;
 }
 
 export type SessionPhase = 'upcoming' | 'open' | 'closed' | 'cancelled';
@@ -248,74 +250,61 @@ export type AnnouncementType =
   | 'session_cancelled'
   | 'general';
 
-export interface Announcement {
+export interface ClubAnnouncement {
   id: string;
-  type: AnnouncementType;
-  sessionId?: string;
   title: string;
-  message: string;
+  content?: string;
+  message?: string;
+  type: AnnouncementType;
   createdAt: string;
   createdBy: string;
+  authorName?: string;
+  priority?: 'normal' | 'high' | 'urgent';
+  targetAudience?: 'all' | 'members' | 'leads';
+  sessionId?: string;
 }
 
+export type Announcement = ClubAnnouncement;
+
 /**
- * Public Leaderboard Cached Projection
+ * Public Leaderboard Cache Projection
  * Stored at: publicLeaderboard/{memberId}
- * Publicly readable; recomputed & written by admins
  */
 export interface PublicLeaderboardItem {
-  id: string; // memberId
+  id: string;
   name: string;
   displayName?: string;
   handle: string;
-  role: BuilderRole;
-  avatarUrl?: string;
   avatar?: string;
-  tracks: BuilderTrack[];
+  avatarUrl?: string;
+  role: BuilderRole;
+  primaryTrack?: BuilderTrack;
+  tracks?: BuilderTrack[];
   totalCheckIns: number;
-  currentStreak: number;
-  bestStreak: number;
-  points: number;
-  totalPoints?: number;
   monthlyCheckIns?: Record<string, number>;
   recentSparkline?: number[];
+  currentStreak: number;
+  bestStreak: number;
+  tier?: BuilderTier;
+  monthlyScores?: Record<string, number>;
+  points?: number;
+  totalPoints?: number;
+  lastActiveDate?: string;
   lastUpdated?: string;
+  githubUrl?: string;
+  linkedinUrl?: string;
+  portfolioUrl?: string;
+  showLinksPublicly?: boolean;
 }
 
-export type AuditAction =
-  | 'create_session'
-  | 'update_session'
-  | 'delete_session'
-  | 'cancel_session'
-  | 'complete_session'
-  | 'session_open_close'
-  | 'check_in_manual'
-  | 'delete_check_in'
-  | 'approve_user'
-  | 'decline_user'
-  | 'suspend_user'
-  | 'unsuspend_user'
-  | 'grant_admin'
-  | 'revoke_admin'
-  | 'add_member'
-  | 'update_member'
-  | 'deactivate_member'
-  | 'delete_member'
-  | 'update_settings'
-  | 'recompute_leaderboard'
-  | 'member_data_repair'
-  | 'user_state_repair';
-
-export interface AuditLog {
-  id: string;
-  action: AuditAction;
-  performedBy: string; // UID
-  performedByEmail: string;
-  details: string;
-  timestamp: string; // ISO string
-  targetName?: string;
-  targetType?: string;
-  targetId?: string;
+export interface ComputedMemberStats {
+  total: number;
+  streak: number;
+  bestStreak: number;
+  tier?: BuilderTier;
+  points: number;
+  breakdown?: Record<string, number>;
+  lateCount: number;
 }
 
 export interface ClubSettings {
@@ -323,17 +312,52 @@ export interface ClubSettings {
   timezone: string;
   tracks: BuilderTrack[];
   defaults: {
+    points: number;
     openMinutesBefore: number;
     graceMinutesAfter: number;
     lateAfterMinutes: number;
-    points: number;
   };
 }
 
-export interface ComputedMemberStats {
-  total: number;
-  streak: number;
-  bestStreak: number;
-  points: number;
-  lateCount: number;
+export type AuditAction =
+  | 'create_session'
+  | 'update_session'
+  | 'cancel_session'
+  | 'delete_session'
+  | 'create_member'
+  | 'update_member'
+  | 'delete_member'
+  | 'delete_checkin'
+  | 'manual_checkin'
+  | 'recompute_leaderboard'
+  | 'grant_admin'
+  | 'revoke_admin'
+  | 'update_settings'
+  | 'approve_membership'
+  | 'decline_membership'
+  | 'suspend_user'
+  | 'unsuspend_user'
+  | 'member_data_repair'
+  | 'user_state_repair'
+  | 'approve_user'
+  | 'decline_user'
+  | 'add_member'
+  | 'deactivate_member'
+  | 'session_open_close'
+  | 'complete_session'
+  | 'check_in_manual'
+  | 'delete_check_in';
+
+export interface AuditLogEntry {
+  id: string;
+  action: AuditAction;
+  performedBy: string;
+  performedByEmail?: string;
+  targetName?: string;
+  details: string;
+  timestamp: string;
+  targetId?: string;
+  metadata?: Record<string, any>;
 }
+
+export type AuditLog = AuditLogEntry;

@@ -67,7 +67,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
   }, [activeKioskSessionId, sessions]);
 
   const [currentToken, setCurrentToken] = useState<string>(() => generateSecureToken());
-  const [prevToken, setPrevToken] = useState<string>('');
+  const [prevToken, setPrevToken] = useState<string>(() => generateSecureToken());
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);

@@ -154,21 +154,30 @@ function testProfileLinksValidation() {
   assert(normalizeGitHubUrl('@alex-builder').canonicalUrl === 'https://github.com/alex-builder', 'leading @');
   assert(normalizeGitHubUrl('https://github.com/alex').canonicalUrl === 'https://github.com/alex', 'full url');
   assert(!normalizeGitHubUrl('javascript:alert(1)').valid, 'reject javascript protocol');
+  assert(!normalizeGitHubUrl('data:text/html,<script>alert(1)</script>').valid, 'reject data protocol in github');
   assert(!normalizeGitHubUrl('-invalid-user').valid, 'reject invalid github username with leading hyphen');
+  assert(!normalizeGitHubUrl('a'.repeat(40)).valid, 'reject overlong github username > 39 characters');
 
   // LinkedIn tests
   assert(normalizeLinkedInUrl('in/alex-smith').canonicalUrl === 'https://www.linkedin.com/in/alex-smith', 'slug format');
   assert(normalizeLinkedInUrl('https://linkedin.com/in/alex-smith/').canonicalUrl === 'https://www.linkedin.com/in/alex-smith', 'url format');
-  assert(!normalizeLinkedInUrl('data:text/html;alert(1)').valid, 'reject data protocol');
+  assert(!normalizeLinkedInUrl('data:text/html;alert(1)').valid, 'reject data protocol in linkedin');
+  assert(!normalizeLinkedInUrl('javascript:void(0)').valid, 'reject javascript in linkedin');
+  assert(!normalizeLinkedInUrl('in/' + 'a'.repeat(101)).valid, 'reject overlong linkedin slug > 100 characters');
 
   // Portfolio tests
   assert(normalizePortfolioUrl('').canonicalUrl === '', 'optional empty portfolio allowed');
   assert(normalizePortfolioUrl('myportfolio.dev').canonicalUrl === 'https://myportfolio.dev/', 'forces https');
   assert(!normalizePortfolioUrl('http://localhost:3000').valid, 'reject localhost');
   assert(!normalizePortfolioUrl('https://127.0.0.1/admin').valid, 'reject private loopback IP');
-  assert(!normalizePortfolioUrl('https://user:pass@evil.com').valid, 'reject embedded credentials');
+  assert(!normalizePortfolioUrl('https://192.168.1.1').valid, 'reject private LAN IP');
+  assert(!normalizePortfolioUrl('https://user:pass@evil.com').valid, 'reject embedded credentials (user:pass)');
+  assert(!normalizePortfolioUrl('https://user@legit.com').valid, 'reject user@host trick');
+  assert(!normalizePortfolioUrl('javascript:alert(1)').valid, 'reject javascript in portfolio');
+  assert(!normalizePortfolioUrl('data:text/html;base64,PHNjcmlwdD4=').valid, 'reject data scheme in portfolio');
+  assert(!normalizePortfolioUrl('https://' + 'a'.repeat(200) + '.dev').valid, 'reject overlong portfolio URL > 200 chars');
 
-  console.log('✓ Profile links validation and protocol hardening passed');
+  console.log('✓ Profile links validation, protocol hardening, credential tricks, and length guards passed');
 }
 
 // -------------------------------------------------------------

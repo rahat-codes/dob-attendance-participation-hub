@@ -79,12 +79,13 @@ export function isHandleTaken(
 
 /**
  * Checks if a student ID is already in use by an active roster member.
+ * Checks memberPrivate map if available, falling back to legacy member.studentId.
  * Inactive members NEVER block student ID reuse.
  */
 export function isStudentIdTaken(
   members: Member[],
   studentId: string,
-  options?: { ignoreMemberId?: string }
+  options?: { ignoreMemberId?: string; privateMap?: Record<string, { studentId?: string }> }
 ): { taken: boolean; conflictingMember?: Member } {
   const target = normalizeStudentId(studentId);
   if (!target || target === 'n/a') return { taken: false };
@@ -96,7 +97,9 @@ export function isStudentIdTaken(
     if (m.status === 'Inactive') {
       return false;
     }
-    return normalizeStudentId(m.studentId) === target;
+    const privateId = options?.privateMap?.[m.id]?.studentId;
+    const effectiveId = privateId || m.studentId;
+    return normalizeStudentId(effectiveId) === target;
   });
 
   if (conflict) {

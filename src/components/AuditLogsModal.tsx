@@ -54,7 +54,7 @@ export const AuditLogsModal: React.FC<AuditLogsModalProps> = ({ isOpen, onClose 
         const q = searchQuery.toLowerCase();
         return (
           log.details.toLowerCase().includes(q) ||
-          log.performedByEmail.toLowerCase().includes(q) ||
+          Boolean(log.performedByEmail && log.performedByEmail.toLowerCase().includes(q)) ||
           log.action.toLowerCase().includes(q) ||
           Boolean(log.targetName && log.targetName.toLowerCase().includes(q))
         );

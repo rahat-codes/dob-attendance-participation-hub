@@ -25,6 +25,7 @@ export interface MemberDataRepairItem {
   keysToRemoveFromPublic: string[];
   privateFieldsToSet: Partial<MemberPrivate>;
   cleanedPublicData: Record<string, any>;
+  hasActionableChanges: boolean;
 }
 
 export interface UserStateRepairItem {
@@ -39,10 +40,20 @@ export interface UserStateRepairItem {
   reason: string;
 }
 
+export interface MigrationPlanSummary {
+  totalMembersScanned: number;
+  membersNeedingRepair: number;
+  totalKeysToPurgeFromPublic: number;
+  privateRecordsToCreateOrUpdate: number;
+  items: MemberDataRepairItem[];
+}
+
 /**
  * Scans public member documents and identifies any containing non-whitelisted keys
- * (e.g. email, phone, counters, academic details) that should be purged or migrated to memberPrivate.
- * Dry-run pure function: never mutates anything.
+ * (e.g. studentId, university, email, phone, department, major, semester) that should
+ * be isolated in memberPrivate.
+ *
+ * Pure dry-run function: never mutates anything.
  */
 export function prepareMemberDataRepair(
   members: (Member & Record<string, any>)[],
@@ -100,6 +111,7 @@ export function prepareMemberDataRepair(
       keysToRemoveFromPublic: nonWhitelistedKeys,
       privateFieldsToSet,
       cleanedPublicData,
+      hasActionableChanges: nonWhitelistedKeys.length > 0 || Object.keys(privateFieldsToSet).length > 0,
     });
   }
 
@@ -107,9 +119,31 @@ export function prepareMemberDataRepair(
 }
 
 /**
+ * Builds a structured migration summary for dry-run auditing before committing changes.
+ */
+export function buildMigrationPlanSummary(
+  members: (Member & Record<string, any>)[],
+  existingPrivates?: Record<string, MemberPrivate>
+): MigrationPlanSummary {
+  const items = prepareMemberDataRepair(members, existingPrivates);
+  const totalKeysToPurge = items.reduce((acc, item) => acc + item.keysToRemoveFromPublic.length, 0);
+  const privateToCreateOrUpdate = items.filter(
+    (item) => Object.keys(item.privateFieldsToSet).length > 0
+  ).length;
+
+  return {
+    totalMembersScanned: members.length,
+    membersNeedingRepair: items.length,
+    totalKeysToPurgeFromPublic: totalKeysToPurge,
+    privateRecordsToCreateOrUpdate: privateToCreateOrUpdate,
+    items,
+  };
+}
+
+/**
  * Scans user profiles and detects state inconsistencies (e.g. active without roster,
  * active with inactive member, declined with stale approvedMemberId).
- * Dry-run pure function: never mutates anything.
+ * Pure dry-run function: never mutates anything.
  */
 export function prepareUserStateRepair(
   users: UserProfile[],

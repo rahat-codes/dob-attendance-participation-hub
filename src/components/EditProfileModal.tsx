@@ -9,10 +9,11 @@ import {
   Save,
   RefreshCw,
   Trophy,
-  Eye,
   ShieldCheck,
   Sparkles,
   LogOut,
+  Globe,
+  Share2,
 } from 'lucide-react';
 import { Member, BuilderTrack, MemberPrivate } from '../types';
 import { updateMemberSelfProfile } from '../firebase/firestoreService';
@@ -20,6 +21,7 @@ import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
 import { Switch } from '../ui/Switch';
+import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -60,6 +62,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState<boolean>(!member.leaderboardOptOut);
 
+  // Social & portfolio links
+  const [githubUrl, setGithubUrl] = useState(member.githubUrl || '');
+  const [linkedinUrl, setLinkedinUrl] = useState(member.linkedinUrl || '');
+  const [portfolioUrl, setPortfolioUrl] = useState(member.portfolioUrl || '');
+  const [showLinksPublicly, setShowLinksPublicly] = useState<boolean>(member.showLinksPublicly ?? true);
+
   useEffect(() => {
     if (isOpen) {
       setName(member.name || '');
@@ -74,6 +82,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setBio(member.bio || '');
       setSelectedTracks(member.tracks && member.tracks.length > 0 ? member.tracks : ['Software & Systems']);
       setShowOnLeaderboard(!member.leaderboardOptOut);
+      setGithubUrl(member.githubUrl || '');
+      setLinkedinUrl(member.linkedinUrl || '');
+      setPortfolioUrl(member.portfolioUrl || '');
+      setShowLinksPublicly(member.showLinksPublicly ?? true);
       setError(null);
       setSuccess(null);
     }
@@ -90,9 +102,16 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     phone !== (member.phone || '') ||
     studentId !== (member.studentId || '') ||
     university !== (member.university || 'Tongmyong University') ||
+    department !== (member.department || '') ||
+    major !== (member.major || '') ||
+    semester !== (member.semester || '') ||
     avatarUrl !== (member.avatarUrl || member.photoURL || '') ||
     bio !== (member.bio || '') ||
-    showOnLeaderboard !== !member.leaderboardOptOut
+    showOnLeaderboard !== !member.leaderboardOptOut ||
+    githubUrl !== (member.githubUrl || '') ||
+    linkedinUrl !== (member.linkedinUrl || '') ||
+    portfolioUrl !== (member.portfolioUrl || '') ||
+    showLinksPublicly !== (member.showLinksPublicly ?? true)
   );
 
   const handleTrackToggle = (track: BuilderTrack) => {
@@ -108,7 +127,6 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     setProcessingImage(true);
     setError(null);
     try {
-      // Accepts any sized photo, center-crops to square, and scales/compresses to ~25KB
       const optimized = await processProfilePhoto(file, 256, 0.85);
       setAvatarUrl(optimized);
     } catch (err: any) {
@@ -158,10 +176,39 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       return;
     }
 
+    let canonicalGh = githubUrl.trim();
+    if (canonicalGh) {
+      const ghRes = normalizeGitHubUrl(canonicalGh);
+      if (!ghRes.valid) {
+        setError(ghRes.error || 'Invalid GitHub URL.');
+        return;
+      }
+      canonicalGh = ghRes.canonicalUrl || canonicalGh;
+    }
+
+    let canonicalLi = linkedinUrl.trim();
+    if (canonicalLi) {
+      const liRes = normalizeLinkedInUrl(canonicalLi);
+      if (!liRes.valid) {
+        setError(liRes.error || 'Invalid LinkedIn URL.');
+        return;
+      }
+      canonicalLi = liRes.canonicalUrl || canonicalLi;
+    }
+
+    let canonicalPf = portfolioUrl.trim();
+    if (canonicalPf) {
+      const pfRes = normalizePortfolioUrl(canonicalPf);
+      if (!pfRes.valid) {
+        setError(pfRes.error || 'Invalid portfolio URL.');
+        return;
+      }
+      canonicalPf = pfRes.canonicalUrl || canonicalPf;
+    }
+
     setSaving(true);
     try {
       let finalAvatarUrl = avatarUrl.trim();
-      // Ensure any large pasted base64 data URLs are compressed to fit Firestore easily
       if (finalAvatarUrl.startsWith('data:image/') && finalAvatarUrl.length > 80000) {
         try {
           finalAvatarUrl = await processProfilePhoto(finalAvatarUrl, 256, 0.85);
@@ -183,6 +230,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         bio: bio.trim(),
         tracks: selectedTracks,
         leaderboardOptOut: !showOnLeaderboard,
+        githubUrl: canonicalGh,
+        linkedinUrl: canonicalLi,
+        portfolioUrl: canonicalPf,
+        showLinksPublicly,
       });
 
       if (res.success) {
@@ -202,6 +253,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             bio: bio.trim(),
             tracks: selectedTracks,
             leaderboardOptOut: !showOnLeaderboard,
+            githubUrl: canonicalGh,
+            linkedinUrl: canonicalLi,
+            portfolioUrl: canonicalPf,
+            showLinksPublicly,
             profileCompleted: true,
           });
         }
@@ -227,7 +282,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       subtitle={
         isMandatory
           ? 'Welcome to Den of Builders! Please complete your required membership credentials to activate your attendance pass and participate in meetings.'
-          : 'Update personal credentials and academic information'
+          : 'Update personal credentials, links, and academic information'
       }
       icon={isMandatory ? <ShieldCheck className="w-5 h-5 text-[#b5ff00]" /> : <User className="w-5 h-5 text-[#b5ff00]" />}
       maxWidth="lg"
@@ -416,6 +471,61 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
                 className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl pl-10 pr-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Social & Portfolio Links */}
+        <div className="space-y-3 p-3.5 rounded-2xl bg-[#0d0f15] border border-white/10 neu-inset">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-zinc-200 text-xs flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5 text-[#b5ff00]" />
+              Builder Links & Portfolio
+            </span>
+            <div className="flex items-center gap-2">
+              <label htmlFor="show-links-toggle" className="text-[11px] text-zinc-400 cursor-pointer">
+                Public on Leaderboard
+              </label>
+              <Switch
+                id="show-links-toggle"
+                checked={showLinksPublicly}
+                onChange={setShowLinksPublicly}
+                aria-label="Make links public on leaderboard"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-zinc-400 mb-1 text-[11px]">GitHub Profile</label>
+              <input
+                type="text"
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                placeholder="https://github.com/username or @username"
+                className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-zinc-400 mb-1 text-[11px]">LinkedIn Profile</label>
+              <input
+                type="text"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                placeholder="https://linkedin.com/in/username"
+                className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-zinc-400 mb-1 text-[11px]">Personal Portfolio URL (Optional)</label>
+            <input
+              type="text"
+              value={portfolioUrl}
+              onChange={(e) => setPortfolioUrl(e.target.value)}
+              placeholder="https://yourportfolio.dev"
+              className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+            />
           </div>
         </div>
 
