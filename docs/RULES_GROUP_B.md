@@ -163,11 +163,30 @@ service cloud.firestore {
              data.status in ['Active', 'Probationary', 'Inactive'];
     }
 
-    function isValidSession(data) {
-      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location']) &&
+    // [Group B]: Full Session Validator
+    function isValidSessionFull(data) {
+      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location', 'host', 'startAt', 'endAt', 'timezone', 'checkInMode', 'openMinutesBefore', 'graceMinutesAfter', 'lateAfterMinutes', 'points']) &&
              data.id is string && isValidId(data.id) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
-             data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'];
+             data.track in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo'] &&
+             data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'] &&
+             data.location is string && data.location.size() <= 150 &&
+             data.host is string && data.host.size() > 0 && data.host.size() <= 100 &&
+             data.startAt is timestamp &&
+             data.endAt is timestamp &&
+             data.endAt > data.startAt &&
+             data.timezone is string && data.timezone.size() <= 50 &&
+             data.checkInMode in ['auto', 'open', 'closed'] &&
+             data.openMinutesBefore is int && data.openMinutesBefore >= 0 && data.openMinutesBefore <= 240 &&
+             data.graceMinutesAfter is int && data.graceMinutesAfter >= 0 && data.graceMinutesAfter <= 240 &&
+             data.lateAfterMinutes is int && data.lateAfterMinutes >= 0 && data.lateAfterMinutes <= 240 &&
+             data.points is int && data.points >= 0 && data.points <= 1000 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+             (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 20)) &&
+             (!('endTime' in data) || (data.endTime is string && data.endTime.size() <= 20)) &&
+             (!('sessionCode' in data) || (data.sessionCode is string && data.sessionCode.size() <= 20)) &&
+             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000));
     }
 
     function isValidNotification(data) {
@@ -311,8 +330,8 @@ service cloud.firestore {
     // Sessions Collection: split create, update, delete
     match /sessions/{sessionId} {
       allow read: if isAdmin() || isActiveMember();
-      allow create: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
-      allow update: if isAdmin() && isValidId(sessionId) && isValidSession(request.resource.data);
+      allow create: if isAdmin() && isValidId(sessionId) && isValidSessionFull(request.resource.data);
+      allow update: if isAdmin() && isValidId(sessionId) && isValidSessionFull(request.resource.data);
       allow delete: if isAdmin() && isValidId(sessionId);
     }
 

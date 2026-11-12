@@ -172,7 +172,7 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location', 'host', 'startAt', 'endAt', 'timezone', 'checkInMode', 'openMinutesBefore', 'graceMinutesAfter', 'lateAfterMinutes', 'points']) &&
              data.id is string && isValidId(data.id) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
-             (data.track in ['Software & Systems', 'AI & Embedded', 'Founders & Product', 'Open Guild'] || (data.track is string && data.track.size() <= 60)) &&
+             data.track in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo'] &&
              data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
              data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'] &&
              data.location is string && data.location.size() <= 150 &&

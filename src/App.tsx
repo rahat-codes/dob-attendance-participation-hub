@@ -42,6 +42,7 @@ import {
   createSessionInFirestore,
   updateSessionInFirestore,
   completeSession,
+  reopenSession,
   recordCheckInAtomic,
   adminDeleteMember,
   adminDeleteSession,
@@ -678,10 +679,18 @@ export default function App() {
     try {
       if (status === 'completed') {
         await completeSession(sessionId);
+      } else if (status === 'scheduled') {
+        const target = sessions.find((s) => s.id === sessionId);
+        if (target && (target.status === 'completed' || target.status === 'cancelled')) {
+          await reopenSession(sessionId, mode || 'auto');
+        } else if (target) {
+          const nextMode = mode || target.checkInMode || 'auto';
+          await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
+        }
       } else {
         const target = sessions.find((s) => s.id === sessionId);
         if (target) {
-          const nextMode = mode || ((target.status === 'completed' || target.status === 'cancelled') ? 'auto' : target.checkInMode || 'auto');
+          const nextMode = mode || target.checkInMode || 'auto';
           await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
         }
       }

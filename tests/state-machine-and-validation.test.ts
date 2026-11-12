@@ -1,6 +1,7 @@
 import { nextUserState, getUserState, UnifiedUserState, UserAction } from '../src/utils/userStateMachine';
 import { validateApplication, encodeApplication, decodeApplication, isApplicationSubmitted } from '../src/utils/application';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../src/utils/profileLinks';
+import { buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan } from '../src/utils/sessionPlans';
 import { UserProfile, Member } from '../src/types';
 
 function assert(condition: boolean, msg: string) {
@@ -295,11 +296,120 @@ function testSessionReopenLogic() {
   console.log('✓ Session reopen status & checkInMode reset logic passed');
 }
 
+// -------------------------------------------------------------
+// 5. Session Atomic Batch Plan Tests (Requirement 1)
+// -------------------------------------------------------------
+function testSessionBatchPlanGeneration() {
+  console.log('--- RUNNING SESSION ATOMIC BATCH PLAN TESTS ---');
+  
+  // 1. completeSession plan
+  const completePlan = buildCompleteSessionBatchPlan('sess_xyz123', 'admin_uid_1', 'admin@example.com');
+  assert(completePlan.sessionId === 'sess_xyz123', 'Plan sessionId matches');
+  assert(completePlan.sessionUpdate.status === 'completed', 'Plan status is completed');
+  assert(completePlan.sessionUpdate.checkInMode === 'closed', 'Plan checkInMode is closed');
+  assert(Boolean(completePlan.sessionUpdate.closedAt), 'closedAt timestamp is present');
+  assert(Boolean(completePlan.sessionUpdate.updatedAt), 'updatedAt timestamp is present');
+  assert(completePlan.auditEntry.action === 'complete_session', 'Audit action matches');
+  assert(completePlan.auditEntry.performedBy === 'admin_uid_1', 'Audit performedBy matches admin');
+  assert(completePlan.auditEntry.performedByEmail === 'admin@example.com', 'Audit email matches');
+  assert(completePlan.auditEntry.targetId === 'sess_xyz123', 'Audit targetId matches session');
+
+  // 2. reopenSession plan
+  const reopenPlan = buildReopenSessionBatchPlan('sess_xyz123', 'auto', 'admin_uid_1', 'admin@example.com');
+  assert(reopenPlan.sessionUpdate.status === 'scheduled', 'Reopen status is scheduled');
+  assert(reopenPlan.sessionUpdate.checkInMode === 'auto', 'Reopen checkInMode is auto');
+  assert(reopenPlan.auditEntry.action === 'reopen_session', 'Audit action matches reopen_session');
+  assert(reopenPlan.auditEntry.performedBy === 'admin_uid_1', 'Audit performedBy matches admin');
+
+  console.log('✓ Session atomic batch plans (completeSession & reopenSession) verified');
+}
+
+// -------------------------------------------------------------
+// 6. Legacy requestedNotes Decoding Tests (Requirement 6)
+// -------------------------------------------------------------
+function testLegacyRequestedNotesDecoding() {
+  console.log('--- RUNNING LEGACY REQUESTED NOTES DECODING TESTS ---');
+
+  // Case A: Full legacy notes string with delimiter '·'
+  const userA: UserProfile = {
+    id: 'u_legacy_a',
+    email: 'grace@example.com',
+    displayName: 'Grace Hopper',
+    status: 'pending',
+    requestedNotes: '@grace_hopper · ID: 20260001 · Track: Software & Systems · Name: Grace Brewster Hopper',
+  };
+  const decodedA = decodeApplication(userA);
+  assert(decodedA.applicantHandle === '@grace_hopper', 'Decodes handle from delimiter-separated notes');
+  assert(decodedA.applicantStudentId === '20260001', 'Decodes student ID');
+  assert(decodedA.applicantName === 'Grace Brewster Hopper', 'Decodes name');
+  assert(decodedA.applicantTrack === 'Software & Systems', 'Decodes track');
+
+  // Case B: Only a handle in requestedNotes
+  const userB: UserProfile = {
+    id: 'u_legacy_b',
+    email: 'linus@example.com',
+    displayName: 'Linus Torvalds',
+    status: 'pending',
+    requestedNotes: '@torvalds',
+  };
+  const decodedB = decodeApplication(userB);
+  assert(decodedB.applicantHandle === '@torvalds', 'Decodes bare handle');
+  assert(decodedB.applicantStudentId === '', 'Empty student ID when absent');
+  assert(decodedB.applicantName === 'Linus Torvalds', 'Falls back to displayName');
+
+  // Case C: Empty / undefined requestedNotes
+  const userC: UserProfile = {
+    id: 'u_legacy_c',
+    email: 'newuser@example.com',
+    displayName: 'New Builder',
+    status: 'pending',
+  };
+  const decodedC = decodeApplication(userC);
+  assert(decodedC.applicantHandle === '@newuser', 'Generates fallback handle from email prefix');
+  assert(decodedC.applicantStudentId === '', 'Empty student ID');
+  assert(decodedC.applicantName === 'New Builder', 'Uses displayName');
+
+  // Case D: Student ID only in requestedNotes (e.g. "ID: 20269999" or "20269999")
+  const userD1: UserProfile = {
+    id: 'u_legacy_d1',
+    email: 'student1@example.com',
+    displayName: 'Student One',
+    status: 'pending',
+    requestedNotes: 'ID: 20269999',
+  };
+  const decodedD1 = decodeApplication(userD1);
+  assert(decodedD1.applicantStudentId === '20269999', 'Decodes student ID from ID: prefix');
+  assert(decodedD1.applicantHandle === '@student1', 'Does not mistake ID: for handle');
+
+  const userD2: UserProfile = {
+    id: 'u_legacy_d2',
+    email: 'student2@example.com',
+    displayName: 'Student Two',
+    status: 'pending',
+    requestedNotes: '20268888',
+  };
+  const decodedD2 = decodeApplication(userD2);
+  assert(decodedD2.applicantStudentId === '20268888', 'Decodes raw numeric student ID');
+  assert(decodedD2.applicantHandle === '@student2', 'Does not mistake numeric student ID for handle');
+
+  // Verify that Admin Requests modal rendering simulation executes without throwing
+  const allUsers = [userA, userB, userC, userD1, userD2];
+  for (const u of allUsers) {
+    const app = decodeApplication(u);
+    const searchString = `${u.displayName} ${u.email} ${app.applicantName} ${app.applicantHandle} ${app.applicantStudentId} ${u.requestedNotes || ''}`.toLowerCase();
+    assert(searchString.length > 0, 'Admin Requests search index computes safely');
+  }
+
+  console.log('✓ Legacy requestedNotes decoding (with ·, only handle, empty, student ID only) passed without errors');
+}
+
 function runAll() {
   testStateMachineTransitions();
   testProfileLinksValidation();
   testApplicationValidation();
   testSessionReopenLogic();
+  testSessionBatchPlanGeneration();
+  testLegacyRequestedNotesDecoding();
   console.log('ALL STEP 2 STATE MACHINE & VALIDATION TESTS PASSED CLEANLY!\n');
 }
 

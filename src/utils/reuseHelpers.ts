@@ -28,16 +28,26 @@ export function parseApplicantNotes(notes?: string): {
   track?: string;
 } {
   if (!notes) return { handle: '' };
-  const rawHandle = notes.split('·')[0]?.trim() || '';
-  const cleanHandle = rawHandle.replace(/^@+/, '').trim();
 
   const idMatch = notes.match(/ID:\s*([A-Za-z0-9_-]+)/i) || notes.match(/\b(20\d{6,8})\b/);
   const studentId = idMatch && idMatch[1] !== 'N/A' ? idMatch[1].trim() : undefined;
 
-  const trackMatch = notes.match(/Track:\s*([^·]+)/i);
+  const rawFirstPart = notes.split(/[·\-]/)[0]?.trim() || '';
+  let cleanHandle = rawFirstPart.replace(/^@+/, '').trim();
+
+  // If the first part is purely an ID token or matches studentId, do not treat it as a handle
+  if (
+    cleanHandle.toLowerCase().startsWith('id:') ||
+    (studentId && cleanHandle === studentId) ||
+    /^(20\d{6,8})$/.test(cleanHandle)
+  ) {
+    cleanHandle = '';
+  }
+
+  const trackMatch = notes.match(/Track:\s*([^·\-]+)/i);
   const track = trackMatch ? trackMatch[1].trim() : undefined;
 
-  const nameMatch = notes.match(/Name:\s*([^·]+)/i);
+  const nameMatch = notes.match(/Name:\s*([^·\-]+)/i);
   const name = nameMatch ? nameMatch[1].trim() : undefined;
 
   return {

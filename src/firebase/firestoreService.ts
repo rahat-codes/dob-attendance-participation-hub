@@ -1468,6 +1468,12 @@ export async function createSessionInFirestore(
 
   const finalSession: Session = removeUndefinedFields({
     ...sessionData,
+    checkInMode: sessionData.checkInMode || 'auto',
+    openMinutesBefore: sessionData.openMinutesBefore ?? 15,
+    graceMinutesAfter: sessionData.graceMinutesAfter ?? 30,
+    lateAfterMinutes: sessionData.lateAfterMinutes ?? 10,
+    host: sessionData.host || 'Guild Lead',
+    points: sessionData.points ?? 10,
     startAt,
     endAt,
     timezone: tz,
@@ -1565,14 +1571,36 @@ export async function setSessionCheckInMode(
   }
 }
 
+import {
+  type SessionBatchPlan,
+  buildCompleteSessionBatchPlan,
+  buildReopenSessionBatchPlan,
+} from '../utils/sessionPlans';
+
+export {
+  type SessionBatchPlan,
+  buildCompleteSessionBatchPlan,
+  buildReopenSessionBatchPlan,
+};
+
 export async function completeSession(sessionId: string): Promise<void> {
+  const operatorUid = auth.currentUser?.uid;
+  if (!operatorUid) {
+    throw new Error('Authentication required: only administrators can complete sessions.');
+  }
+  const plan = buildCompleteSessionBatchPlan(sessionId, operatorUid, auth.currentUser?.email || undefined);
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  const auditRef = doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id);
+
+  const batch = writeBatch(db);
+  batch.update(sessionRef, plan.sessionUpdate);
+  batch.set(auditRef, {
+    ...plan.auditEntry,
+    timestamp: serverTimestamp(),
+  });
+
   try {
-    await updateDoc(sessionRef, {
-      status: 'completed',
-      checkInMode: 'closed',
-    });
-    await createAuditLog('complete_session', `Marked session ${sessionId} as completed`);
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
   }
@@ -1582,13 +1610,23 @@ export async function reopenSession(
   sessionId: string,
   targetMode: Session['checkInMode'] = 'auto'
 ): Promise<void> {
+  const operatorUid = auth.currentUser?.uid;
+  if (!operatorUid) {
+    throw new Error('Authentication required: only administrators can reopen sessions.');
+  }
+  const plan = buildReopenSessionBatchPlan(sessionId, targetMode, operatorUid, auth.currentUser?.email || undefined);
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  const auditRef = doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id);
+
+  const batch = writeBatch(db);
+  batch.update(sessionRef, plan.sessionUpdate);
+  batch.set(auditRef, {
+    ...plan.auditEntry,
+    timestamp: serverTimestamp(),
+  });
+
   try {
-    await updateDoc(sessionRef, {
-      status: 'scheduled',
-      checkInMode: targetMode,
-    });
-    await createAuditLog('reopen_session', `Reopened session ${sessionId} with checkInMode ${targetMode}`);
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
   }

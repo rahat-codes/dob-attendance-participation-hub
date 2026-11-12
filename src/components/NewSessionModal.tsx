@@ -192,6 +192,10 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       maxCapacity: Number(maxCapacity) || 25,
       status,
       host: host.trim() || 'Guild Lead',
+      checkInMode: initialSession?.checkInMode || 'auto',
+      openMinutesBefore: initialSession?.openMinutesBefore ?? 15,
+      graceMinutesAfter: initialSession?.graceMinutesAfter ?? 30,
+      lateAfterMinutes: initialSession?.lateAfterMinutes ?? 10,
       createdAt: initialSession?.createdAt || new Date().toISOString(),
     };
 
