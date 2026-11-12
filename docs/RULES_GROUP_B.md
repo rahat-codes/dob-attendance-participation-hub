@@ -1,26 +1,8 @@
-# Tightened Post-Migration Firestore Security Rules
+# Tightened Post-Migration Firestore Security Rules (Group B)
 
-## Release Order & Migration Matrix (Group A vs Group B)
-
-| Rule / Capability | Group | Release Timing & Prerequisites |
-|---|---|---|
-| **Additive application & profile link fields** (`githubUrl`, `linkedinUrl`, `portfolioUrl`, `showLinksPublicly`, `applicant*`) | **Group A** | Safe immediately before or alongside client release. Fully backward compatible. |
-| **Rotating Token Length & Format Enforcement** (`t.size() == 8`, `prevToken.size() == 8`) | **Group A** | Safe immediately. Kiosk initializes `prevToken` with 8-character token. |
-| **Late Boundary Window Tolerance** (15s tolerance around `lateAt`) | **Group A** | Safe immediately. Resolves client-server timestamp boundary race disputes. |
-| **Date-Bound `monthKey` Validation** (`monthKey == s.date[0:7]`) | **Group A** | Safe immediately. Binds attendance partition directly to session calendar date. |
-| **Member Self-Check-in Allowlists** (forbidden `notes` & `verifiedBy`) | **Group A** | Safe immediately. Client only sends whitelisted keys. |
-| **Admin Manual Check-in Enforcement** (`exists(members)`, `exists(sessions)`, `checkedInAt == request.time`, `verifiedBy == request.auth.uid`) | **Group A** | Safe immediately. Admin manual entry writes `serverTimestamp()`. |
-| **Super Admin OAuth Provider & Verification** (`google.com`, `email_verified == true`) | **Group A** | Safe immediately. Validates real Google OAuth identity for super admin. |
-| **Finding G Null-Safe Document Query** (`resource == null ? ... : ...`) | **Group A** | Safe immediately. Prevents false `permission-denied` on non-existent check-in reads. |
-| **Canonical Link Format Constraints** (`isValidGitHub`, `isValidLinkedIn`, `isValidPortfolio`) | **Group A** | Safe immediately. Sanitizes public leaderboard & builder directory links. |
-| **Sessions & SessionTokens CRUD split** (`allow create`, `allow update`, `allow delete`) | **Group A** | Safe immediately. Enforces explicit privileges per lifecycle operation. |
-| **Disallow `studentId` & `university` on `members`** | **Group B** | **DO NOT DEPLOY until migration has run.** Requires `prepareMemberDataRepair` dry-run, approval, and execution to isolate PII in `memberPrivate/{memberId}`. |
-| **Disallow `studentId` & `university` in `members` update affected keys diff** | **Group B** | **DO NOT DEPLOY until Group B client is live** and stopped writing legacy fields. |
-| **User email immutability and token match** (`email == request.auth.token.email.lower()`) | **Group B** | Only deploy after confirming no legacy users exist with differing casing. |
-
----
-
-## Tightened Post-Migration Security Rules (`Group B`)
+> **CRITICAL DEPLOYMENT ORDER NOTICE:**
+> Do NOT deploy these rules until the dry-run migration `prepareMemberDataRepair` has been executed by an admin and all legacy `studentId`, `university`, and extra keys have been verified isolated in `memberPrivate/{memberId}`.
+> Once the database has zero non-whitelisted keys on `members/{memberId}`, deploy these tightened rules via the Firebase Console or `rpc_action DeployRules`.
 
 ```javascript
 rules_version = '2';
@@ -78,7 +60,7 @@ service cloud.firestore {
 
     function sessionOpen(sid) {
       let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
-      return s.status != 'cancelled' && s.checkInMode != 'closed' && (
+      return s.status != 'cancelled' && s.status != 'completed' && s.checkInMode != 'closed' && (
         s.checkInMode == 'open' ||
         (request.time >= s.startAt - duration.value(s.openMinutesBefore, 'm') &&
          request.time <= s.endAt + duration.value(s.graceMinutesAfter, 'm'))
@@ -100,8 +82,8 @@ service cloud.firestore {
       return monthKey is string &&
              monthKey.matches('^[0-9]{4}-[0-9]{2}$') &&
              s.date is string &&
-             s.date.size() >= 7 &&
-             monthKey == s.date[0:7];
+             s.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             monthKey == s.date.split('-')[0] + '-' + s.date.split('-')[1];
     }
 
     function isValidCheckInStatus(sid, status) {
@@ -161,6 +143,7 @@ service cloud.firestore {
     }
 
     // Tightened schema: studentId and university are strictly forbidden from public members!
+    // All members must only have the whitelisted 15 keys.
     function isValidMember(data) {
       return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
              data.keys().hasOnly([
@@ -187,8 +170,28 @@ service cloud.firestore {
              data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'];
     }
 
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'message', 'createdAt']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'title', 'message', 'type', 'read', 'dismissed',
+               'createdAt', 'sessionId', 'sessionDate', 'sessionLocation', 'sessionTime'
+             ]) &&
+             isValidId(data.id) &&
+             isValidId(data.userId) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.message is string && data.message.size() > 0 && data.message.size() <= 1000 &&
+             data.createdAt is string && data.createdAt.size() <= 50 &&
+             (!('type' in data) || data.type in ['announcement', 'reminder', 'system', 'meeting_published', 'meeting_reminder_30m', 'meeting_rescheduled', 'meeting_cancelled']) &&
+             (!('read' in data) || data.read is bool) &&
+             (!('dismissed' in data) || data.dismissed is bool) &&
+             (!('sessionId' in data) || (data.sessionId is string && data.sessionId.size() <= 128)) &&
+             (!('sessionDate' in data) || (data.sessionDate is string && data.sessionDate.size() <= 50)) &&
+             (!('sessionLocation' in data) || (data.sessionLocation is string && data.sessionLocation.size() <= 150)) &&
+             (!('sessionTime' in data) || (data.sessionTime is string && data.sessionTime.size() <= 50));
+    }
+
     // ==========================================
-    // Rules Match Blocks
+    // Rules Match Blocks (Group B)
     // ==========================================
 
     // Users Collection (Tightened)
@@ -262,7 +265,7 @@ service cloud.firestore {
       allow write: if isSuper() && isValidId(adminUid);
     }
 
-    // Members Collection (Tightened Version: No PII on public docs)
+    // Members Collection (Tightened Version: No PII or legacy fields on public docs)
     match /members/{memberId} {
       allow read: if isAdmin() || isActiveMember() || (
         signedIn() &&
@@ -338,7 +341,7 @@ service cloud.firestore {
       );
 
       allow create: if (
-        // Admin manual door check-in
+        // Admin manual door check-in (verifiedBy is authoritative; authUid is not required)
         (
           isAdmin() &&
           checkInId == request.resource.data.sessionId + '_' + request.resource.data.memberId &&
@@ -351,7 +354,7 @@ service cloud.firestore {
           isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
           request.resource.data.status in ['present', 'late'] &&
           request.resource.data.keys().hasAll([
-            'id', 'sessionId', 'memberId', 'authUid', 'method', 'status', 'monthKey', 'checkedInAt', 'verifiedBy'
+            'id', 'sessionId', 'memberId', 'method', 'status', 'monthKey', 'checkedInAt', 'verifiedBy'
           ]) &&
           request.resource.data.keys().hasOnly([
             'id', 'sessionId', 'memberId', 'authUid', 'method', 'token',
@@ -390,14 +393,21 @@ service cloud.firestore {
       allow write: if isAdmin() && isValidId(announcementId);
     }
 
-    // Notifications
+    // Notifications: Strict ownership, immutable userId, and field whitelist
     match /notifications/{notificationId} {
-      allow read, update, delete: if signedIn() && (
-        resource.data.userId == request.auth.uid || isAdmin()
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if (isAdmin() && isValidNotification(request.resource.data)) ||
+                       (signedIn() && request.resource.data.userId == request.auth.uid && isValidNotification(request.resource.data));
+      allow update: if signedIn() && (
+        (isAdmin() && isValidNotification(request.resource.data) && request.resource.data.userId == resource.data.userId) ||
+        (
+          resource.data.userId == request.auth.uid &&
+          request.resource.data.userId == resource.data.userId &&
+          isValidNotification(request.resource.data) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'dismissed'])
+        )
       );
-      allow create: if signedIn() && (
-        request.resource.data.userId == request.auth.uid || isAdmin()
-      );
+      allow delete: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
     // Public Leaderboard: Public read, admin write & active member display-only self-sync

@@ -1578,6 +1578,22 @@ export async function completeSession(sessionId: string): Promise<void> {
   }
 }
 
+export async function reopenSession(
+  sessionId: string,
+  targetMode: Session['checkInMode'] = 'auto'
+): Promise<void> {
+  const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  try {
+    await updateDoc(sessionRef, {
+      status: 'scheduled',
+      checkInMode: targetMode,
+    });
+    await createAuditLog('reopen_session', `Reopened session ${sessionId} with checkInMode ${targetMode}`);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
+  }
+}
+
 export async function cancelSession(sessionId: string, sessionTitle: string): Promise<void> {
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
   const annId = `ann_${sessionId}_cancel_${Date.now()}`;
@@ -1808,7 +1824,6 @@ export async function recordAdminManualCheckIn(
     id: checkInId,
     sessionId,
     memberId,
-    authUid: currentUser.uid,
     method: 'manual_entry' as CheckInMethod,
     checkedInAt: serverTimestamp(),
     status,

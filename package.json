@@ -15,7 +15,7 @@
     "test:listener": "tsx tests/listener-error.test.ts",
     "test:motion": "tsx tests/motion.test.ts",
     "test:rules": "tsx tests/firestore-rules.test.ts",
-    "emulators:exec": "npx -y firebase-tools emulators:exec --only firestore \"tsx tests/firestore-rules.test.ts\""
+    "emulators:exec": "npx -y firebase-tools@15.36.0 emulators:exec --only firestore \"tsx tests/firestore-rules.test.ts\""
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

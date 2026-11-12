@@ -93,7 +93,19 @@ export function normalizePortfolioUrl(input?: string): LinkValidationResult {
     return { valid: true, canonicalUrl: '' }; // Optional
   }
 
-  let clean = input.trim();
+  const raw = input.trim();
+
+  // Reject dangerous protocols
+  if (/^(javascript|data|vbscript|file):/i.test(raw)) {
+    return { valid: false, error: 'Invalid URL protocol.' };
+  }
+
+  // Reject whitespace anywhere in URL
+  if (/\s/.test(raw)) {
+    return { valid: false, error: 'Portfolio URL cannot contain spaces.' };
+  }
+
+  let clean = raw;
   if (!/^https?:\/\//i.test(clean)) {
     clean = `https://${clean}`;
   }
@@ -108,29 +120,32 @@ export function normalizePortfolioUrl(input?: string): LinkValidationResult {
       return { valid: false, error: 'Portfolio URL must use secure HTTPS.' };
     }
 
-    // No credentials
+    // No credentials (@ in authority)
     if (url.username || url.password) {
       return { valid: false, error: 'Portfolio URL cannot contain embedded credentials.' };
     }
 
-    const host = url.hostname.toLowerCase();
-    // Reject localhost and IP addresses
-    if (
-      host === 'localhost' ||
-      host.endsWith('.localhost') ||
-      /^127\./.test(host) ||
-      /^10\./.test(host) ||
-      /^192\.168\./.test(host) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host) ||
-      /^[0-9.]+$/.test(host) ||
-      host.includes(':') // IPv6
-    ) {
-      return { valid: false, error: 'Portfolio URL cannot point to localhost or private IP addresses.' };
+    // No custom port (: in authority)
+    if (url.port) {
+      return { valid: false, error: 'Portfolio URL cannot specify custom ports.' };
     }
 
-    // Must have a valid dot in domain
-    if (!host.includes('.') || host.endsWith('.')) {
-      return { valid: false, error: 'Please enter a valid public domain name.' };
+    const host = url.hostname.toLowerCase();
+
+    // Reject punycode / unicode lookalike hostnames (e.g. xn-- or non-ASCII)
+    if (/[^\x20-\x7E]/.test(raw) || host.includes('xn--')) {
+      return { valid: false, error: 'Portfolio URL cannot contain unicode lookalikes or internationalized domains.' };
+    }
+
+    // Forbid whitespace, @, and : in host, require ASCII labels and letters-only public TLD (at least 2 letters)
+    // Note: This regex inherently rejects IPv4 addresses (which end in digits like .1), ports, and invalid labels
+    if (/[@:\s]/.test(host) || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/.test(host)) {
+      return { valid: false, error: 'Portfolio URL must have a valid public domain with letters-only TLD.' };
+    }
+
+    // Reject localhost
+    if (host === 'localhost' || host.endsWith('.localhost')) {
+      return { valid: false, error: 'Portfolio URL cannot point to localhost.' };
     }
 
     return {

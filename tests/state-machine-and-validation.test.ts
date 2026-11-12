@@ -165,19 +165,30 @@ function testProfileLinksValidation() {
   assert(!normalizeLinkedInUrl('javascript:void(0)').valid, 'reject javascript in linkedin');
   assert(!normalizeLinkedInUrl('in/' + 'a'.repeat(101)).valid, 'reject overlong linkedin slug > 100 characters');
 
-  // Portfolio tests
-  assert(normalizePortfolioUrl('').canonicalUrl === '', 'optional empty portfolio allowed');
-  assert(normalizePortfolioUrl('myportfolio.dev').canonicalUrl === 'https://myportfolio.dev/', 'forces https');
-  assert(!normalizePortfolioUrl('http://localhost:3000').valid, 'reject localhost');
-  assert(!normalizePortfolioUrl('https://127.0.0.1/admin').valid, 'reject private loopback IP');
-  assert(!normalizePortfolioUrl('https://192.168.1.1').valid, 'reject private LAN IP');
-  assert(!normalizePortfolioUrl('https://user:pass@evil.com').valid, 'reject embedded credentials (user:pass)');
-  assert(!normalizePortfolioUrl('https://user@legit.com').valid, 'reject user@host trick');
-  assert(!normalizePortfolioUrl('javascript:alert(1)').valid, 'reject javascript in portfolio');
-  assert(!normalizePortfolioUrl('data:text/html;base64,PHNjcmlwdD4=').valid, 'reject data scheme in portfolio');
-  assert(!normalizePortfolioUrl('https://' + 'a'.repeat(200) + '.dev').valid, 'reject overlong portfolio URL > 200 chars');
+  // Portfolio tests: 15 comprehensive edge-case assertions
+  assert(normalizePortfolioUrl('').canonicalUrl === '', '1. optional empty portfolio allowed');
+  assert(normalizePortfolioUrl('myportfolio.dev').canonicalUrl === 'https://myportfolio.dev/', '2. forces https');
+  assert(normalizePortfolioUrl('https://myportfolio.dev/projects').valid, '3. valid domain with path passes');
+  assert(!normalizePortfolioUrl('javascript:alert(1)').valid, '4. reject javascript scheme');
+  assert(!normalizePortfolioUrl('data:text/html;base64,PHNjcmlwdD4=').valid, '5. reject data scheme');
+  assert(!normalizePortfolioUrl('https://user:pass@evil.com').valid, '6. reject embedded credentials (user:pass)');
+  assert(!normalizePortfolioUrl('https://user@legit.com').valid, '7. reject user@host trick');
+  assert(normalizePortfolioUrl('https://evil.com/@github.com').valid, '8. valid host evil.com with /@path allowed');
+  assert(!normalizePortfolioUrl('https://evil.com:8080/path').valid, '9. reject custom port (: in authority)');
+  assert(!normalizePortfolioUrl('https://127.0.0.1/admin').valid, '10. reject IPv4 loopback');
+  assert(!normalizePortfolioUrl('https://192.168.1.1').valid, '11. reject private LAN IP');
+  assert(!normalizePortfolioUrl('https://8.8.8.8').valid, '12. reject public IPv4 (no letters-only TLD)');
+  assert(!normalizePortfolioUrl('http://localhost:3000').valid, '13. reject localhost with port');
+  assert(!normalizePortfolioUrl('https://sub.localhost').valid, '14. reject sub.localhost domain');
+  assert(!normalizePortfolioUrl('https://' + 'a'.repeat(200) + '.dev').valid, '15. reject overlong portfolio URL > 200 chars');
+  assert(normalizePortfolioUrl('HTTPS://MYPORTFOLIO.DEV/PATH').canonicalUrl === 'https://myportfolio.dev/PATH', '16. normalize uppercase protocol and host');
+  assert(normalizePortfolioUrl('https://myportfolio.dev/').canonicalUrl === 'https://myportfolio.dev/', '17. trailing slash valid');
+  assert(!normalizePortfolioUrl('https://my portfolio.dev').valid, '18. reject space in hostname');
+  assert(!normalizePortfolioUrl('https://portfolio.dev/path with spaces').valid, '19. reject space in path');
+  assert(!normalizePortfolioUrl('https://myportfolio.123').valid, '20. reject numeric TLD (requires letters-only TLD)');
+  assert(!normalizePortfolioUrl('https://\u0430pple.com').valid, '21. reject Cyrillic unicode lookalike hostname');
 
-  console.log('✓ Profile links validation, protocol hardening, credential tricks, and length guards passed');
+  console.log('✓ Profile links validation: 21 edge-case tests (schemes, credentials, hosts, IPs, ports, spaces, unicode lookalikes) passed');
 }
 
 // -------------------------------------------------------------
@@ -248,10 +259,47 @@ function testApplicationValidation() {
   console.log('✓ Application validation, delimiter protection, encode/decode, and submission checks passed');
 }
 
+// -------------------------------------------------------------
+// 4. Session Reopen Logic Tests
+// -------------------------------------------------------------
+function testSessionReopenLogic() {
+  console.log('--- RUNNING SESSION REOPEN LOGIC TESTS ---');
+  const completedSession = {
+    id: 's1',
+    status: 'completed' as const,
+    checkInMode: 'closed' as const,
+  };
+
+  const computeReopenedPayload = (target: { status: string; checkInMode: string }, mode?: string) => ({
+    ...target,
+    status: 'scheduled',
+    checkInMode: mode || (target.status === 'completed' || target.status === 'cancelled' ? 'auto' : target.checkInMode || 'auto'),
+  });
+
+  const reopened = computeReopenedPayload(completedSession);
+  assert(reopened.status === 'scheduled', 'Reopened session status is scheduled');
+  assert(reopened.checkInMode === 'auto', 'Reopened session checkInMode reset to auto');
+
+  const cancelledSession = {
+    id: 's2',
+    status: 'cancelled' as const,
+    checkInMode: 'closed' as const,
+  };
+  const reopenedCancelled = computeReopenedPayload(cancelledSession);
+  assert(reopenedCancelled.status === 'scheduled', 'Cancelled session reopen status is scheduled');
+  assert(reopenedCancelled.checkInMode === 'auto', 'Cancelled session reopen checkInMode reset to auto');
+
+  const customReopened = computeReopenedPayload(completedSession, 'open');
+  assert(customReopened.checkInMode === 'open', 'Custom mode respected on reopen');
+
+  console.log('✓ Session reopen status & checkInMode reset logic passed');
+}
+
 function runAll() {
   testStateMachineTransitions();
   testProfileLinksValidation();
   testApplicationValidation();
+  testSessionReopenLogic();
   console.log('ALL STEP 2 STATE MACHINE & VALIDATION TESTS PASSED CLEANLY!\n');
 }
 

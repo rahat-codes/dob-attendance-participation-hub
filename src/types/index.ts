@@ -345,6 +345,7 @@ export type AuditAction =
   | 'deactivate_member'
   | 'session_open_close'
   | 'complete_session'
+  | 'reopen_session'
   | 'check_in_manual'
   | 'delete_check_in';
 

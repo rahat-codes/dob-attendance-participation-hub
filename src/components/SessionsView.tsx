@@ -376,6 +376,19 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                             Cancel
                           </button>
                         )}
+                        {(session.status === 'completed' || session.status === 'cancelled') && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpdateSessionStatus(session.id, 'scheduled', 'auto');
+                            }}
+                            className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 neu-button rounded-full text-[11px] font-bold uppercase tracking-wider transition-colors cursor-pointer min-h-[36px]"
+                            title="Reopen session (resets status to scheduled and check-in mode to auto)"
+                          >
+                            Reopen
+                          </button>
+                        )}
                       </>
                     )}
 

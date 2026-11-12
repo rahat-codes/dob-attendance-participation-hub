@@ -9,6 +9,7 @@ import {
   Session,
   CheckInRecord,
   CheckInMethod,
+  CheckInMode,
   SessionStatus,
   UserProfile,
   PublicLeaderboardItem,
@@ -40,6 +41,7 @@ import {
   updateMemberInFirestore,
   createSessionInFirestore,
   updateSessionInFirestore,
+  completeSession,
   recordCheckInAtomic,
   adminDeleteMember,
   adminDeleteSession,
@@ -671,15 +673,24 @@ export default function App() {
     setIsNewSessionOpen(true);
   };
 
-  const handleUpdateSessionStatus = async (sessionId: string, status: SessionStatus) => {
+  const handleUpdateSessionStatus = async (sessionId: string, status: SessionStatus, mode?: CheckInMode) => {
     if (!isAdmin) return;
-    const target = sessions.find((s) => s.id === sessionId);
-    if (target) {
-      try {
-        await updateSessionInFirestore({ ...target, status });
-      } catch (err: any) {
-        console.error('Failed to update session status:', err);
+    try {
+      if (status === 'completed') {
+        await completeSession(sessionId);
+      } else {
+        const target = sessions.find((s) => s.id === sessionId);
+        if (target) {
+          const nextMode = mode || ((target.status === 'completed' || target.status === 'cancelled') ? 'auto' : target.checkInMode || 'auto');
+          await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
+        }
       }
+      setFirestoreError(null);
+    } catch (err: any) {
+      console.error('Failed to update session status:', err);
+      const code = err?.code ? `[${err.code}] ` : '';
+      setFirestoreError(`Failed to update session status: ${code}${err?.message || 'Access denied'}`);
+      throw err;
     }
   };
 

@@ -474,13 +474,30 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
                 </div>
               )}
 
-              <div className="pt-2 flex gap-2">
+              <div className="pt-2 flex flex-wrap gap-2">
                 <button
                   onClick={onOpenScanner}
                   className="flex-1 py-3 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#c6ff24] text-black text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer shadow-[0_0_15px_rgba(181,255,0,0.25)] min-h-[44px]"
                 >
                   Door Staff Scanner
                 </button>
+                {isAdmin && onCloseCheckIn && isOpen && (
+                  <button
+                    onClick={async () => {
+                      if (window.confirm(`Close check-in and mark "${currentSession.title}" as completed?`)) {
+                        try {
+                          await onCloseCheckIn(currentSession.id);
+                        } catch (err: any) {
+                          setManualCheckInStatus(`Failed to close check-in: ${err?.message || 'Access denied'}`);
+                          setTimeout(() => setManualCheckInStatus(null), 5000);
+                        }
+                      }
+                    }}
+                    className="py-3 px-4 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-200 text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
+                  >
+                    Close Check-In
+                  </button>
+                )}
               </div>
             </div>
 

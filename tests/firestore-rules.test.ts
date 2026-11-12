@@ -283,27 +283,63 @@ async function runRulesTests() {
     });
     const db = adminContext.firestore();
 
-    // 1. Create
+    // 1. Create with full valid schema
     await assertSucceeds(
       setDoc(doc(db, 'sessions', 'sess_crud_1'), {
         id: 'sess_crud_1',
         title: 'CRUD Session',
-        track: 'Hardware & Robotics',
+        track: 'Software & Systems',
         date: '2026-11-01',
         status: 'scheduled',
         location: 'Room 304',
+        host: 'Guild Lead',
+        startAt: new Date('2026-11-01T18:00:00Z'),
+        endAt: new Date('2026-11-01T20:00:00Z'),
+        timezone: 'Asia/Seoul',
+        checkInMode: 'auto',
+        openMinutesBefore: 15,
+        graceMinutesAfter: 30,
+        lateAfterMinutes: 10,
+        points: 10,
       })
     );
 
-    // 2. Update
+    // 2. Full Update
     await assertSucceeds(
       updateDoc(doc(db, 'sessions', 'sess_crud_1'), {
         title: 'Updated CRUD Session Title',
       })
     );
 
-    // 3. Delete (previously failed when write rule checked request.resource.data)
+    // 3. Legacy-Tolerant Session Update: updating status/mode on legacy session without full fields passes
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'sessions', 'sess_legacy_1'), {
+        id: 'sess_legacy_1',
+        title: 'Old Legacy Session',
+        date: '2025-01-01',
+        status: 'scheduled',
+        location: 'Old Lab',
+      });
+    });
+
+    await assertSucceeds(
+      updateDoc(doc(db, 'sessions', 'sess_legacy_1'), {
+        status: 'completed',
+        checkInMode: 'closed',
+        closedAt: new Date().toISOString(),
+      })
+    );
+
+    // Denied if attempting to mutate unwhitelisted fields on legacy session
+    await assertFails(
+      updateDoc(doc(db, 'sessions', 'sess_legacy_1'), {
+        title: 'Cannot Change Title On Legacy Session Without Full Schema',
+      })
+    );
+
+    // 4. Delete (previously failed when write rule checked request.resource.data)
     await assertSucceeds(deleteDoc(doc(db, 'sessions', 'sess_crud_1')));
+    await assertSucceeds(deleteDoc(doc(db, 'sessions', 'sess_legacy_1')));
   });
 
   // ========================================================================
@@ -549,6 +585,218 @@ async function runRulesTests() {
     await assertFails(
       updateDoc(doc(db, 'members', 'mem_active_1'), {
         role: 'President',
+      })
+    );
+  });
+
+  // ========================================================================
+  // SUITE 9: NOTIFICATIONS HARDENING & SESSION COMPLETED REJECTION
+  // ========================================================================
+  await test('Notifications Security: Immutability of userId, field allowlist, and owner limits', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'notifications', 'notif_test_1'), {
+        id: 'notif_test_1',
+        userId: 'user_active_1',
+        title: 'Meeting Scheduled',
+        message: 'A new workshop has been published.',
+        type: 'meeting_published',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const db = memberContext.firestore();
+
+    // Owner can mark read and dismissed
+    await assertSucceeds(
+      updateDoc(doc(db, 'notifications', 'notif_test_1'), {
+        read: true,
+        dismissed: true,
+      })
+    );
+
+    // Owner CANNOT modify userId (immutable)
+    await assertFails(
+      updateDoc(doc(db, 'notifications', 'notif_test_1'), {
+        userId: 'user_attacker_2',
+        read: true,
+      })
+    );
+
+    // Owner CANNOT modify title or message
+    await assertFails(
+      updateDoc(doc(db, 'notifications', 'notif_test_1'), {
+        title: 'Defaced Notification Title',
+        read: true,
+      })
+    );
+
+    // Attacker cannot read or update another user's notification
+    const attackerContext = testEnv.authenticatedContext('user_attacker_2', {
+      email: 'attacker@example.com',
+      email_verified: true,
+    });
+    const attackerDb = attackerContext.firestore();
+
+    await assertFails(getDoc(doc(attackerDb, 'notifications', 'notif_test_1')));
+    await assertFails(updateDoc(doc(attackerDb, 'notifications', 'notif_test_1'), { read: true }));
+
+    // Admin CAN create notification for any user
+    const adminContext = testEnv.authenticatedContext('admin_super_1', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    const adminDb = adminContext.firestore();
+
+    await assertSucceeds(
+      setDoc(doc(adminDb, 'notifications', 'notif_admin_broadcast_1'), {
+        id: 'notif_admin_broadcast_1',
+        userId: 'user_active_1',
+        title: 'Admin Alert',
+        message: 'System maintenance scheduled.',
+        type: 'system',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  await test('Session Lifecycle: sessionOpen rejects check-ins to completed sessions', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'sessions', 'sess_test_completed_1'), {
+        id: 'sess_test_completed_1',
+        title: 'Completed Workshop',
+        track: 'Software & Systems',
+        date: '2026-10-15',
+        status: 'completed', // Explicitly completed
+        checkInMode: 'open',
+        location: 'Engineering Hall 301',
+        startAt: new Date(Date.now() - 3600000).toISOString(),
+        endAt: new Date(Date.now() + 3600000).toISOString(),
+        openMinutesBefore: 30,
+        graceMinutesAfter: 30,
+      });
+      await setDoc(doc(context.firestore(), 'sessionTokens', 'sess_test_completed_1'), {
+        token: 'COMPLTOK',
+        prevToken: 'COMPLPRV',
+        rotatedAt: serverTimestamp(),
+      });
+    });
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const db = memberContext.firestore();
+
+    // Check-in to completed session must fail sessionOpen rule check
+    await assertFails(
+      setDoc(doc(db, 'checkIns', 'sess_test_completed_1_mem_active_1'), {
+        id: 'sess_test_completed_1_mem_active_1',
+        sessionId: 'sess_test_completed_1',
+        memberId: 'mem_active_1',
+        authUid: 'user_active_1',
+        method: 'camera_scan',
+        token: 'COMPLTOK',
+        checkedInAt: serverTimestamp(),
+        status: 'present',
+        monthKey: '2026-10',
+      })
+    );
+  });
+
+  // ========================================================================
+  // SUITE 11: USER PROFILE SECURITY & EMAIL IMMUTABILITY
+  // ========================================================================
+  await test('Users Collection: Email bound to token email on create, and strictly immutable on update', async () => {
+    const userContext = testEnv.authenticatedContext('user_email_test_1', {
+      email: 'builder1@example.com',
+      email_verified: true,
+    });
+    const db = userContext.firestore();
+
+    // 1. Create with matching email succeeds
+    await assertSucceeds(
+      setDoc(doc(db, 'users', 'user_email_test_1'), {
+        id: 'user_email_test_1',
+        email: 'builder1@example.com',
+        displayName: 'Builder One',
+        status: 'pending',
+      })
+    );
+
+    // 2. Create with mismatched email fails
+    const user2Context = testEnv.authenticatedContext('user_email_test_2', {
+      email: 'builder2@example.com',
+      email_verified: true,
+    });
+    await assertFails(
+      setDoc(doc(user2Context.firestore(), 'users', 'user_email_test_2'), {
+        id: 'user_email_test_2',
+        email: 'spoofed@example.com', // Mismatched email
+        displayName: 'Builder Two',
+        status: 'pending',
+      })
+    );
+
+    // 3. User update attempting to mutate email is DENIED (email immutable)
+    await assertFails(
+      updateDoc(doc(db, 'users', 'user_email_test_1'), {
+        email: 'changed@example.com',
+        displayName: 'Updated Name',
+      })
+    );
+
+    // 4. User update preserving original email succeeds
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'user_email_test_1'), {
+        displayName: 'Updated Builder Name',
+        applicantNote: 'Learning systems design',
+      })
+    );
+  });
+
+  // ========================================================================
+  // SUITE 12: LEGACY NOTIFICATION TOLERANCE
+  // ========================================================================
+  await test('Notifications Security: Owner can mark legacy notifications read/dismissed without full schema', async () => {
+    // Seed a legacy notification document that lacks new schema fields and contains legacy keys
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'notifications', 'notif_legacy_doc_1'), {
+        id: 'notif_legacy_doc_1',
+        userId: 'user_active_1',
+        title: 'Old Notification Title',
+        read: false,
+        dismissed: false,
+        legacyExtraField: 'legacy_value',
+      });
+    });
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const db = memberContext.firestore();
+
+    // Owner marks read: true on legacy doc -> succeeds without schema error
+    await assertSucceeds(
+      updateDoc(doc(db, 'notifications', 'notif_legacy_doc_1'), {
+        read: true,
+      })
+    );
+
+    // Owner attempting to modify other fields on legacy doc is DENIED
+    await assertFails(
+      updateDoc(doc(db, 'notifications', 'notif_legacy_doc_1'), {
+        read: true,
+        title: 'Tampered Title',
       })
     );
   });
