@@ -649,9 +649,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
               <AlertCircle className="h-6 w-6" />
             </div>
-            <h2 className="text-base font-bold text-white">Account Deactivated</h2>
+            <h2 className="text-base font-bold text-white">Account deactivated: re-apply or contact an admin</h2>
             <p className="text-xs text-zinc-400">
-              Your builder record has been deactivated. You can submit a new application below to rejoin the roster.
+              Account deactivated: re-apply or contact an admin to restore your builder membership. You can submit a new application below.
             </p>
 
             {linkError && (

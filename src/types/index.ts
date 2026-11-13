@@ -343,6 +343,7 @@ export type AuditAction =
   | 'decline_user'
   | 'add_member'
   | 'deactivate_member'
+  | 'reactivate_member'
   | 'session_open_close'
   | 'complete_session'
   | 'reopen_session'

@@ -53,6 +53,7 @@ interface MembersViewProps {
   onViewMemberPass: (member: Member) => void;
   onEditMember?: (member: Member) => void;
   onDeleteMember?: (member: Member) => void;
+  onReactivateMember?: (member: Member) => void;
 }
 
 export const MembersView: React.FC<MembersViewProps> = ({
@@ -69,6 +70,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
   onViewMemberPass,
   onEditMember,
   onDeleteMember,
+  onReactivateMember,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -806,9 +808,16 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     </div>
                   </div>
 
-                  <span className="text-[11px] font-mono text-[#b5ff00] font-semibold shrink-0 uppercase">
-                    {member.role}
-                  </span>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[11px] font-mono text-[#b5ff00] font-semibold uppercase">
+                      {member.role}
+                    </span>
+                    {member.status === 'Inactive' && (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 uppercase font-semibold">
+                        Inactive
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Bio */}
@@ -892,6 +901,21 @@ export const MembersView: React.FC<MembersViewProps> = ({
                       title="Edit builder profile"
                     >
                       <Edit3 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
+                  {isAdmin && member.status === 'Inactive' && onReactivateMember && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onReactivateMember(member);
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono font-bold uppercase text-[#b5ff00] bg-[#b5ff00]/10 hover:bg-[#b5ff00]/20 border border-[#b5ff00]/40 rounded-full transition-colors cursor-pointer"
+                      title="Reactivate builder and route linked account through approval"
+                    >
+                      <UserCheck className="h-3 w-3" />
+                      <span>Reactivate</span>
                     </button>
                   )}
 

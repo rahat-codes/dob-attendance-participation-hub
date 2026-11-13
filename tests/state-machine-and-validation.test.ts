@@ -4,6 +4,7 @@ import { nextUserState, getUserState, UnifiedUserState, UserAction } from '../sr
 import { validateApplication, encodeApplication, decodeApplication, isApplicationSubmitted } from '../src/utils/application';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../src/utils/profileLinks';
 import { buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan } from '../src/utils/sessionPlans';
+import { buildDeactivateMemberPlan, buildReactivateMemberPlan } from '../src/utils/memberLifecyclePlans';
 import { BUILDER_TRACKS } from '../src/config/constants';
 import { PUBLIC_MEMBER_WHITELIST } from '../src/utils/repairTools';
 import { UserProfile, Member } from '../src/types';
@@ -454,6 +455,116 @@ function testTracksConsistencyAcrossRules() {
   console.log('✓ BUILDER_TRACKS matches firestore.rules, docs/rules/A1.rules, and docs/RULES_GROUP_B.md identically');
 }
 
+// -------------------------------------------------------------
+// 8. F13 Member Lifecycle Plan & nextUserState Tests
+// -------------------------------------------------------------
+function testMemberLifecyclePlans() {
+  console.log('--- RUNNING F13 MEMBER LIFECYCLE & REACTIVATION TESTS ---');
+
+  const activeMember: Member = {
+    id: 'mem_42',
+    name: 'Grace Hopper',
+    handle: '@grace',
+    role: 'Member',
+    tracks: ['Software & Systems'],
+    joinedDate: '2026-01-15',
+    status: 'Active',
+    authUid: 'uid_grace',
+  };
+
+  const activeUser: UserProfile = {
+    id: 'uid_grace',
+    email: 'grace@example.com',
+    displayName: 'Grace Hopper',
+    status: 'active',
+    memberId: 'mem_42',
+    approvedMemberId: 'mem_42',
+  };
+
+  // Duplicate UID in linkedUsers (as if returned by both authUid lookup and where memberId == id)
+  const deactPlan = buildDeactivateMemberPlan({
+    member: activeMember,
+    linkedUsers: [activeUser, { ...activeUser }],
+    actorUid: 'uid_admin',
+    actorEmail: 'admin@example.com',
+    nowIso: '2026-11-12T10:00:00.000Z',
+    logId: 'log_deact_1',
+  });
+
+  assert(deactPlan.memberUpdate.status === 'Inactive', 'Deactivate plan sets member status Inactive');
+  assert(deactPlan.userUpdates.length === 1, 'Deduplicates linked user found via authUid and memberId query');
+  assert(deactPlan.userUpdates[0].transition.allowed === true, 'nextUserState permits active -> deactivate');
+  assert(deactPlan.userUpdates[0].update.status === 'declined', 'Deactivated user status is reset to declined');
+  assert(deactPlan.userUpdates[0].update.clearMemberId === true, 'Deactivate clears memberId via deleteField');
+  assert(deactPlan.userUpdates[0].update.clearApprovedMemberId === true, 'Deactivate clears approvedMemberId via deleteField');
+  assert(deactPlan.removeLeaderboardProjection === true, 'Deactivate removes publicLeaderboard projection');
+  assert(deactPlan.auditEntry.action === 'deactivate_member', 'Audit action is deactivate_member');
+  assert(deactPlan.auditEntry.performedBy === 'uid_admin', 'Audit performedBy matches admin UID');
+  assert(deactPlan.auditEntry.targetId === 'mem_42', 'Audit targetId matches member ID');
+
+  // Verify nextUserState reactivate routes through approval
+  const deactivatedMember: Member = { ...activeMember, status: 'Inactive' };
+  const declinedResetUser: UserProfile = {
+    id: 'uid_grace',
+    email: 'grace@example.com',
+    displayName: 'Grace Hopper',
+    status: 'declined',
+    respondedAt: '2026-11-12T10:00:00.000Z',
+  };
+
+  const reactStateFromDeclined = nextUserState(declinedResetUser, deactivatedMember, 'reactivate');
+  assert(reactStateFromDeclined.allowed === true, 'nextUserState allows reactivate from declined');
+  assert(
+    reactStateFromDeclined.nextUserStatus === 'approved_waiting_response',
+    'nextUserState routes reactivated user back through approved_waiting_response'
+  );
+
+  const reactStateFromLegacyDeactivated = nextUserState(activeUser, deactivatedMember, 'reactivate');
+  assert(reactStateFromLegacyDeactivated.allowed === true, 'nextUserState allows reactivate from legacy deactivated state');
+  assert(
+    reactStateFromLegacyDeactivated.nextUserStatus === 'approved_waiting_response',
+    'nextUserState routes legacy deactivated user back through approved_waiting_response'
+  );
+
+  const reactPlan = buildReactivateMemberPlan({
+    member: deactivatedMember,
+    linkedUser: declinedResetUser,
+    actorUid: 'uid_admin',
+    actorEmail: 'admin@example.com',
+    nowIso: '2026-11-12T11:00:00.000Z',
+    logId: 'log_react_1',
+  });
+
+  assert(reactPlan.memberUpdate.status === 'Active', 'Reactivate plan restores member status to Active');
+  assert(reactPlan.userUpdate !== null, 'Reactivate plan produces user approval staging update');
+  assert(
+    reactPlan.userUpdate!.update.status === 'approved_waiting_response',
+    'Reactivate stages linked user into approved_waiting_response'
+  );
+  assert(reactPlan.userUpdate!.update.approvedMemberId === 'mem_42', 'Reactivate stages target memberId');
+  assert(reactPlan.userUpdate!.update.clearMemberId === true, 'Reactivate keeps memberId cleared until user accepts');
+  assert(reactPlan.auditEntry.action === 'reactivate_member', 'Audit action is reactivate_member');
+
+  // Verify user accepting invitation after reactivation transitions to active
+  const stagedUser: UserProfile = {
+    ...declinedResetUser,
+    status: reactPlan.userUpdate!.update.status,
+    approvedMemberId: reactPlan.userUpdate!.update.approvedMemberId,
+    approvedAt: reactPlan.userUpdate!.update.approvedAt,
+  };
+  const acceptAfterReact = nextUserState(stagedUser, { ...activeMember, status: 'Active' }, 'accept_invitation');
+  assert(acceptAfterReact.allowed && acceptAfterReact.nextState === 'active', 'User accepts staged invitation to become active');
+
+  // Verify isApprovedMember null/Inactive guards
+  const computeIsApprovedMember = (p: UserProfile | null, m: Member | null) =>
+    Boolean(p?.status === 'active' && p?.memberId && m && m.status !== 'Inactive');
+  assert(!computeIsApprovedMember(activeUser, null), 'isApprovedMember must be false when linkedMember is missing/null');
+  assert(!computeIsApprovedMember(activeUser, deactivatedMember), 'isApprovedMember must be false when linkedMember is Inactive');
+  assert(computeIsApprovedMember(activeUser, activeMember), 'isApprovedMember is true only when member exists and is Active');
+
+  console.log('✓ F13 deactivateMember/reactivateMember batch plans, nextUserState reactivation routing, and isApprovedMember guards passed');
+}
+
 function runAll() {
   testStateMachineTransitions();
   testProfileLinksValidation();
@@ -462,6 +573,7 @@ function runAll() {
   testSessionBatchPlanGeneration();
   testLegacyRequestedNotesDecoding();
   testTracksConsistencyAcrossRules();
+  testMemberLifecyclePlans();
   console.log('ALL STEP 2 STATE MACHINE & VALIDATION TESTS PASSED CLEANLY!\n');
 }
 

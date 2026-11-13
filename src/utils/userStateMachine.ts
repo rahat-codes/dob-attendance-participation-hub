@@ -218,16 +218,16 @@ export function nextUserState(
     }
 
     case 'reactivate': {
-      if (currentState === 'deactivated') {
+      if (currentState === 'deactivated' || currentState === 'declined' || currentState === 'awaiting_review') {
         return {
           allowed: true,
-          nextState: 'active',
-          nextUserStatus: 'active',
+          nextState: 'approved_waiting',
+          nextUserStatus: 'approved_waiting_response',
         };
       }
       return {
         allowed: false,
-        reason: `Only deactivated records can be reactivated (current: ${currentState}).`,
+        reason: `Only deactivated or declined records can be reactivated through approval (current: ${currentState}).`,
       };
     }
 

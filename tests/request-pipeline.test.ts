@@ -173,7 +173,10 @@ console.log('--- RUNNING REQUEST PIPELINE & WRONG-ACCOUNT GUARD TESTS ---');
   console.log('✓ (c) wrong-account guard formatting and non-redirect navigation logic passed');
 }
 
-// Test 5: Re-applicant badge condition does not trigger on fresh signup -> form submission
+import fs from 'node:fs';
+import path from 'node:path';
+
+// Test 5: Re-applicant badge condition across BOTH reject paths and fresh signups
 {
   const isReapplicant = (req: { status?: string; respondedAt?: string }) =>
     Boolean(req.status === 'declined' || (req.status === 'pending' && req.respondedAt));
@@ -193,7 +196,65 @@ console.log('--- RUNNING REQUEST PIPELINE & WRONG-ACCOUNT GUARD TESTS ---');
     true,
     'Previously responded applicant returning to pending is tagged Re-applicant'
   );
-  console.log('✓ (d) Re-applicant badge logic verified against first-time submission false positives');
+
+  // Reject Path 1: Applicant declines approved invitation -> respondedAt written -> re-apply -> Re-applicant
+  const afterUserDecline = {
+    status: 'declined' as const,
+    respondedAt: '2026-11-02T09:00:00.000Z',
+  };
+  const afterUserReapplyFromPath1 = {
+    ...afterUserDecline,
+    status: 'pending' as const,
+    membershipRequestedAt: '2026-11-03T10:00:00.000Z',
+  };
+  assert.equal(
+    isReapplicant(afterUserReapplyFromPath1),
+    true,
+    'Path 1 (user declined invitation -> re-apply) must display Re-applicant badge'
+  );
+
+  // Reject Path 2: Admin rejects request (declineUserRequest sets respondedAt) -> re-apply -> Re-applicant
+  const afterAdminReject = {
+    status: 'declined' as const,
+    respondedAt: '2026-11-02T12:00:00.000Z',
+  };
+  const afterUserReapplyFromPath2 = {
+    ...afterAdminReject,
+    status: 'pending' as const,
+    membershipRequestedAt: '2026-11-04T10:00:00.000Z',
+  };
+  assert.equal(
+    isReapplicant(afterUserReapplyFromPath2),
+    true,
+    'Path 2 (admin declineUserRequest -> re-apply) must display Re-applicant badge'
+  );
+
+  console.log('✓ (d) Re-applicant badge logic verified for fresh signup and BOTH reject paths');
+}
+
+// Test 6: F15 Audit Integrity - applicant accept/decline flows contain zero createAuditLog calls
+{
+  const serviceSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/firebase/firestoreService.ts'), 'utf8');
+  const acceptSlice = serviceSrc.slice(
+    serviceSrc.indexOf('export async function acceptMembershipInvitation'),
+    serviceSrc.indexOf('export async function declineMembershipInvitation')
+  );
+  const declineSlice = serviceSrc.slice(
+    serviceSrc.indexOf('export async function declineMembershipInvitation'),
+    serviceSrc.indexOf('export async function rejectUserMembershipLink')
+  );
+  const adminDeclineSlice = serviceSrc.slice(
+    serviceSrc.indexOf('export async function declineUserRequest'),
+    serviceSrc.indexOf('export async function suspendUser')
+  );
+
+  assert.ok(!acceptSlice.includes('createAuditLog'), 'acceptMembershipInvitation must not call createAuditLog');
+  assert.ok(acceptSlice.includes('respondedAt'), 'acceptMembershipInvitation must record respondedAt');
+  assert.ok(!declineSlice.includes('createAuditLog'), 'declineMembershipInvitation must not call createAuditLog');
+  assert.ok(declineSlice.includes('respondedAt'), 'declineMembershipInvitation must record respondedAt');
+  assert.ok(adminDeclineSlice.includes('respondedAt'), 'declineUserRequest must record respondedAt for re-applicant history');
+
+  console.log('✓ (e) F15 applicant audit-free accept/decline and respondedAt history tracking verified');
 }
 
 console.log('ALL REQUEST PIPELINE TESTS PASSED SUCCESSFULLY!');

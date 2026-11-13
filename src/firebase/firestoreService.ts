@@ -43,6 +43,7 @@ import { processProfilePhoto } from '../utils/imageUtils';
 import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHelpers';
 import { ApplicationInput, validateApplication, encodeApplication } from '../utils/application';
 import { nextUserState, getUserState } from '../utils/userStateMachine';
+import { buildDeactivateMemberPlan, buildReactivateMemberPlan } from '../utils/memberLifecyclePlans';
 import { PUBLIC_MEMBER_WHITELIST, MemberDataRepairItem, UserStateRepairItem } from '../utils/repairTools';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
 
@@ -175,7 +176,8 @@ export async function createAuditLog(
 export function createAuditLogInBatch(
   batch: ReturnType<typeof writeBatch>,
   action: AuditAction,
-  details: string
+  details: string,
+  targetMeta?: { targetId?: string; targetName?: string }
 ): void {
   const currentUser = auth.currentUser;
   if (!currentUser) return;
@@ -187,6 +189,8 @@ export function createAuditLogInBatch(
     action,
     performedBy: currentUser.uid,
     performedByEmail: currentUser.email || 'unknown',
+    ...(targetMeta?.targetId ? { targetId: targetMeta.targetId } : {}),
+    ...(targetMeta?.targetName ? { targetName: targetMeta.targetName } : {}),
     details,
     timestamp: serverTimestamp() as any,
   };
@@ -1100,14 +1104,18 @@ export async function directActivateUserMembership(
 
 export async function declineUserRequest(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
+  const now = new Date().toISOString();
   const batch = writeBatch(db);
   batch.update(userRef, {
     status: 'declined',
     approvedMemberId: deleteField(),
-    updatedAt: new Date().toISOString(),
+    respondedAt: now,
+    updatedAt: now,
   });
 
-  createAuditLogInBatch(batch, 'decline_user', `Declined applicant request for user ${userId}`);
+  createAuditLogInBatch(batch, 'decline_user', `Declined applicant request for user ${userId}`, {
+    targetId: userId,
+  });
 
   try {
     await batch.commit();
@@ -1370,11 +1378,133 @@ export async function updateMemberProfile(
 
 export async function deactivateMember(memberId: string): Promise<void> {
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
+  const memSnap = await getDoc(memberRef);
+  if (!memSnap.exists()) {
+    throw new Error(`Member ${memberId} not found.`);
+  }
+  const memberData = memSnap.data() as Member;
+
+  // Locate linked users via members/{id}.authUid AND users where memberId == id
+  const linkedUsersMap = new Map<string, UserProfile>();
+  if (memberData.authUid) {
+    const authUserSnap = await getDoc(doc(db, USERS_COLLECTION, memberData.authUid));
+    if (authUserSnap.exists()) {
+      linkedUsersMap.set(authUserSnap.id, {
+        id: authUserSnap.id,
+        ...(authUserSnap.data() as any),
+      } as UserProfile);
+    }
+  }
+
+  const linkedQuerySnap = await getDocs(
+    query(collection(db, USERS_COLLECTION), where('memberId', '==', memberId))
+  );
+  linkedQuerySnap.forEach((d) => {
+    if (!linkedUsersMap.has(d.id)) {
+      linkedUsersMap.set(d.id, { id: d.id, ...(d.data() as any) } as UserProfile);
+    }
+  });
+
+  const currentUser = auth.currentUser;
+  const plan = buildDeactivateMemberPlan({
+    member: memberData,
+    linkedUsers: Array.from(linkedUsersMap.values()),
+    actorUid: currentUser?.uid || 'admin',
+    actorEmail: currentUser?.email || 'unknown',
+  });
+
+  const batch = writeBatch(db);
+  batch.update(memberRef, plan.memberUpdate);
+
+  for (const userUpdate of plan.userUpdates) {
+    const userRef = doc(db, USERS_COLLECTION, userUpdate.uid);
+    batch.update(userRef, {
+      status: userUpdate.update.status,
+      memberId: deleteField(),
+      approvedMemberId: deleteField(),
+      respondedAt: userUpdate.update.respondedAt,
+      updatedAt: userUpdate.update.updatedAt,
+    });
+  }
+
+  batch.delete(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId));
+
+  if (currentUser) {
+    batch.set(doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id), {
+      ...plan.auditEntry,
+      timestamp: serverTimestamp(),
+    });
+  }
+
   try {
-    await updateDoc(memberRef, { status: 'Inactive' });
-    await createAuditLog('deactivate_member', `Deactivated builder ${memberId}`);
+    await batch.commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `members/${memberId}`);
+    handleFirestoreError(err, OperationType.WRITE, `members/${memberId}`);
+  }
+}
+
+export async function reactivateMember(
+  memberId: string,
+  options?: { targetUserId?: string; routeThroughApproval?: boolean }
+): Promise<void> {
+  const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
+  const memSnap = await getDoc(memberRef);
+  if (!memSnap.exists()) {
+    throw new Error(`Member ${memberId} not found.`);
+  }
+  const memberData = memSnap.data() as Member;
+
+  let linkedUser: UserProfile | null = null;
+  const candidateUid = options?.targetUserId || memberData.authUid;
+  if (candidateUid) {
+    const userSnap = await getDoc(doc(db, USERS_COLLECTION, candidateUid));
+    if (userSnap.exists()) {
+      linkedUser = { id: userSnap.id, ...(userSnap.data() as any) } as UserProfile;
+    }
+  } else {
+    const linkedQuerySnap = await getDocs(
+      query(collection(db, USERS_COLLECTION), where('memberId', '==', memberId), limit(1))
+    );
+    if (!linkedQuerySnap.empty) {
+      const d = linkedQuerySnap.docs[0];
+      linkedUser = { id: d.id, ...(d.data() as any) } as UserProfile;
+    }
+  }
+
+  const currentUser = auth.currentUser;
+  const plan = buildReactivateMemberPlan({
+    member: memberData,
+    linkedUser,
+    actorUid: currentUser?.uid || 'admin',
+    actorEmail: currentUser?.email || 'unknown',
+    routeThroughApproval: options?.routeThroughApproval ?? true,
+  });
+
+  const batch = writeBatch(db);
+  batch.update(memberRef, plan.memberUpdate);
+
+  if (plan.userUpdate) {
+    const userRef = doc(db, USERS_COLLECTION, plan.userUpdate.uid);
+    batch.update(userRef, {
+      status: plan.userUpdate.update.status,
+      approvedMemberId: plan.userUpdate.update.approvedMemberId,
+      approvedAt: plan.userUpdate.update.approvedAt,
+      memberId: deleteField(),
+      updatedAt: plan.userUpdate.update.updatedAt,
+    });
+  }
+
+  if (currentUser) {
+    batch.set(doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id), {
+      ...plan.auditEntry,
+      timestamp: serverTimestamp(),
+    });
+  }
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `members/${memberId}`);
   }
 }
 
@@ -2177,7 +2307,7 @@ export async function exportFullBackupJSON(options?: { includePII?: boolean }): 
 
   if (!currentUserEmail || !auth.currentUser?.emailVerified || currentUserEmail !== superAdminEmail) {
     throw new Error(
-      `Permission denied: Only the Super Administrator (${SUPER_ADMIN_EMAIL}) may export database backups.`
+      'Permission denied: Only the designated Super Administrator may export database backups.'
     );
   }
 
@@ -2758,7 +2888,7 @@ export const initializeFirestoreWithDefaults = async (
     founder.name,
     founder.handle,
     founder.authUid || '',
-    founder.email || 'rahatmdmahadihasan@gmail.com'
+    founder.email || ''
   );
   try {
     await createSessionInFirestore(initialSession);

@@ -103,7 +103,7 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
     if (!isSuperAdmin) {
       setMessage({
         type: 'error',
-        text: `Only the designated Super Administrator (${SUPER_ADMIN_EMAIL}) can grant or revoke application admin access.`,
+        text: 'Only the designated Super Administrator can grant or revoke application admin access.',
       });
       return;
     }

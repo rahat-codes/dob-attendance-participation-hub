@@ -520,13 +520,40 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                       </div>
                     </div>
 
-                    {(req.membershipRequestedAt || req.createdAt) && (
-                      <span className="text-[10px] font-mono text-zinc-500 shrink-0 flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {new Date((req.membershipRequestedAt || req.createdAt) as string).toLocaleDateString()}
-                      </span>
-                    )}
+                    <div className="shrink-0 text-right space-y-0.5">
+                      {(req.membershipRequestedAt || req.createdAt) && (
+                        <span className="text-[10px] font-mono text-zinc-500 flex items-center justify-end gap-1">
+                          <Clock className="h-3 w-3" />
+                          <span>Applied {new Date((req.membershipRequestedAt || req.createdAt) as string).toLocaleDateString()}</span>
+                        </span>
+                      )}
+                      {req.respondedAt && (
+                        <span className="text-[10px] font-mono text-zinc-400 block">
+                          Responded {new Date(req.respondedAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Status Banner for Active History Card */}
+                  {req.status === 'active' && (
+                    <div className="p-3 rounded-2xl bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-xs text-zinc-200 space-y-1">
+                      <div className="flex items-center justify-between gap-2 font-bold text-[#b5ff00]">
+                        <span className="flex items-center gap-1.5">
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-[#b5ff00]" />
+                          <span>Membership Accepted &amp; Active</span>
+                        </span>
+                        {req.respondedAt && (
+                          <span className="text-[10px] font-mono text-zinc-300 font-normal">
+                            {new Date(req.respondedAt).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-zinc-300">
+                        Applicant accepted the invitation{req.memberId ? ` (Roster ID: ${req.memberId})` : ''}.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Status Banner for Approved — Waiting for User Response */}
                   {req.status === 'approved_waiting_response' && (
@@ -544,9 +571,16 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                   {/* Status Banner for Declined */}
                   {req.status === 'declined' && (
                     <div className="p-3 rounded-2xl bg-red-950/30 border border-red-500/30 text-xs text-red-200 space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-red-300">
-                        <XCircle className="h-4 w-4 shrink-0 text-red-400" />
-                        <span>Request Declined</span>
+                      <div className="flex items-center justify-between gap-2 font-bold text-red-300">
+                        <span className="flex items-center gap-1.5">
+                          <XCircle className="h-4 w-4 shrink-0 text-red-400" />
+                          <span>Request Declined</span>
+                        </span>
+                        {req.respondedAt && (
+                          <span className="text-[10px] font-mono text-red-200/80 font-normal">
+                            {new Date(req.respondedAt).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-zinc-300">
                         This request was previously declined. You can select a member profile and click Approve or Activate Directly to re-admit this user.

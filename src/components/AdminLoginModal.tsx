@@ -123,7 +123,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
 
   const handleRevokeAdmin = async (adminUid: string, adminEmail: string) => {
     if (adminEmail.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
-      alert('The designated Super Administrator cannot be revoked.');
+      setActionMessage({
+        type: 'error',
+        text: 'The designated Super Administrator cannot be revoked.',
+      });
       return;
     }
     if (!window.confirm(`Revoke application administrator privileges from "${adminEmail}"?\n\nAuth UID: ${adminUid}`)) {
@@ -419,7 +422,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                   <div className="p-2.5 rounded-xl bg-amber-950/20 border border-amber-500/30 flex items-center justify-between gap-2 font-mono text-[11px]">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-white font-bold">{SUPER_ADMIN_EMAIL}</span>
+                        <span className="text-white font-bold">{user?.email || 'Designated Super Administrator'}</span>
                         <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold uppercase">
                           Permanent Super Admin
                         </span>

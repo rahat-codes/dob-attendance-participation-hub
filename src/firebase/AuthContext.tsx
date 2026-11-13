@@ -540,7 +540,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isApprovedMember = Boolean(
     profile?.status === 'active' &&
     profile?.memberId &&
-    linkedMember?.status !== 'Inactive'
+    linkedMember &&
+    linkedMember.status !== 'Inactive'
   );
 
   return (

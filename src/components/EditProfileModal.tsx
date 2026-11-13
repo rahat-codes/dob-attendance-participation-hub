@@ -409,7 +409,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Rahat Mahadi"
+              placeholder="Ada Lovelace"
               autoComplete="name"
               enterKeyHint="next"
               className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2.5 text-zinc-100 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"

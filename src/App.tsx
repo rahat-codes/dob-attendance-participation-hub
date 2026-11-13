@@ -47,6 +47,7 @@ import {
   reopenSession,
   recordCheckInAtomic,
   adminDeleteMember,
+  reactivateMember,
   adminDeleteSession,
   adminDeleteCheckIn,
   initializeFirestoreWithDefaults,
@@ -823,9 +824,9 @@ export default function App() {
     const todayStr = todayInClubTz();
     const initialFounder: Member = {
       id: 'mem_1',
-      name: user.displayName || 'Rahat Mahadi',
-      handle: '@rahat',
-      email: user.email || 'rahatmdmahadihasan@gmail.com',
+      name: user.displayName || 'Club Founder',
+      handle: '@founder',
+      email: user.email || '',
       authUid: user.uid,
       role: 'President',
       tracks: ['Hardware & Robotics', 'AI & Embedded'],
@@ -851,7 +852,7 @@ export default function App() {
       points: 10,
       status: 'active',
       timezone: DEFAULT_CLUB_TIMEZONE,
-      host: user.displayName || 'Rahat Mahadi',
+      host: user.displayName || 'Guild Lead',
     };
 
     await initializeFirestoreWithDefaults(initialFounder, initialSession);
@@ -1462,6 +1463,16 @@ export default function App() {
                       id: member.id,
                       member,
                     });
+                  }}
+                  onReactivateMember={async (member) => {
+                    if (!isAdmin) return;
+                    try {
+                      await reactivateMember(member.id);
+                    } catch (err: any) {
+                      console.error('Failed to reactivate member:', err);
+                      const code = err?.code ? `[${err.code}] ` : '';
+                      setFirestoreError(`Failed to reactivate member: ${code}${err?.message || 'Access denied'}`);
+                    }
                   }}
                   onViewMemberPass={(m) => setSelectedPassMember(m)}
                 />

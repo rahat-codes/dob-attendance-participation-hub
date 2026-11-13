@@ -443,13 +443,13 @@ async function runTests() {
     id: 'log_123456789',
     action: 'delete_session' as const,
     performedBy: 'admin_uid_777',
-    performedByEmail: 'rahatmdmahadihasan@gmail.com',
+    performedByEmail: 'admin@denofbuilders.org',
     details: 'Permanently deleted session sess_test_1 ("Edge AI Sprint")',
     timestamp: '2026-10-10T18:00:00.000Z',
   };
 
   assert(
-    sampleAuditLog.performedByEmail === 'rahatmdmahadihasan@gmail.com' &&
+    sampleAuditLog.performedByEmail === 'admin@denofbuilders.org' &&
     sampleAuditLog.action === 'delete_session' &&
     sampleAuditLog.details.includes('sess_test_1'),
     'Audit log record correctly preserves admin identity, deletion action, and record context'
