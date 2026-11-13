@@ -4,6 +4,7 @@ import { Member, BuilderRole, BuilderTrack } from '../types';
 import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
+import { BUILDER_TRACKS } from '../config/constants';
 
 interface AddMemberModalProps {
   isOpen: boolean;
@@ -18,6 +19,11 @@ interface AddMemberModalProps {
     authUid?: string;
     studentId?: string;
     university?: string;
+    tracks?: BuilderTrack[];
+    githubUrl?: string;
+    linkedinUrl?: string;
+    portfolioUrl?: string;
+    showLinksPublicly?: boolean;
   } | null;
 }
 
@@ -65,7 +71,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       setAvatarUrl('');
       setRole('Builder');
       setBio('');
-      setSelectedTracks(['Hardware & Robotics']);
+      setSelectedTracks(prefill.tracks && prefill.tracks.length > 0 ? prefill.tracks : ['Hardware & Robotics']);
       setFormError(null);
       setFormSuccess(null);
     } else {
@@ -83,8 +89,24 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
     }
   }, [initialMember, prefill, isOpen]);
 
+  const baseName = initialMember ? initialMember.name : (prefill?.name || '');
+  const baseHandle = initialMember ? initialMember.handle : (prefill?.handle || '');
+  const baseEmail = initialMember ? (initialMember.email || '') : (prefill?.email || '');
+  const baseStudentId = initialMember ? (initialMember.studentId || '') : (prefill?.studentId || '');
+  const baseUniversity = initialMember ? (initialMember.university || 'Tongmyong University') : (prefill?.university || 'Tongmyong University');
+  const baseBio = initialMember ? (initialMember.bio || '') : '';
+  const baseAvatarUrl = initialMember ? (initialMember.avatarUrl || initialMember.photoURL || '') : '';
+  const baseRole = initialMember ? initialMember.role : 'Builder';
+
   const hasUnsavedChanges = Boolean(
-    name.trim() || handle.trim() || email.trim() || studentId.trim() || bio.trim() || avatarUrl.trim() || (university !== 'Tongmyong University')
+    name !== baseName ||
+    handle !== baseHandle ||
+    email !== baseEmail ||
+    studentId !== baseStudentId ||
+    university !== baseUniversity ||
+    bio !== baseBio ||
+    avatarUrl !== baseAvatarUrl ||
+    role !== baseRole
   );
 
   const toggleTrack = (track: BuilderTrack) => {
@@ -184,6 +206,10 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
           currentStreak: 0,
           bestStreak: 0,
           bio: bio.trim() || 'New member of Den of Builders.',
+          ...(prefill?.githubUrl ? { githubUrl: prefill.githubUrl } : {}),
+          ...(prefill?.linkedinUrl ? { linkedinUrl: prefill.linkedinUrl } : {}),
+          ...(prefill?.portfolioUrl ? { portfolioUrl: prefill.portfolioUrl } : {}),
+          ...(prefill?.showLinksPublicly !== undefined ? { showLinksPublicly: prefill.showLinksPublicly } : {}),
         };
         await onAddMember(newMember);
         setFormSuccess(`Successfully registered ${cleanName} in the guild roster!`);
@@ -409,14 +435,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
         <div>
           <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Primary Tracks</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {(
-              [
-                'Hardware & Robotics',
-                'Software & Systems',
-                'AI & Embedded',
-                'Open Hack & Demo',
-              ] as BuilderTrack[]
-            ).map((t) => {
+            {BUILDER_TRACKS.map((t) => {
               const checked = selectedTracks.includes(t);
               return (
                 <button

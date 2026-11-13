@@ -14,7 +14,9 @@ import {
   UserProfile,
   PublicLeaderboardItem,
   ClubNotification,
+  BuilderTrack,
 } from './types';
+import { getPendingCheckIn } from './utils/deepLink';
 import {
   getStoredMembers,
   saveStoredMembers,
@@ -227,6 +229,11 @@ export default function App() {
     authUid?: string;
     studentId?: string;
     university?: string;
+    tracks?: BuilderTrack[];
+    githubUrl?: string;
+    linkedinUrl?: string;
+    portfolioUrl?: string;
+    showLinksPublicly?: boolean;
   } | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [selectedPassMember, setSelectedPassMember] = useState<Member | null>(null);
@@ -579,12 +586,12 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user, isAdmin]);
 
-  // Handle URL query parameters for instant scan opening
+  // Handle URL query parameters or captured deep link state for instant scan opening
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && isApprovedMember) {
       const p = new URLSearchParams(window.location.search);
-      const hasScanParam = p.get('verify') === 'attendance' || p.get('sessionId') || p.get('checkin');
-      if (hasScanParam && isApprovedMember) {
+      const hasScanParam = p.get('verify') === 'attendance' || p.get('sessionId') || p.get('checkin') || p.get('s') || p.get('t');
+      if (hasScanParam || getPendingCheckIn()) {
         setIsScannerOpen(true);
       }
     }
@@ -770,6 +777,11 @@ export default function App() {
           authUid: req.id,
           studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
+          tracks: decoded.applicantTrack ? [decoded.applicantTrack] : undefined,
+          githubUrl: decoded.githubUrl,
+          linkedinUrl: decoded.linkedinUrl,
+          portfolioUrl: decoded.portfolioUrl,
+          showLinksPublicly: decoded.showLinksPublicly,
         });
         setIsAddMemberOpen(true);
       }

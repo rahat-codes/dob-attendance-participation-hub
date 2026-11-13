@@ -248,6 +248,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (updatedProfile.memberId) {
                   loadMemberData(updatedProfile.memberId);
                 } else {
+                  if (memberUnsubRef.current) {
+                    memberUnsubRef.current();
+                    memberUnsubRef.current = null;
+                  }
+                  if (privateUnsubRef.current) {
+                    privateUnsubRef.current();
+                    privateUnsubRef.current = null;
+                  }
                   setLinkedMember(null);
                   setMemberPrivate(null);
                 }
@@ -316,8 +324,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Sign-out cleanup
         if (profileUnsubRef.current) profileUnsubRef.current();
         if (memberUnsubRef.current) memberUnsubRef.current();
+        if (privateUnsubRef.current) privateUnsubRef.current();
         profileUnsubRef.current = null;
         memberUnsubRef.current = null;
+        privateUnsubRef.current = null;
         setProfile(null);
         setLinkedMember(null);
         setMemberPrivate(null);
@@ -331,6 +341,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribeAuth();
       if (profileUnsubRef.current) profileUnsubRef.current();
       if (memberUnsubRef.current) memberUnsubRef.current();
+      if (privateUnsubRef.current) privateUnsubRef.current();
     };
   }, [attachUserListeners, clearAuthError]);
 
@@ -432,6 +443,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await updateUserSelfProfile(user.uid, { requestedNotes: notes });
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to update notes.');
+      throw err;
     }
   };
 
@@ -485,8 +497,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const isSuperAdmin =
-    Boolean(user?.email && user.email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim());
+  const isSuperAdmin = Boolean(
+    user?.email &&
+    user.emailVerified &&
+    user.email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()
+  );
 
   // Derive authoritative phase state machine using pure state machine helper
   let membershipPhase: MembershipPhase = 'loading';

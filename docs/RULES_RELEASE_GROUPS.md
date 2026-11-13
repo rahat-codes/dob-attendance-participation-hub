@@ -1,79 +1,60 @@
 # Firestore Rules Release Groups & Migration Sequencing
 
-This document defines the production release staging for Firestore Security Rules in DOB-Hub. Staging into Groups **A1**, **A2**, and **B** guarantees zero downtime, backward compatibility with existing production documents, and prevention of client breakage.
+This document defines the exact production release sequence for Firestore Security Rules in DOB-Hub. Staging into **A1**, **A2**, data repair, and **B** ensures zero downtime and prevents old or transitioning clients from breaking.
+
+> **IMPORTANT**: Always paste each rules file into the **Firebase Console -> Firestore Database -> Rules** editor and run its built-in syntax/simulator check **before** publishing. Never deploy Group B before step 6 passes with zero non-whitelisted keys on `members`.
 
 ---
 
-## 1. Group Definitions & Release Order
+## 1. Exact 7-Step Release Sequence
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Group A1: Additive & Safe Pre-Client Rules                  │
-│ • Can be deployed BEFORE any client updates                 │
-│ • Backward compatible with all existing production data     │
-│ • Non-breaking security fixes and validators                │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Group A2: Client-Coupled Rules (Synchronized Release)       │
-│ • Deployed TOGETHER with updated client code                │
-│ • Requires new client shapes (8-char prevToken, authUid)   │
-│ • Breaks older un-updated client versions                   │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ [Data Migration]: Admin Repair Tool (Idempotent Dry Run)    │
-│ • Strips legacy PII from members into memberPrivate         │
-│ • Reconciles orphan counters and verifies clean documents   │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Group B: Strict Post-Migration Rules (Locked Whitelists)     │
-│ • Deployed ONLY AFTER data migration completes              │
-│ • Strict key whitelists (no legacy fields allowed)          │
-│ • Located in `docs/RULES_GROUP_B.md`                        │
-└─────────────────────────────────────────────────────────────┘
-```
+1. **Backup Database First**
+   - Export a full backup using the in-app Super Admin JSON Exporter (`exportFullBackupJSON({ includePII: true })`) or Google Cloud / Firebase Console Managed Export.
+2. **Publish Group A1 Rules Only (`docs/rules/A1.rules`)**
+   - Paste `docs/rules/A1.rules` into the Firebase Console Rules Editor, verify syntax, and publish.
+   - Safe to publish **before** deploying the new client build: enforces email binding/immutability, date-bound `monthKey`, completed-session rejection, link regexes, size bounds, legacy member/session update tolerance, and legacy notification/audit compatibility.
+3. **Publish the New Client Build**
+   - Deploy the updated web application so kiosks emit 8-char `prevToken`, self check-ins exclude `notes`/`verifiedBy`, audit logs use `serverTimestamp()`, and profile edits write clean `member` / `memberPrivate` documents.
+4. **Publish Group A1 + A2 Rules (`firestore.rules`) During Idle Window**
+   - Within minutes after client rollout—**while no check-in session is actively running**—paste `firestore.rules` into the Firebase Console Rules Editor, check syntax, and publish.
+   - Activates `[Group A2]` client-coupled rules: strict 8-char `prevToken`, self check-in forbid `notes`/`verifiedBy`, authoritative manual `verifiedBy`, strict `notifications` create whitelist, and strict `auditLogs` `request.time` + field whitelist.
+5. **Run Repair Tools (Dry Run -> Review -> Commit)**
+   - In the Admin Tools UI, execute `prepareMemberDataRepair` and `prepareUserStateRepair` dry runs, inspect every proposed change, and commit (`executeMemberDataRepair` / `executeUserStateRepair`) to migrate legacy `email`/`phone`/`studentId`/`university`/counter keys out of `members/{memberId}` into `memberPrivate/{memberId}`.
+6. **Verify Zero Legacy Keys on `members` (Read-Only Check)**
+   - Run a read-only inspection (re-run the repair dry-run or inspect `members` documents) and confirm it reports **0** members with non-whitelisted keys (only the 16 keys allowed in `PUBLIC_MEMBER_WHITELIST` remain) and all legacy sessions lacking `startAt`/`endAt` are updated.
+7. **Publish Group B Strict Post-Migration Rules (`docs/RULES_GROUP_B.md`)**
+   - Only after step 6 reports zero remaining non-whitelisted keys, paste the ruleset from `docs/RULES_GROUP_B.md` into the Firebase Console Rules Editor, check syntax, and publish to permanently lock down `members`, `users` (single `notificationPrefs`), and `sessions` (`isValidSessionFull`).
 
 ---
 
-## 2. Group Details
+## 2. Rule File Responsibilities
 
-### Group A1: Additive & Safe Before Client Updates
-These rules enhance security without requiring immediate client changes or data migrations:
-1. **Users Schema Limits**: Size bounds on `applicantName` (<= 100), `applicantHandle` (<= 31), `applicantStudentId` (<= 20), `applicantTrack` (<= 60), `applicantNote` (<= 300), `requestedNotes` (<= 600), `readAnnouncementIds` (<= 100), and boolean validation on `showLinksPublicly`.
-2. **Email Immutability & Binding**: `users.email` is bound to `request.auth.token.email.lower()` on creation and is strictly immutable (`request.resource.data.email == resource.data.email`) on all updates.
-3. **Dual Notification Preference Compatibility**: `isValidUser` permits both `notificationPrefs` and `notificationPreferences` maps to accommodate legacy and new profile formats.
-4. **Member Size & Type Bounds**: Bounds `member.bio` (<= 500), `tracks` (<= 10), and validates `leaderboardOptOut` and `showLinksPublicly` as booleans while permitting legacy fields (`email`, `phone`, `counters`) so admin edits to existing members are not denied.
-5. **Session Split & Legacy-Tolerant Updates**:
-   - `isValidSessionFull` enforces full schema for new session creation.
-   - `sessions/{sessionId}` update rule allows a legacy-tolerant branch (`affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt'])`), permitting admins to cancel, close, reopen, or mark completed legacy sessions before data migration.
-6. **Notification Owner Update Tolerance**: Owner update rule requires only `affectedKeys().hasOnly(['read', 'dismissed'])` with boolean checks and `userId` immutability, allowing legacy notifications to be marked read without failing strict schema validation.
-7. **Date-Bound `monthKey`**: CEL comparison using `date.split('-')[0] + '-' + date.split('-')[1]` ensures monthKey strictly matches session date.
-8. **Rejection of Completed Sessions**: `sessionOpen` check explicitly denies check-in writes to sessions marked `'completed'`.
+### `docs/rules/A1.rules` (Group A1 Only)
+- **Users Schema & Lifecycle**: Size bounds (`applicantName <= 100`, `applicantHandle <= 31`, `applicantStudentId <= 20`, `applicantNote <= 300`, `requestedNotes <= 600`, `readAnnouncementIds <= 100`), fixed `BUILDER_TRACKS` enum for `applicantTrack`, email bound to `request.auth.token.email.lower()` on create, immutable email on update, dual `notificationPrefs` / `notificationPreferences` maps, and `declined` or deactivated (`status == 'active' && !isActiveMember()`) -> `pending` re-apply path.
+- **Legacy Tolerance**: Allows legacy member updates (`email`, `phone`, counters), legacy session status/mode/timestamp updates, legacy notification `read`/`dismissed` owner toggles, legacy empty `prevToken`, and ISO-timestamp audit entries from un-updated clients.
+- **Core Check-In Safety**: Date-bound `monthKey` (`date.split('-')[0] + '-' + date.split('-')[1]`), `completed` session rejection, ±15s `lateAt` tolerance.
 
-### Group A2: Client-Coupled Rules (Synchronized Release)
-These rules require matching client implementations and must be deployed together with the new web client:
-1. **8-Character Session PrevToken**: `sessionTokens` create/update requires `prevToken is string && prevToken.matches('^[A-Z0-9]{8}$')`. Old kiosks that write `prevToken: ''` or omit `prevToken` will be denied.
-2. **Check-In Field Allowlist on Self Check-In**: Member self check-in strictly forbids `notes` and `verifiedBy`.
-3. **Manual Check-In Shape**: Admin manual door check-in enforces `verifiedBy: request.auth.uid` as authoritative and no longer requires `authUid`.
-4. **Strict Notification Whitelist on Creation**: `isValidNotification` enforces exact key whitelist (`keys().hasOnly([...])`).
+### `firestore.rules` (Group A1 + Group A2)
+Adds `[Group A2]` client-coupled enforcement on top of Group A1:
+1. `sessionTokens/{sessionId}`: `prevToken` must match `^[A-Z0-9]{8}$`.
+2. `checkIns/{checkInId}` self check-in: `notes` and `verifiedBy` are strictly forbidden (`keys().hasOnly([...])`).
+3. `checkIns/{checkInId}` manual check-in: enforces `verifiedBy == request.auth.uid`, `checkedInAt == request.time`, `exists(members/memberId)`, `exists(sessions/sessionId)`.
+4. `notifications/{notificationId}` create: enforces `isValidNotification` (`keys().hasAll` + `keys().hasOnly` + length bounds).
+5. `auditLogs/{logId}` create: enforces `request.resource.data.timestamp == request.time`, `hasAll`/`hasOnly` field whitelists, and size bounds (`action <= 60`, `details <= 1000`, `performedByEmail <= 150`, `targetId <= 128`, `targetName <= 150`).
 
-### Group B: Strict Post-Migration Rules
-Stored in `docs/RULES_GROUP_B.md`. Must NOT be deployed until `prepareMemberDataRepair` dry-run and migration have executed:
-1. **Strict Member Key Whitelist**: `data.keys().hasOnly(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status', 'authUid', 'avatarUrl', 'bio', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly', 'leaderboardOptOut', 'readAnnouncementIds'])`. Legacy PII (`email`, `phone`, `department`, `major`, `counters`) is completely forbidden on member documents.
-2. **Strict User Key Whitelist**: Requires single canonical `notificationPrefs` key and forbids legacy `notificationPreferences`.
-3. **Mandatory Full Session Schema**: Forbids legacy session updates that lack `startAt`/`endAt` timestamps.
+### `docs/RULES_GROUP_B.md` (Strict Post-Migration Group B)
+Locks down remaining transition allowances once migration completes:
+1. `members/{memberId}`: Strict `hasOnly` of the 16 public keys (`id`, `name`, `handle`, `role`, `tracks`, `joinedDate`, `status`, `avatarUrl`, `bio`, `leaderboardOptOut`, `authUid`, `createdAt`, `githubUrl`, `linkedinUrl`, `portfolioUrl`, `showLinksPublicly`). Legacy PII (`email`, `phone`, `studentId`, `university`, `department`, `major`, `semester`, counters) forbidden on public member docs.
+2. `users/{userId}`: Requires canonical `notificationPrefs` only (forbids legacy `notificationPreferences`).
+3. `sessions/{sessionId}`: Requires `isValidSessionFull` on every create and update.
 
 ---
 
-## 3. Checklist for Operators
-- [ ] Deploy Group A1 + A2 rules (`firestore.rules`) together with client build.
-- [ ] Run member data repair dry-run via Admin Tools (`prepareMemberDataRepair(false)`).
-- [ ] Inspect dry-run results to confirm all legacy member documents and PII are accounted for.
-- [ ] Execute member data repair commit via Admin Tools (`prepareMemberDataRepair(true)`).
-- [ ] Verify zero legacy keys remain in `members` collection.
-- [ ] Deploy Group B rules from `docs/RULES_GROUP_B.md` to lock down schema permanently.
+## 3. Manual Console Verification Checklist
+- [ ] **Step 1**: Full JSON/Console backup downloaded and stored safely.
+- [ ] **Step 2**: Pasted `docs/rules/A1.rules` into Firebase Console Rules Editor -> verified syntax -> published.
+- [ ] **Step 3**: Built and deployed new client bundle.
+- [ ] **Step 4**: Confirmed no session is currently live -> pasted `firestore.rules` into Firebase Console Rules Editor -> verified syntax -> published.
+- [ ] **Step 5**: Ran repair dry run -> reviewed diff -> committed migration.
+- [ ] **Step 6**: Re-ran read-only check -> confirmed `0` members with non-whitelisted keys.
+- [ ] **Step 7**: Pasted `docs/RULES_GROUP_B.md` ruleset into Firebase Console Rules Editor -> verified syntax -> published.

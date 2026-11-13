@@ -137,7 +137,7 @@ service cloud.firestore {
              (!('applicantName' in data) || (data.applicantName is string && data.applicantName.size() <= 100)) &&
              (!('applicantHandle' in data) || (data.applicantHandle is string && data.applicantHandle.size() <= 31)) &&
              (!('applicantStudentId' in data) || (data.applicantStudentId is string && data.applicantStudentId.size() <= 20)) &&
-             (!('applicantTrack' in data) || (data.applicantTrack is string && data.applicantTrack.size() <= 60)) &&
+             (!('applicantTrack' in data) || data.applicantTrack in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo']) &&
              (!('applicantNote' in data) || (data.applicantNote is string && data.applicantNote.size() <= 300)) &&
              (!('requestedNotes' in data) || (data.requestedNotes is string && data.requestedNotes.size() <= 600)) &&
              (!('showLinksPublicly' in data) || data.showLinksPublicly is bool) &&
@@ -266,9 +266,9 @@ service cloud.firestore {
                 'status', 'respondedAt', 'updatedAt'
               ])
             ) ||
-            // Re-request after being declined: declined -> pending transition only
+            // Re-request after being declined or deactivated: declined/deactivated -> pending transition only
             (
-              resource.data.status == 'declined' &&
+              (resource.data.status == 'declined' || (resource.data.status == 'active' && !isActiveMember())) &&
               request.resource.data.status == 'pending' &&
               request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                 'status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt',
@@ -466,12 +466,31 @@ service cloud.firestore {
       allow write: if isAdmin() && isValidId(settingId);
     }
 
-    // Security Audit Logs: Append-only
+    // [Group A2]: Security Audit Logs: Append-only with serverTimestamp and field whitelist
     match /auditLogs/{logId} {
       allow read: if isAdmin();
       allow create: if isAdmin() &&
                        isValidId(logId) &&
-                       request.resource.data.performedBy == request.auth.uid;
+                       request.resource.data.id == logId &&
+                       request.resource.data.performedBy == request.auth.uid &&
+                       request.resource.data.timestamp == request.time &&
+                       request.resource.data.keys().hasAll([
+                         'id', 'action', 'performedBy', 'details', 'timestamp'
+                       ]) &&
+                       request.resource.data.keys().hasOnly([
+                         'id', 'action', 'performedBy', 'performedByEmail',
+                         'targetId', 'targetName', 'details', 'timestamp', 'metadata'
+                       ]) &&
+                       request.resource.data.action is string &&
+                       request.resource.data.action.size() > 0 &&
+                       request.resource.data.action.size() <= 60 &&
+                       request.resource.data.details is string &&
+                       request.resource.data.details.size() > 0 &&
+                       request.resource.data.details.size() <= 1000 &&
+                       (!('performedByEmail' in request.resource.data) || (request.resource.data.performedByEmail is string && request.resource.data.performedByEmail.size() <= 150)) &&
+                       (!('targetId' in request.resource.data) || (request.resource.data.targetId is string && request.resource.data.targetId.size() <= 128)) &&
+                       (!('targetName' in request.resource.data) || (request.resource.data.targetName is string && request.resource.data.targetName.size() <= 150)) &&
+                       (!('metadata' in request.resource.data) || request.resource.data.metadata is map);
       allow update, delete: if false;
     }
   }

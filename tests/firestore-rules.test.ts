@@ -801,6 +801,107 @@ async function runRulesTests() {
     );
   });
 
+  // ========================================================================
+  // SUITE 13: AUDIT LOG SERVER TIMESTAMP & DEACTIVATED RE-APPLY TRANSITION
+  // ========================================================================
+  await test('Audit Logs Security: Enforces serverTimestamp(), field whitelist, and performedBy match (written, NOT RUN)', async () => {
+    const adminContext = testEnv.authenticatedContext('admin_super_1', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    const adminDb = adminContext.firestore();
+
+    // 1. Valid audit log with serverTimestamp() succeeds
+    await assertSucceeds(
+      setDoc(doc(adminDb, 'auditLogs', 'log_valid_server_ts_1'), {
+        id: 'log_valid_server_ts_1',
+        action: 'complete_session',
+        performedBy: 'admin_super_1',
+        performedByEmail: SUPER_ADMIN_EMAIL,
+        targetId: 'sess_test_1',
+        details: 'Marked session sess_test_1 as completed',
+        timestamp: serverTimestamp(),
+      })
+    );
+
+    // 2. Audit log with client ISO string timestamp is DENIED
+    await assertFails(
+      setDoc(doc(adminDb, 'auditLogs', 'log_bad_iso_ts_1'), {
+        id: 'log_bad_iso_ts_1',
+        action: 'complete_session',
+        performedBy: 'admin_super_1',
+        details: 'Client timestamp must fail',
+        timestamp: new Date().toISOString(),
+      })
+    );
+
+    // 3. Audit log with unexpected field (timestampIso) is DENIED
+    await assertFails(
+      setDoc(doc(adminDb, 'auditLogs', 'log_extra_field_1'), {
+        id: 'log_extra_field_1',
+        action: 'complete_session',
+        performedBy: 'admin_super_1',
+        details: 'Extra field must fail',
+        timestamp: serverTimestamp(),
+        timestampIso: new Date().toISOString(),
+      })
+    );
+
+    // 4. Audit log with spoofed performedBy is DENIED
+    await assertFails(
+      setDoc(doc(adminDb, 'auditLogs', 'log_spoof_actor_1'), {
+        id: 'log_spoof_actor_1',
+        action: 'complete_session',
+        performedBy: 'other_admin_uid',
+        details: 'Spoofed actor must fail',
+        timestamp: serverTimestamp(),
+      })
+    );
+  });
+
+  await test('Deactivated User Re-Apply: Deactivated member can transition active -> pending on re-apply (written, NOT RUN)', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'members', 'mem_inactive_1'), {
+        id: 'mem_inactive_1',
+        name: 'Deactivated Builder',
+        handle: '@inactive_builder',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        joinedDate: '2026-01-01',
+        status: 'Inactive',
+        authUid: 'user_inactive_1',
+      });
+      await setDoc(doc(context.firestore(), 'users', 'user_inactive_1'), {
+        id: 'user_inactive_1',
+        email: 'inactive@example.com',
+        displayName: 'Deactivated Builder',
+        status: 'active',
+        memberId: 'mem_inactive_1',
+      });
+    });
+
+    const inactiveCtx = testEnv.authenticatedContext('user_inactive_1', {
+      email: 'inactive@example.com',
+      email_verified: true,
+    });
+    const db = inactiveCtx.firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'user_inactive_1'), {
+        status: 'pending',
+        requestedNotes: '@inactive_builder - Track: Software & Systems - Name: Deactivated Builder',
+        applicantName: 'Deactivated Builder',
+        applicantHandle: '@inactive_builder',
+        applicantTrack: 'Software & Systems',
+        githubUrl: 'https://github.com/inactivebuilder',
+        linkedinUrl: 'https://www.linkedin.com/in/inactive-builder',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
   console.log('\n========================================');
   console.log(`PHASE 2 RULES TEST SUITE COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);

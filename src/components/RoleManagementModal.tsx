@@ -21,6 +21,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { useAuth } from '../firebase/AuthContext';
 import { ModalSheet } from './ModalSheet';
+import { toJsDate } from '../utils/sessionWindow';
 
 interface RoleManagementModalProps {
   isOpen: boolean;
@@ -46,7 +47,9 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
 }) => {
   const { user } = useAuth();
   const isSuperAdmin = Boolean(
-    user?.email && user.email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()
+    user?.email &&
+    user.emailVerified &&
+    user.email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()
   );
 
   const [selectedClubRole, setSelectedClubRole] = useState<BuilderRole>(member.role);
@@ -333,7 +336,7 @@ export const RoleManagementModal: React.FC<RoleManagementModalProps> = ({
                     <p className="text-zinc-500 mt-0.5">By: {log.performedByEmail}</p>
                   </div>
                   <span className="text-zinc-500 shrink-0">
-                    {new Date(log.timestamp).toLocaleDateString()}
+                    {toJsDate(log.timestamp).toLocaleDateString()}
                   </span>
                 </div>
               ))}

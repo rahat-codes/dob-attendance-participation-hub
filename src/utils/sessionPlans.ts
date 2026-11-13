@@ -15,7 +15,6 @@ export interface SessionBatchPlan {
     performedByEmail?: string;
     targetId: string;
     details: string;
-    timestampIso: string;
   };
 }
 
@@ -45,7 +44,6 @@ export function buildCompleteSessionBatchPlan(
       performedByEmail: operatorEmail,
       targetId: sessionId,
       details: `Marked session ${sessionId} as completed`,
-      timestampIso: nowIso,
     },
   };
 }
@@ -76,7 +74,6 @@ export function buildReopenSessionBatchPlan(
       performedByEmail: operatorEmail,
       targetId: sessionId,
       details: `Reopened session ${sessionId} with checkInMode ${targetMode}`,
-      timestampIso: nowIso,
     },
   };
 }

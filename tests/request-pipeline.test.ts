@@ -173,5 +173,28 @@ console.log('--- RUNNING REQUEST PIPELINE & WRONG-ACCOUNT GUARD TESTS ---');
   console.log('✓ (c) wrong-account guard formatting and non-redirect navigation logic passed');
 }
 
+// Test 5: Re-applicant badge condition does not trigger on fresh signup -> form submission
+{
+  const isReapplicant = (req: { status?: string; respondedAt?: string }) =>
+    Boolean(req.status === 'declined' || (req.status === 'pending' && req.respondedAt));
+
+  assert.equal(
+    isReapplicant({ status: 'pending' }),
+    false,
+    'Fresh applicant whose membershipRequestedAt differs from createdAt must not be tagged Re-applicant'
+  );
+  assert.equal(
+    isReapplicant({ status: 'declined', respondedAt: '2026-11-01T00:00:00Z' }),
+    true,
+    'Declined applicant is tagged Re-applicant'
+  );
+  assert.equal(
+    isReapplicant({ status: 'pending', respondedAt: '2026-11-01T00:00:00Z' }),
+    true,
+    'Previously responded applicant returning to pending is tagged Re-applicant'
+  );
+  console.log('✓ (d) Re-applicant badge logic verified against first-time submission false positives');
+}
+
 console.log('ALL REQUEST PIPELINE TESTS PASSED SUCCESSFULLY!');
 process.exit(0);

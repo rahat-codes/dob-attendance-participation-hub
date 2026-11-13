@@ -358,4 +358,37 @@ console.log('--- RUNNING REUSE & ID LIFECYCLE TESTS ---');
   console.log('✓ Complete Re-Apply & Handle Reuse lifecycle simulation passed cleanly');
 }
 
+// Test 10: parseApplicantNotes hyphen preservation and edge cases
+{
+  const hyphenHandle = parseApplicantNotes('@john-doe - ID: 2026-0042 - Track: AI & Embedded - Name: Anne-Marie Smith');
+  assert.equal(hyphenHandle.handle, 'john-doe', 'Hyphenated handle @john-doe must not be truncated');
+  assert.equal(hyphenHandle.studentId, '2026-0042', 'Hyphenated student ID must be preserved');
+  assert.equal(hyphenHandle.track, 'AI & Embedded', 'Track must be extracted cleanly');
+  assert.equal(hyphenHandle.name, 'Anne-Marie Smith', 'Hyphenated name Anne-Marie Smith must not be truncated');
+
+  const legacyDot = parseApplicantNotes('@legacy-user · ID: 20240011 · Track: Hardware & Robotics · Name: Jean-Luc Picard');
+  assert.equal(legacyDot.handle, 'legacy-user');
+  assert.equal(legacyDot.studentId, '20240011');
+  assert.equal(legacyDot.track, 'Hardware & Robotics');
+  assert.equal(legacyDot.name, 'Jean-Luc Picard');
+
+  const empty = parseApplicantNotes('');
+  assert.equal(empty.handle, '');
+  assert.equal(empty.studentId, undefined);
+  assert.equal(empty.name, undefined);
+
+  const undefinedNotes = parseApplicantNotes(undefined);
+  assert.equal(undefinedNotes.handle, '');
+
+  const handleOnly = parseApplicantNotes('@solo-builder');
+  assert.equal(handleOnly.handle, 'solo-builder');
+  assert.equal(handleOnly.studentId, undefined);
+
+  const idOnly = parseApplicantNotes('ID: 2026-9901');
+  assert.equal(idOnly.handle, '');
+  assert.equal(idOnly.studentId, '2026-9901');
+
+  console.log('✓ parseApplicantNotes preserves hyphenated handles, names, IDs, legacy middle-dots, empty and handle-only inputs');
+}
+
 console.log('ALL REUSE & ID LIFECYCLE TESTS PASSED CLEANLY!');

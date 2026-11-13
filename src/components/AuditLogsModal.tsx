@@ -11,6 +11,7 @@ import {
 import { AuditLog } from '../types';
 import { subscribeToAuditLogs } from '../firebase/firestoreService';
 import { ModalSheet } from './ModalSheet';
+import { toJsDate } from '../utils/sessionWindow';
 
 interface AuditLogsModalProps {
   isOpen: boolean;
@@ -185,7 +186,7 @@ export const AuditLogsModal: React.FC<AuditLogsModalProps> = ({ isOpen, onClose 
                   </div>
                   <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-mono">
                     <Clock className="h-3.5 w-3.5" />
-                    <span>{new Date(log.timestamp).toLocaleString()}</span>
+                    <span>{toJsDate(log.timestamp).toLocaleString()}</span>
                   </div>
                 </div>
 

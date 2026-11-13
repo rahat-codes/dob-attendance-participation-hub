@@ -113,9 +113,8 @@ service cloud.firestore {
       return url == null || url == '' || (
         url is string &&
         url.size() <= 200 &&
-        url.matches('^https://[a-zA-Z0-9_\\-\\.]+\\.[a-zA-Z]{2,}(/.*)?$') &&
-        !url.matches('.*[@\\\\:0-9].*localhost.*') &&
-        !url.matches('^https://(localhost|127\\.|10\\.|192\\.168\\.|172\\.).*')
+        url.matches('^https://[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?)*\\.[a-zA-Z]{2,}(/[^\\s]*)?$') &&
+        !url.matches('^https://([^/]+\\.)?localhost(/.*)?$')
       );
     }
 
@@ -139,11 +138,20 @@ service cloud.firestore {
              (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
              (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
              (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
+             (!('applicantName' in data) || (data.applicantName is string && data.applicantName.size() <= 100)) &&
+             (!('applicantHandle' in data) || (data.applicantHandle is string && data.applicantHandle.size() <= 31)) &&
+             (!('applicantStudentId' in data) || (data.applicantStudentId is string && data.applicantStudentId.size() <= 20)) &&
+             (!('applicantTrack' in data) || data.applicantTrack in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo']) &&
+             (!('applicantNote' in data) || (data.applicantNote is string && data.applicantNote.size() <= 300)) &&
+             (!('requestedNotes' in data) || (data.requestedNotes is string && data.requestedNotes.size() <= 600)) &&
+             (!('showLinksPublicly' in data) || data.showLinksPublicly is bool) &&
+             (!('readAnnouncementIds' in data) || (data.readAnnouncementIds is list && data.readAnnouncementIds.size() <= 100)) &&
+             (!('notificationPrefs' in data) || data.notificationPrefs is map) &&
              data.status in ['pending', 'approved_waiting_response', 'active', 'declined', 'suspended'];
     }
 
     // Tightened schema: studentId and university are strictly forbidden from public members!
-    // All members must only have the whitelisted 15 keys.
+    // All members must only have the whitelisted 16 public keys.
     function isValidMember(data) {
       return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
              data.keys().hasOnly([
@@ -157,6 +165,9 @@ service cloud.firestore {
              data.role in ['Member', 'Project Leader', 'Vice President', 'President', 'Founder', 'Lead', 'Builder', 'Apprentice'] &&
              data.tracks is list && data.tracks.size() > 0 && data.tracks.size() <= 10 &&
              (!('avatarUrl' in data) || data.avatarUrl == '' || (data.avatarUrl.size() <= 500 && data.avatarUrl.matches('^https://.+'))) &&
+             (!('bio' in data) || (data.bio is string && data.bio.size() <= 500)) &&
+             (!('leaderboardOptOut' in data) || data.leaderboardOptOut is bool) &&
+             (!('showLinksPublicly' in data) || data.showLinksPublicly is bool) &&
              (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
              (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
              (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
@@ -261,9 +272,9 @@ service cloud.firestore {
                 'status', 'respondedAt', 'updatedAt'
               ])
             ) ||
-            // Re-request after being declined: declined -> pending transition only
+            // Re-request after being declined or deactivated: declined/deactivated -> pending transition only
             (
-              resource.data.status == 'declined' &&
+              (resource.data.status == 'declined' || (resource.data.status == 'active' && !isActiveMember())) &&
               request.resource.data.status == 'pending' &&
               request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                 'status', 'requestedNotes', 'membershipRequestedAt', 'updatedAt',
@@ -422,8 +433,9 @@ service cloud.firestore {
         (
           resource.data.userId == request.auth.uid &&
           request.resource.data.userId == resource.data.userId &&
-          isValidNotification(request.resource.data) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'dismissed'])
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'dismissed']) &&
+          (!('read' in request.resource.data) || request.resource.data.read is bool) &&
+          (!('dismissed' in request.resource.data) || request.resource.data.dismissed is bool)
         )
       );
       allow delete: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
@@ -453,12 +465,31 @@ service cloud.firestore {
       allow write: if isAdmin() && isValidId(settingId);
     }
 
-    // Security Audit Logs: Append-only
+    // Security Audit Logs: Append-only with serverTimestamp and field whitelist
     match /auditLogs/{logId} {
       allow read: if isAdmin();
       allow create: if isAdmin() &&
                        isValidId(logId) &&
-                       request.resource.data.performedBy == request.auth.uid;
+                       request.resource.data.id == logId &&
+                       request.resource.data.performedBy == request.auth.uid &&
+                       request.resource.data.timestamp == request.time &&
+                       request.resource.data.keys().hasAll([
+                         'id', 'action', 'performedBy', 'details', 'timestamp'
+                       ]) &&
+                       request.resource.data.keys().hasOnly([
+                         'id', 'action', 'performedBy', 'performedByEmail',
+                         'targetId', 'targetName', 'details', 'timestamp', 'metadata'
+                       ]) &&
+                       request.resource.data.action is string &&
+                       request.resource.data.action.size() > 0 &&
+                       request.resource.data.action.size() <= 60 &&
+                       request.resource.data.details is string &&
+                       request.resource.data.details.size() > 0 &&
+                       request.resource.data.details.size() <= 1000 &&
+                       (!('performedByEmail' in request.resource.data) || (request.resource.data.performedByEmail is string && request.resource.data.performedByEmail.size() <= 150)) &&
+                       (!('targetId' in request.resource.data) || (request.resource.data.targetId is string && request.resource.data.targetId.size() <= 128)) &&
+                       (!('targetName' in request.resource.data) || (request.resource.data.targetName is string && request.resource.data.targetName.size() <= 150)) &&
+                       (!('metadata' in request.resource.data) || request.resource.data.metadata is map);
       allow update, delete: if false;
     }
   }

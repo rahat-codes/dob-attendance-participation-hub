@@ -1,6 +1,7 @@
 import { BuilderTrack, UserProfile } from '../types';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from './profileLinks';
 import { parseApplicantNotes } from './reuseHelpers';
+import { BUILDER_TRACKS } from '../config/constants';
 
 export interface ApplicationInput {
   applicantName: string;
@@ -20,12 +21,7 @@ export interface ApplicationValidationResult {
   sanitized?: ApplicationInput;
 }
 
-const VALID_TRACKS: BuilderTrack[] = [
-  'Hardware & Robotics',
-  'Software & Systems',
-  'AI & Embedded',
-  'Open Hack & Demo',
-];
+const VALID_TRACKS: readonly BuilderTrack[] = BUILDER_TRACKS;
 
 /**
  * Strips dangerous control characters and internal delimiter symbols (·) from user input strings.

@@ -41,6 +41,11 @@ interface PendingRequestsProps {
     authUid?: string;
     studentId?: string;
     university?: string;
+    tracks?: BuilderTrack[];
+    githubUrl?: string;
+    linkedinUrl?: string;
+    portfolioUrl?: string;
+    showLinksPublicly?: boolean;
   }) => void;
   onStatusChange?: () => void;
 }
@@ -122,6 +127,11 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
           authUid: user.id,
           studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
+          tracks: decoded.applicantTrack ? [decoded.applicantTrack] : undefined,
+          githubUrl: decoded.githubUrl,
+          linkedinUrl: decoded.linkedinUrl,
+          portfolioUrl: decoded.portfolioUrl,
+          showLinksPublicly: decoded.showLinksPublicly,
         });
       }
       return;
@@ -169,6 +179,11 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
           authUid: user.id,
           studentId: decoded.applicantStudentId,
           university: 'Tongmyong University',
+          tracks: decoded.applicantTrack ? [decoded.applicantTrack] : undefined,
+          githubUrl: decoded.githubUrl,
+          linkedinUrl: decoded.linkedinUrl,
+          portfolioUrl: decoded.portfolioUrl,
+          showLinksPublicly: decoded.showLinksPublicly,
         });
       }
       return;
@@ -212,6 +227,11 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
           authUid: user.id,
           studentId: decoded.applicantStudentId || oldMember.studentId,
           university: oldMember.university || 'Tongmyong University',
+          tracks: decoded.applicantTrack ? [decoded.applicantTrack] : oldMember.tracks,
+          githubUrl: decoded.githubUrl || oldMember.githubUrl,
+          linkedinUrl: decoded.linkedinUrl || oldMember.linkedinUrl,
+          portfolioUrl: decoded.portfolioUrl || oldMember.portfolioUrl,
+          showLinksPublicly: decoded.showLinksPublicly ?? oldMember.showLinksPublicly,
         });
       }
     } catch (err: any) {
@@ -487,7 +507,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
                             </span>
                           )}
 
-                          {Boolean(req.status === 'declined' || (req.status === 'pending' && (req.respondedAt || (req.membershipRequestedAt && req.updatedAt && req.membershipRequestedAt !== req.createdAt)))) && (
+                          {Boolean(req.status === 'declined' || (req.status === 'pending' && req.respondedAt)) && (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 uppercase font-bold flex items-center gap-1">
                               <span>Re-applicant</span>
                             </span>

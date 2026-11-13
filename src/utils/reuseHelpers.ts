@@ -32,8 +32,18 @@ export function parseApplicantNotes(notes?: string): {
   const idMatch = notes.match(/ID:\s*([A-Za-z0-9_-]+)/i) || notes.match(/\b(20\d{6,8})\b/);
   const studentId = idMatch && idMatch[1] !== 'N/A' ? idMatch[1].trim() : undefined;
 
-  const rawFirstPart = notes.split(/[·\-]/)[0]?.trim() || '';
-  let cleanHandle = rawFirstPart.replace(/^@+/, '').trim();
+  // Split only on middle dot " · " or space-padded hyphen " - " (preserving hyphens inside @john-doe, Anne-Marie, 2026-0042)
+  const parts = notes.split(/\s*·\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  let cleanHandle = '';
+  for (const part of parts) {
+    if (part.startsWith('@')) {
+      cleanHandle = part.replace(/^@+/, '').replace(/[^A-Za-z0-9_.-]/g, '').trim();
+      break;
+    }
+  }
+  if (!cleanHandle && parts.length > 0 && !/^(ID|Track|Name):/i.test(parts[0])) {
+    cleanHandle = parts[0].replace(/^@+/, '').trim();
+  }
 
   // If the first part is purely an ID token or matches studentId, do not treat it as a handle
   if (
@@ -44,10 +54,10 @@ export function parseApplicantNotes(notes?: string): {
     cleanHandle = '';
   }
 
-  const trackMatch = notes.match(/Track:\s*([^·\-]+)/i);
+  const trackMatch = notes.match(/Track:\s*((?:(?!\s*·\s*|\s+-\s+).)+)/i);
   const track = trackMatch ? trackMatch[1].trim() : undefined;
 
-  const nameMatch = notes.match(/Name:\s*([^·\-]+)/i);
+  const nameMatch = notes.match(/Name:\s*((?:(?!\s*·\s*|\s+-\s+).)+)/i);
   const name = nameMatch ? nameMatch[1].trim() : undefined;
 
   return {

@@ -22,6 +22,7 @@ import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
 import { Switch } from '../ui/Switch';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
+import { BUILDER_TRACKS } from '../config/constants';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -33,12 +34,7 @@ interface EditProfileModalProps {
   onProfileUpdated?: (updated: Member) => void;
 }
 
-const AVAILABLE_TRACKS: BuilderTrack[] = [
-  'Hardware & Robotics',
-  'Software & Systems',
-  'AI & Embedded',
-  'Open Hack & Demo',
-];
+const AVAILABLE_TRACKS: readonly BuilderTrack[] = BUILDER_TRACKS;
 
 export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   isOpen,
@@ -97,14 +93,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [success, setSuccess] = useState<string | null>(null);
 
   const hasUnsavedChanges = Boolean(
-    name !== member.name ||
-    email !== (member.email || '') ||
-    phone !== (member.phone || '') ||
-    studentId !== (member.studentId || '') ||
-    university !== (member.university || 'Tongmyong University') ||
-    department !== (member.department || '') ||
-    major !== (member.major || '') ||
-    semester !== (member.semester || '') ||
+    name !== (member.name || '') ||
+    email !== (member.email || memberPrivate?.email || '') ||
+    phone !== (member.phone || memberPrivate?.phone || '') ||
+    studentId !== (member.studentId || memberPrivate?.studentId || '') ||
+    university !== (member.university || memberPrivate?.university || 'Tongmyong University') ||
+    department !== (member.department || memberPrivate?.department || '') ||
+    major !== (member.major || memberPrivate?.major || '') ||
+    semester !== (member.semester || memberPrivate?.semester || '') ||
     avatarUrl !== (member.avatarUrl || member.photoURL || '') ||
     bio !== (member.bio || '') ||
     showOnLeaderboard !== !member.leaderboardOptOut ||

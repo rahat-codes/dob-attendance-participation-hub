@@ -18,6 +18,7 @@ import { BuilderTrack, UserProfile } from '../types';
 import { ApplicationInput, validateApplication, decodeApplication } from '../utils/application';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
 import { Switch } from '../ui/Switch';
+import { BUILDER_TRACKS } from '../config/constants';
 
 interface ApplicationFormProps {
   user: UserProfile;
@@ -27,12 +28,7 @@ interface ApplicationFormProps {
   onSignOut?: () => void;
 }
 
-const AVAILABLE_TRACKS: BuilderTrack[] = [
-  'Hardware & Robotics',
-  'Software & Systems',
-  'AI & Embedded',
-  'Open Hack & Demo',
-];
+const AVAILABLE_TRACKS: readonly BuilderTrack[] = BUILDER_TRACKS;
 
 export const ApplicationForm: React.FC<ApplicationFormProps> = ({
   user,

@@ -1,7 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { nextUserState, getUserState, UnifiedUserState, UserAction } from '../src/utils/userStateMachine';
 import { validateApplication, encodeApplication, decodeApplication, isApplicationSubmitted } from '../src/utils/application';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../src/utils/profileLinks';
 import { buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan } from '../src/utils/sessionPlans';
+import { BUILDER_TRACKS } from '../src/config/constants';
+import { PUBLIC_MEMBER_WHITELIST } from '../src/utils/repairTools';
 import { UserProfile, Member } from '../src/types';
 
 function assert(condition: boolean, msg: string) {
@@ -86,6 +90,15 @@ function testStateMachineTransitions() {
       action: 'deactivate',
       expectedAllowed: true,
       expectedState: 'deactivated',
+    },
+    // Deactivated member re-applying
+    {
+      name: 'Deactivated member re-applying -> allowed, awaiting_review',
+      user: { status: 'active', memberId: 'mem_1' },
+      member: { id: 'mem_1', status: 'Inactive' },
+      action: 'reapply',
+      expectedAllowed: true,
+      expectedState: 'awaiting_review',
     },
     // Suspension and unsuspend restoring derived state
     {
@@ -313,6 +326,7 @@ function testSessionBatchPlanGeneration() {
   assert(completePlan.auditEntry.performedBy === 'admin_uid_1', 'Audit performedBy matches admin');
   assert(completePlan.auditEntry.performedByEmail === 'admin@example.com', 'Audit email matches');
   assert(completePlan.auditEntry.targetId === 'sess_xyz123', 'Audit targetId matches session');
+  assert(!('timestampIso' in completePlan.auditEntry), 'completeSession auditEntry must not include timestampIso');
 
   // 2. reopenSession plan
   const reopenPlan = buildReopenSessionBatchPlan('sess_xyz123', 'auto', 'admin_uid_1', 'admin@example.com');
@@ -320,6 +334,7 @@ function testSessionBatchPlanGeneration() {
   assert(reopenPlan.sessionUpdate.checkInMode === 'auto', 'Reopen checkInMode is auto');
   assert(reopenPlan.auditEntry.action === 'reopen_session', 'Audit action matches reopen_session');
   assert(reopenPlan.auditEntry.performedBy === 'admin_uid_1', 'Audit performedBy matches admin');
+  assert(!('timestampIso' in reopenPlan.auditEntry), 'reopenSession auditEntry must not include timestampIso');
 
   console.log('✓ Session atomic batch plans (completeSession & reopenSession) verified');
 }
@@ -403,6 +418,42 @@ function testLegacyRequestedNotesDecoding() {
   console.log('✓ Legacy requestedNotes decoding (with ·, only handle, empty, student ID only) passed without errors');
 }
 
+// -------------------------------------------------------------
+// 7. BUILDER_TRACKS & Rules Consistency Tests
+// -------------------------------------------------------------
+function testTracksConsistencyAcrossRules() {
+  console.log('--- RUNNING BUILDER_TRACKS & RULES CONSISTENCY TESTS ---');
+
+  const ruleFiles = [
+    path.resolve(process.cwd(), 'firestore.rules'),
+    path.resolve(process.cwd(), 'docs/rules/A1.rules'),
+    path.resolve(process.cwd(), 'docs/RULES_GROUP_B.md'),
+  ];
+
+  const expectedListLiteral = `[${BUILDER_TRACKS.map((t) => `'${t}'`).join(', ')}]`;
+
+  for (const filePath of ruleFiles) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const fileName = path.relative(process.cwd(), filePath);
+    assert(content.includes(expectedListLiteral), `${fileName} must contain identical track list ${expectedListLiteral}`);
+    for (const track of BUILDER_TRACKS) {
+      assert(content.includes(`'${track}'`), `${fileName} must include BUILDER_TRACKS entry '${track}'`);
+    }
+    assert(
+      !content.includes('applicantTrack.size() <= 60'),
+      `${fileName} must not contain free-text applicantTrack fallback`
+    );
+  }
+
+  // Confirm Group B public member whitelist excludes PII and counters
+  assert(PUBLIC_MEMBER_WHITELIST.size === 16, 'PUBLIC_MEMBER_WHITELIST must have exactly 16 public keys');
+  for (const forbiddenKey of ['email', 'phone', 'studentId', 'university', 'totalCheckIns', 'currentStreak', 'bestStreak']) {
+    assert(!PUBLIC_MEMBER_WHITELIST.has(forbiddenKey), `PUBLIC_MEMBER_WHITELIST must exclude ${forbiddenKey}`);
+  }
+
+  console.log('✓ BUILDER_TRACKS matches firestore.rules, docs/rules/A1.rules, and docs/RULES_GROUP_B.md identically');
+}
+
 function runAll() {
   testStateMachineTransitions();
   testProfileLinksValidation();
@@ -410,6 +461,7 @@ function runAll() {
   testSessionReopenLogic();
   testSessionBatchPlanGeneration();
   testLegacyRequestedNotesDecoding();
+  testTracksConsistencyAcrossRules();
   console.log('ALL STEP 2 STATE MACHINE & VALIDATION TESTS PASSED CLEANLY!\n');
 }
 

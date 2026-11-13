@@ -356,7 +356,7 @@ export interface AuditLogEntry {
   performedByEmail?: string;
   targetName?: string;
   details: string;
-  timestamp: string;
+  timestamp: Timestamp | { seconds: number; nanoseconds?: number } | string;
   targetId?: string;
   metadata?: Record<string, any>;
 }

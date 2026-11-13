@@ -158,7 +158,7 @@ export async function createAuditLog(
     performedBy: currentUser.uid,
     performedByEmail: currentUser.email || 'unknown',
     details,
-    timestamp: new Date().toISOString(),
+    timestamp: serverTimestamp() as any,
   };
 
   try {
@@ -188,7 +188,7 @@ export function createAuditLogInBatch(
     performedBy: currentUser.uid,
     performedByEmail: currentUser.email || 'unknown',
     details,
-    timestamp: new Date().toISOString(),
+    timestamp: serverTimestamp() as any,
   };
 
   batch.set(logRef, entry);
@@ -222,7 +222,9 @@ export function subscribeToAuditLogs(
 
 export async function checkIsAdmin(uid: string, email?: string | null): Promise<boolean> {
   if (email && email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
-    return true;
+    if (!auth.currentUser || auth.currentUser.uid !== uid || auth.currentUser.emailVerified) {
+      return true;
+    }
   }
   if (!uid) return false;
   try {
@@ -360,7 +362,11 @@ export function subscribeToAdmins(
 
 export async function grantAdminRole(targetUid: string, targetEmail: string): Promise<void> {
   const currentUser = auth.currentUser;
-  if (!currentUser || currentUser.email?.toLowerCase().trim() !== SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
+  if (
+    !currentUser ||
+    !currentUser.emailVerified ||
+    currentUser.email?.toLowerCase().trim() !== SUPER_ADMIN_EMAIL.toLowerCase().trim()
+  ) {
     throw new Error('Only the designated Super Administrator can grant admin privileges.');
   }
 
@@ -381,7 +387,11 @@ export async function grantAdminRole(targetUid: string, targetEmail: string): Pr
 
 export async function revokeAdminRole(targetUid: string, targetEmail: string): Promise<void> {
   const currentUser = auth.currentUser;
-  if (!currentUser || currentUser.email?.toLowerCase().trim() !== SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
+  if (
+    !currentUser ||
+    !currentUser.emailVerified ||
+    currentUser.email?.toLowerCase().trim() !== SUPER_ADMIN_EMAIL.toLowerCase().trim()
+  ) {
     throw new Error('Only the designated Super Administrator can revoke admin privileges.');
   }
 
@@ -1230,17 +1240,29 @@ export async function addMemberToFirestore(
   const defaultUni = publicData.university?.trim() || privateData?.university?.trim() || 'Tongmyong University';
   const safeAvatar = await ensureSafeAvatarUrl(publicData.avatarUrl);
   const rawAuthUid = (publicData as any).authUid?.trim() || undefined;
-  const finalPublic: Member = removeUndefinedFields({
-    ...publicData,
-    avatarUrl: safeAvatar,
+  const candidatePublic: Record<string, any> = {
     id: memberId,
     name: publicData.name.trim(),
     handle: cleanHandle,
+    role: publicData.role || 'Member',
+    tracks: publicData.tracks && publicData.tracks.length > 0 ? publicData.tracks : ['Hardware & Robotics'],
+    joinedDate: publicData.joinedDate || new Date().toISOString().split('T')[0],
+    status: publicData.status || 'Active',
+    avatarUrl: safeAvatar || '',
+    bio: publicData.bio?.trim() || '',
+    leaderboardOptOut: publicData.leaderboardOptOut ?? false,
     authUid: rawAuthUid || undefined,
     createdAt: new Date().toISOString(),
-  });
-  if (!finalPublic.authUid) {
-    delete (finalPublic as any).authUid;
+    githubUrl: publicData.githubUrl || '',
+    linkedinUrl: publicData.linkedinUrl || '',
+    portfolioUrl: publicData.portfolioUrl || '',
+    showLinksPublicly: publicData.showLinksPublicly ?? true,
+  };
+  const finalPublic: Record<string, any> = {};
+  for (const key of Object.keys(candidatePublic)) {
+    if (PUBLIC_MEMBER_WHITELIST.has(key) && candidatePublic[key] !== undefined) {
+      finalPublic[key] = candidatePublic[key];
+    }
   }
   batch.set(memberRef, finalPublic);
 
@@ -1266,7 +1288,20 @@ export async function addMemberToFirestore(
 
 export async function updateMemberProfile(
   memberId: string,
-  publicUpdates: Partial<Pick<Member, 'name' | 'avatarUrl' | 'bio' | 'tracks' | 'leaderboardOptOut' | 'studentId' | 'university'>>,
+  publicUpdates: Partial<
+    Pick<
+      Member,
+      | 'name'
+      | 'avatarUrl'
+      | 'bio'
+      | 'tracks'
+      | 'leaderboardOptOut'
+      | 'githubUrl'
+      | 'linkedinUrl'
+      | 'portfolioUrl'
+      | 'showLinksPublicly'
+    >
+  >,
   privateUpdates?: MemberPrivate
 ): Promise<void> {
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
@@ -1282,9 +1317,15 @@ export async function updateMemberProfile(
     batch.update(memberRef, removeUndefinedFields(cleanPublicUpdates));
 
     const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
+    const hasLinkFields =
+      'githubUrl' in cleanPublicUpdates ||
+      'linkedinUrl' in cleanPublicUpdates ||
+      'portfolioUrl' in cleanPublicUpdates ||
+      'showLinksPublicly' in cleanPublicUpdates;
+
     if (cleanPublicUpdates.leaderboardOptOut === true) {
       batch.delete(pubRef);
-    } else if (cleanPublicUpdates.name || cleanPublicUpdates.avatarUrl !== undefined) {
+    } else if (cleanPublicUpdates.name || cleanPublicUpdates.avatarUrl !== undefined || hasLinkFields) {
       const pubUpdates: Record<string, any> = {
         lastUpdated: new Date().toISOString(),
       };
@@ -1295,6 +1336,21 @@ export async function updateMemberProfile(
       if (cleanPublicUpdates.avatarUrl !== undefined) {
         pubUpdates.avatar = cleanPublicUpdates.avatarUrl || '';
         pubUpdates.avatarUrl = cleanPublicUpdates.avatarUrl || '';
+      }
+      if (hasLinkFields) {
+        const showPublicly = cleanPublicUpdates.showLinksPublicly !== false;
+        if (cleanPublicUpdates.showLinksPublicly !== undefined) {
+          pubUpdates.showLinksPublicly = cleanPublicUpdates.showLinksPublicly;
+        }
+        if (showPublicly) {
+          if (cleanPublicUpdates.githubUrl !== undefined) pubUpdates.githubUrl = cleanPublicUpdates.githubUrl;
+          if (cleanPublicUpdates.linkedinUrl !== undefined) pubUpdates.linkedinUrl = cleanPublicUpdates.linkedinUrl;
+          if (cleanPublicUpdates.portfolioUrl !== undefined) pubUpdates.portfolioUrl = cleanPublicUpdates.portfolioUrl;
+        } else {
+          pubUpdates.githubUrl = '';
+          pubUpdates.linkedinUrl = '';
+          pubUpdates.portfolioUrl = '';
+        }
       }
       batch.set(pubRef, pubUpdates, { merge: true });
     }
@@ -1411,7 +1467,7 @@ export async function permanentDeleteMember(
       performedBy: currentUser.uid,
       performedByEmail: currentUser.email || 'unknown',
       details: `Permanently deleted member "${memberData.name}" (${memberId}). Handle "${memberData.handle}" freed for reuse.`,
-      timestamp: new Date().toISOString(),
+      timestamp: serverTimestamp(),
     });
   }
 
@@ -1594,10 +1650,10 @@ export async function completeSession(sessionId: string): Promise<void> {
 
   const batch = writeBatch(db);
   batch.update(sessionRef, plan.sessionUpdate);
-  batch.set(auditRef, {
+  batch.set(auditRef, removeUndefinedFields({
     ...plan.auditEntry,
     timestamp: serverTimestamp(),
-  });
+  }));
 
   try {
     await batch.commit();
@@ -1620,10 +1676,10 @@ export async function reopenSession(
 
   const batch = writeBatch(db);
   batch.update(sessionRef, plan.sessionUpdate);
-  batch.set(auditRef, {
+  batch.set(auditRef, removeUndefinedFields({
     ...plan.auditEntry,
     timestamp: serverTimestamp(),
-  });
+  }));
 
   try {
     await batch.commit();
@@ -2119,7 +2175,7 @@ export async function exportFullBackupJSON(options?: { includePII?: boolean }): 
   const currentUserEmail = auth.currentUser?.email?.toLowerCase().trim();
   const superAdminEmail = SUPER_ADMIN_EMAIL.toLowerCase().trim();
 
-  if (!currentUserEmail || currentUserEmail !== superAdminEmail) {
+  if (!currentUserEmail || !auth.currentUser?.emailVerified || currentUserEmail !== superAdminEmail) {
     throw new Error(
       `Permission denied: Only the Super Administrator (${SUPER_ADMIN_EMAIL}) may export database backups.`
     );
@@ -2654,6 +2710,10 @@ export const updateMemberInFirestore = async (member: Member): Promise<void> => 
       bio: member.bio,
       tracks: member.tracks,
       leaderboardOptOut: member.leaderboardOptOut,
+      ...(member.githubUrl !== undefined ? { githubUrl: member.githubUrl } : {}),
+      ...(member.linkedinUrl !== undefined ? { linkedinUrl: member.linkedinUrl } : {}),
+      ...(member.portfolioUrl !== undefined ? { portfolioUrl: member.portfolioUrl } : {}),
+      ...(member.showLinksPublicly !== undefined ? { showLinksPublicly: member.showLinksPublicly } : {}),
     },
     {
       email: member.email,
