@@ -18,12 +18,14 @@ This document defines the exact production release sequence for Firestore Securi
 4. **Publish Group A1 + A2 Rules (`firestore.rules`) During Idle Window**
    - Within minutes after client rollout—**while no check-in session is actively running**—paste `firestore.rules` into the Firebase Console Rules Editor, check syntax, and publish.
    - Activates `[Group A2]` client-coupled rules: strict 8-char `prevToken`, self check-in forbid `notes`/`verifiedBy`, authoritative manual `verifiedBy`, strict `notifications` create whitelist, and strict `auditLogs` `request.time` + field whitelist.
-5. **Run Repair Tools (Dry Run -> Review -> Commit)**
-   - In the Admin Tools UI, execute `prepareMemberDataRepair` and `prepareUserStateRepair` dry runs, inspect every proposed change, and commit (`executeMemberDataRepair` / `executeUserStateRepair`) to migrate legacy `email`/`phone`/`studentId`/`university`/counter keys out of `members/{memberId}` into `memberPrivate/{memberId}`.
-6. **Verify Zero Legacy Keys on `members` (Read-Only Check)**
-   - Run a read-only inspection (re-run the repair dry-run or inspect `members` documents) and confirm it reports **0** members with non-whitelisted keys (only the 16 keys allowed in `PUBLIC_MEMBER_WHITELIST` remain) and all legacy sessions lacking `startAt`/`endAt` are updated.
+5. **Run Repair & Session Migration Tools (Dry Run -> Review -> Commit) Before First Live Event**
+   - In the Admin Tools UI, execute `prepareMemberDataRepair`, `prepareUserStateRepair`, and **`prepareSessionMigration`** dry runs, inspect every proposed change, and commit (`executeMemberDataRepair`, `executeUserStateRepair`, `executeSessionMigration`) so:
+     - Legacy `email`/`phone`/`studentId`/`university`/counter keys move out of `members/{memberId}` into `memberPrivate/{memberId}`.
+     - Existing legacy sessions missing `startAt`/`endAt`/`checkInMode`/`openMinutesBefore`/`graceMinutesAfter`/`lateAfterMinutes`/`host`/`timezone` are backfilled **idempotently before the first live event** (although `sessionOpen` and `isValidCheckInStatus` already use `.get()` defaults for optional window config fields, `startAt` and `endAt` remain required timestamps).
+6. **Verify Zero Legacy Keys on `members` & Zero Unmigrated Sessions (Read-Only Check)**
+   - Run a read-only inspection (re-run the repair dry-runs or inspect `members` and `sessions` documents) and confirm **0** members have non-whitelisted keys (only the 16 keys in `PUBLIC_MEMBER_WHITELIST` remain) and **0** sessions lack `startAt`/`endAt` or required config fields.
 7. **Publish Group B Strict Post-Migration Rules (`docs/RULES_GROUP_B.md`)**
-   - Only after step 6 reports zero remaining non-whitelisted keys, paste the ruleset from `docs/RULES_GROUP_B.md` into the Firebase Console Rules Editor, check syntax, and publish to permanently lock down `members`, `users` (single `notificationPrefs`), and `sessions` (`isValidSessionFull`).
+   - Only after step 6 reports zero remaining non-whitelisted keys and zero unmigrated sessions, paste the ruleset from `docs/RULES_GROUP_B.md` into the Firebase Console Rules Editor, check syntax, and publish to permanently lock down `members`, `users` (single `notificationPrefs`), and `sessions` (`isValidSessionFull`).
 
 ---
 

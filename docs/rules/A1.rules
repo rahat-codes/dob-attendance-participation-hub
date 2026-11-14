@@ -59,10 +59,13 @@ service cloud.firestore {
 
     function sessionOpen(sid) {
       let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
-      return s.status != 'cancelled' && s.status != 'completed' && s.checkInMode != 'closed' && (
-        s.checkInMode == 'open' ||
-        (request.time >= s.startAt - duration.value(s.openMinutesBefore, 'm') &&
-         request.time <= s.endAt + duration.value(s.graceMinutesAfter, 'm'))
+      let mode = s.get('checkInMode', 'auto');
+      let openMins = s.get('openMinutesBefore', 15);
+      let graceMins = s.get('graceMinutesAfter', 30);
+      return s.status != 'cancelled' && s.status != 'completed' && mode != 'closed' && (
+        mode == 'open' ||
+        (request.time >= s.startAt - duration.value(openMins, 'm') &&
+         request.time <= s.endAt + duration.value(graceMins, 'm'))
       );
     }
 
@@ -88,7 +91,8 @@ service cloud.firestore {
 
     function isValidCheckInStatus(sid, status) {
       let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
-      let lateAt = s.startAt + duration.value(s.lateAfterMinutes, 'm');
+      let lateMins = s.get('lateAfterMinutes', 10);
+      let lateAt = s.startAt + duration.value(lateMins, 'm');
       return (status == 'present' && request.time <= lateAt + duration.value(15, 's')) ||
              (status == 'late' && request.time >= lateAt - duration.value(15, 's'));
     }
@@ -134,7 +138,7 @@ service cloud.firestore {
              data.id is string && data.id.size() <= 128 &&
              data.email is string && data.email.size() <= 150 &&
              data.displayName is string && data.displayName.size() <= 100 &&
-             (!('photoURL' in data) || data.photoURL == '' || (data.photoURL.size() <= 500 && data.photoURL.matches('^https://.+'))) &&
+             (!('photoURL' in data) || data.photoURL == '' || (data.photoURL is string && ((data.photoURL.size() <= 500 && data.photoURL.matches('^https://.+')) || (data.photoURL.size() <= 150000 && data.photoURL.matches('^data:image/.+'))))) &&
              (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
              (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
              (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
@@ -158,7 +162,7 @@ service cloud.firestore {
              data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50 &&
              data.role in ['Member', 'Project Leader', 'Vice President', 'President', 'Founder', 'Lead', 'Builder', 'Apprentice'] &&
              data.tracks is list && data.tracks.size() > 0 && data.tracks.size() <= 10 &&
-             (!('avatarUrl' in data) || data.avatarUrl == '' || (data.avatarUrl.size() <= 500 && data.avatarUrl.matches('^https://.+'))) &&
+             (!('avatarUrl' in data) || data.avatarUrl == '' || (data.avatarUrl is string && ((data.avatarUrl.size() <= 500 && data.avatarUrl.matches('^https://.+')) || (data.avatarUrl.size() <= 150000 && data.avatarUrl.matches('^data:image/.+'))))) &&
              (!('bio' in data) || (data.bio is string && data.bio.size() <= 500)) &&
              (!('leaderboardOptOut' in data) || data.leaderboardOptOut is bool) &&
              (!('showLinksPublicly' in data) || data.showLinksPublicly is bool) &&
@@ -169,29 +173,30 @@ service cloud.firestore {
              data.status in ['Active', 'Probationary', 'Inactive'];
     }
 
-    function isValidSessionFull(data) {
-      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location', 'host', 'startAt', 'endAt', 'timezone', 'checkInMode', 'openMinutesBefore', 'graceMinutesAfter', 'lateAfterMinutes', 'points']) &&
+    // Group A1: Accepts both full new-client sessions and legacy sessions created by currently published old client
+    function isValidSessionLegacyA1(data) {
+      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location']) &&
              data.id is string && isValidId(data.id) &&
              data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
              data.track in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo'] &&
              data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
              data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'] &&
              data.location is string && data.location.size() <= 150 &&
-             data.host is string && data.host.size() > 0 && data.host.size() <= 100 &&
-             data.startAt is timestamp &&
-             data.endAt is timestamp &&
-             data.endAt > data.startAt &&
-             data.timezone is string && data.timezone.size() <= 50 &&
-             data.checkInMode in ['auto', 'open', 'closed'] &&
-             data.openMinutesBefore is int && data.openMinutesBefore >= 0 && data.openMinutesBefore <= 240 &&
-             data.graceMinutesAfter is int && data.graceMinutesAfter >= 0 && data.graceMinutesAfter <= 240 &&
-             data.lateAfterMinutes is int && data.lateAfterMinutes >= 0 && data.lateAfterMinutes <= 240 &&
-             data.points is int && data.points >= 0 && data.points <= 1000 &&
+             (!('host' in data) || (data.host is string && data.host.size() > 0 && data.host.size() <= 100)) &&
+             (!('startAt' in data) || data.startAt is timestamp) &&
+             (!('endAt' in data) || data.endAt is timestamp) &&
+             (!('timezone' in data) || (data.timezone is string && data.timezone.size() <= 50)) &&
+             (!('checkInMode' in data) || data.checkInMode in ['auto', 'open', 'closed']) &&
+             (!('openMinutesBefore' in data) || (data.openMinutesBefore is int && data.openMinutesBefore >= 0 && data.openMinutesBefore <= 240)) &&
+             (!('graceMinutesAfter' in data) || (data.graceMinutesAfter is int && data.graceMinutesAfter >= 0 && data.graceMinutesAfter <= 240)) &&
+             (!('lateAfterMinutes' in data) || (data.lateAfterMinutes is int && data.lateAfterMinutes >= 0 && data.lateAfterMinutes <= 240)) &&
+             (!('points' in data) || (data.points is int && data.points >= 0 && data.points <= 1000)) &&
              (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
              (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 20)) &&
              (!('endTime' in data) || (data.endTime is string && data.endTime.size() <= 20)) &&
              (!('sessionCode' in data) || (data.sessionCode is string && data.sessionCode.size() <= 20)) &&
-             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000));
+             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000)) &&
+             (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 50));
     }
 
     // ==========================================
@@ -305,10 +310,10 @@ service cloud.firestore {
 
     match /sessions/{sessionId} {
       allow read: if isAdmin() || isActiveMember();
-      allow create: if isAdmin() && isValidId(sessionId) && isValidSessionFull(request.resource.data);
+      allow create: if isAdmin() && isValidId(sessionId) && isValidSessionLegacyA1(request.resource.data);
       allow update: if isAdmin() && isValidId(sessionId) && (
-        isValidSessionFull(request.resource.data) ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt'])
+        isValidSessionLegacyA1(request.resource.data) ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt', 'deletedAt'])
       );
       allow delete: if isAdmin() && isValidId(sessionId);
     }
@@ -337,17 +342,19 @@ service cloud.firestore {
       );
 
       allow create: if (
+        // Group A1: Legacy-tolerant admin manual check-in (accepts ISO checkedInAt, authUid, omitted verifiedBy, and omitted monthKey from published old client)
         (
           isAdmin() &&
           checkInId == request.resource.data.sessionId + '_' + request.resource.data.memberId &&
           request.resource.data.id == checkInId &&
           request.resource.data.method == 'manual_entry' &&
-          request.resource.data.checkedInAt == request.time &&
           exists(/databases/$(database)/documents/members/$(request.resource.data.memberId)) &&
           exists(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)) &&
-          isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
+          (!('monthKey' in request.resource.data) || isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey)) &&
+          (!('verifiedBy' in request.resource.data) || request.resource.data.verifiedBy == request.auth.uid) &&
           request.resource.data.status in ['present', 'late']
         ) ||
+        // Self check-in: preserves strict token, window, monthKey, status, and authUid protections in A1
         (
           isActiveMember() &&
           checkInId == request.resource.data.sessionId + '_' + myMemberId() &&

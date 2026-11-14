@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PublicLeaderboardItem } from '../types';
 import { useAuth } from '../firebase/AuthContext';
-import { DEMO_LEADERBOARD_ITEMS } from '../config/demoLeaderboardData';
 import { backfillPublicLeaderboard } from '../firebase/firestoreService';
 import { Podium } from './leaderboard/Podium';
 import { RankingList, LeaderboardPeriod } from './leaderboard/RankingList';
@@ -62,26 +61,9 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     });
   };
 
-  // Check URL ?demo=1 or dev mode fallback (Requirement 3)
-  const isDemoMode = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    const searchParams = new URLSearchParams(window.location.search);
-    const hash = window.location.hash || '';
-    const hasParam = searchParams.get('demo') === '1' || hash.includes('demo=1');
-    const isDevEmpty = Boolean(import.meta.env.DEV && items.length === 0);
-    return hasParam || isDevEmpty;
-  }, [items.length]);
-
-  // Active items: use real items, or demo items only when demo mode is active
   const activeItems: PublicLeaderboardItem[] = useMemo(() => {
-    if (items && items.length > 0) {
-      return items;
-    }
-    if (isDemoMode) {
-      return DEMO_LEADERBOARD_ITEMS;
-    }
-    return [];
-  }, [items, isDemoMode]);
+    return items && items.length > 0 ? items : [];
+  }, [items]);
 
   // Selected period state: 'all_time' (default) | 'this_month' (semester omitted)
   const [selectedPeriod, setSelectedPeriod] = useState<LeaderboardPeriod>('all_time');
@@ -225,21 +207,6 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
       {/* Optional subtle scanlines overlay if FX is enabled */}
       {fxEnabled && (
         <div className="fixed inset-0 scanlines-overlay z-0 opacity-40 pointer-events-none" />
-      )}
-
-      {/* Demo Mode Notice Banner if active */}
-      {isDemoMode && items.length === 0 && (
-        <div className="relative z-10 px-4 py-2.5 rounded-2xl bg-[#2DE2E6]/10 border border-[#2DE2E6]/30 text-[#2DE2E6] text-xs font-rajdhani font-bold flex items-center justify-between gap-3 shadow-[0_0_20px_rgba(45,226,230,0.18)] backdrop-blur-md">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 shrink-0" />
-            <span>
-              DEMO SIMULATION ACTIVE (?demo=1) · Displaying simulated guild profiles for visual inspection.
-            </span>
-          </div>
-          <span className="text-[10px] font-orbitron uppercase text-zinc-400">
-            Preview Mode
-          </span>
-        </div>
       )}
 
       {/* Hero Cyber Header */}

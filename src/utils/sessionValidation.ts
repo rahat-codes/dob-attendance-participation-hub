@@ -48,6 +48,8 @@ export interface SessionPayloadInput {
   maxCapacity?: number;
   createdAt?: string;
   createdBy?: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
 /**
@@ -239,9 +241,26 @@ export function createSessionPayload(input: SessionPayloadInput): Session {
         : DEFAULT_SESSION_CONFIG.lateAfterMinutes,
     createdAt: input.createdAt || new Date().toISOString(),
     createdBy: input.createdBy,
+    updatedAt: input.updatedAt,
+    deletedAt: input.deletedAt,
   };
 
   return validateSessionData(payload);
+}
+
+/**
+ * Determines whether editing a session changed schedule date, time window, or location.
+ */
+export function isSessionRescheduled(
+  prev: Pick<Session, 'date' | 'startTime' | 'endTime' | 'location'>,
+  next: Pick<Session, 'date' | 'startTime' | 'endTime' | 'location'>
+): boolean {
+  return Boolean(
+    prev.date !== next.date ||
+    (prev.startTime || '') !== (next.startTime || '') ||
+    (prev.endTime || '') !== (next.endTime || '') ||
+    (prev.location || '').trim() !== (next.location || '').trim()
+  );
 }
 
 export interface DryRunMigrationResult {
@@ -327,5 +346,53 @@ export function dryRunMigrateSession(rawSession: any): DryRunMigrationResult {
     needsMigration: addedFields.length > 0,
     migratedDoc: validated,
     addedFields,
+  };
+}
+
+export interface SessionMigrationItem {
+  sessionId: string;
+  title: string;
+  addedFields: string[];
+  migratedDoc: Session;
+}
+
+export interface SessionMigrationPlan {
+  totalScanned: number;
+  itemsNeedingMigration: number;
+  skippedCount: number;
+  items: SessionMigrationItem[];
+}
+
+/**
+ * Idempotent dry-run planner across all existing sessions.
+ * Scans raw session records, backfills missing schedule/window fields, and skips already-compliant sessions.
+ */
+export function prepareSessionMigration(rawSessions: any[]): SessionMigrationPlan {
+  const items: SessionMigrationItem[] = [];
+  let skippedCount = 0;
+
+  for (const raw of rawSessions) {
+    if (!raw || !raw.id) {
+      skippedCount++;
+      continue;
+    }
+    const res = dryRunMigrateSession(raw);
+    if (res.needsMigration) {
+      items.push({
+        sessionId: String(raw.id),
+        title: String(raw.title || raw.id),
+        addedFields: res.addedFields,
+        migratedDoc: res.migratedDoc,
+      });
+    } else {
+      skippedCount++;
+    }
+  }
+
+  return {
+    totalScanned: rawSessions.length,
+    itemsNeedingMigration: items.length,
+    skippedCount,
+    items,
   };
 }

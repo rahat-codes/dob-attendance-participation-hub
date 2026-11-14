@@ -38,16 +38,36 @@ import {
 } from '../types';
 import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE, DEFAULT_CHECKIN_SETTINGS } from '../config/constants';
 import { buildPublicLeaderboardItems } from '../utils/stats';
-import { getSessionState, getSessionTemporalInfo, parseDateTimeInZone } from '../utils/sessionWindow';
+import {
+  getSessionState,
+  getSessionTemporalInfo,
+  formatDateInClubTz,
+  formatTimeInClubTz,
+} from '../utils/sessionWindow';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHelpers';
 import { ApplicationInput, validateApplication, encodeApplication } from '../utils/application';
 import { nextUserState, getUserState } from '../utils/userStateMachine';
 import { buildDeactivateMemberPlan, buildReactivateMemberPlan } from '../utils/memberLifecyclePlans';
 import { PUBLIC_MEMBER_WHITELIST, MemberDataRepairItem, UserStateRepairItem } from '../utils/repairTools';
+import { createSessionPayload, SessionMigrationItem } from '../utils/sessionValidation';
+import {
+  type SessionBatchPlan,
+  buildCompleteSessionBatchPlan,
+  buildReopenSessionBatchPlan,
+  buildSoftDeleteSessionBatchPlan,
+  buildPermanentDeleteSessionOpsPlan,
+  buildDeleteCheckInBatchPlan,
+} from '../utils/sessionPlans';
+import {
+  type CheckInStoreAdapter,
+  executeSelfCheckInWithStore,
+  executeManualCheckInWithStore,
+} from '../utils/checkInFlow';
+import { ensureFreshServerTimeOffset, getCorrectedNowMs } from '../utils/serverTime';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
 
-export { SUPER_ADMIN_EMAIL };
+export { SUPER_ADMIN_EMAIL, type SessionBatchPlan, buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan };
 
 /**
  * Ensures any avatar data URL is compressed and centered before writing to Firestore,
@@ -1405,12 +1425,30 @@ export async function deactivateMember(memberId: string): Promise<void> {
     }
   });
 
+  const linkedUsersList = Array.from(linkedUsersMap.values());
+  const delegatedAdminUids: string[] = [];
+  for (const linked of linkedUsersList) {
+    if (linked.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()) {
+      throw new Error('Cannot deactivate the designated Super Administrator account.');
+    }
+    try {
+      const adminSnap = await getDoc(doc(db, ADMINS_COLLECTION, linked.id));
+      if (adminSnap.exists()) {
+        delegatedAdminUids.push(linked.id);
+      }
+    } catch {
+      // ignore read notice
+    }
+  }
+
   const currentUser = auth.currentUser;
   const plan = buildDeactivateMemberPlan({
     member: memberData,
-    linkedUsers: Array.from(linkedUsersMap.values()),
+    linkedUsers: linkedUsersList,
     actorUid: currentUser?.uid || 'admin',
     actorEmail: currentUser?.email || 'unknown',
+    superAdminEmail: SUPER_ADMIN_EMAIL,
+    delegatedAdminUids,
   });
 
   const batch = writeBatch(db);
@@ -1629,44 +1667,20 @@ export function subscribeToSessions(
 }
 
 export async function createSessionInFirestore(
-  sessionData: Omit<Session, 'id' | 'createdAt'>
+  sessionData: Omit<Session, 'id' | 'createdAt'> & { id?: string; createdAt?: string }
 ): Promise<string> {
-  const tz = sessionData.timezone || DEFAULT_CLUB_TIMEZONE;
-  let startAt = sessionData.startAt;
-  let endAt = sessionData.endAt;
-
-  if (!startAt && sessionData.date && sessionData.startTime) {
-    startAt = Timestamp.fromDate(parseDateTimeInZone(sessionData.date, sessionData.startTime, tz));
-  }
-  if (!endAt && sessionData.date && sessionData.endTime) {
-    endAt = Timestamp.fromDate(parseDateTimeInZone(sessionData.date, sessionData.endTime, tz));
-  }
-
-  const startMs = (startAt as Timestamp)?.toMillis ? (startAt as Timestamp).toMillis() : new Date((startAt as any) || Date.now()).getTime();
-  const endMs = (endAt as Timestamp)?.toMillis ? (endAt as Timestamp).toMillis() : new Date((endAt as any) || Date.now() + 7200000).getTime();
-
-  if (endMs <= startMs) {
-    throw new Error('Session end time must be strictly after start time.');
-  }
-
-  const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
-
-  const finalSession: Session = removeUndefinedFields({
+  const operatorUid = auth.currentUser?.uid;
+  const finalSession: Session = createSessionPayload({
     ...sessionData,
-    checkInMode: sessionData.checkInMode || 'auto',
-    openMinutesBefore: sessionData.openMinutesBefore ?? 15,
-    graceMinutesAfter: sessionData.graceMinutesAfter ?? 30,
-    lateAfterMinutes: sessionData.lateAfterMinutes ?? 10,
-    host: sessionData.host || 'Guild Lead',
-    points: sessionData.points ?? 10,
-    startAt,
-    endAt,
-    timezone: tz,
-    id: sessionId,
-    createdAt: new Date().toISOString(),
+    id: sessionData.id,
+    startTime: sessionData.startTime || '',
+    endTime: sessionData.endTime || '',
+    createdAt: sessionData.createdAt,
+    createdBy: sessionData.createdBy || operatorUid,
   });
 
+  const sessionId = finalSession.id;
+  const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
   const announcementId = `ann_${sessionId}_pub`;
   const announcementRef = doc(db, ANNOUNCEMENTS_COLLECTION, announcementId);
   const announcement: Announcement = {
@@ -1676,16 +1690,21 @@ export async function createSessionInFirestore(
     title: `New Session: ${finalSession.title}`,
     message: `${finalSession.title} (${finalSession.track}) scheduled for ${finalSession.date} at ${finalSession.location}.`,
     createdAt: new Date().toISOString(),
-    createdBy: finalSession.createdBy || 'admin',
+    createdBy: operatorUid || finalSession.createdBy || 'admin',
   };
 
   const batch = writeBatch(db);
-  batch.set(sessionRef, finalSession);
-  batch.set(announcementRef, announcement);
+  batch.set(sessionRef, removeUndefinedFields(finalSession));
+  batch.set(announcementRef, removeUndefinedFields(announcement));
+  createAuditLogInBatch(
+    batch,
+    'create_session',
+    `Scheduled new session "${finalSession.title}" (${sessionId})`,
+    { targetId: sessionId, targetName: finalSession.title }
+  );
 
   try {
     await batch.commit();
-    await createAuditLog('create_session', `Scheduled new session "${finalSession.title}" (${sessionId})`);
     return sessionId;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `sessions/${sessionId}`);
@@ -1698,49 +1717,83 @@ export async function updateSessionInFirestore(
   isRescheduled = false
 ): Promise<void> {
   const sessionId = typeof sessionIdOrSession === 'string' ? sessionIdOrSession : sessionIdOrSession.id;
-  const finalUpdates = typeof sessionIdOrSession === 'string' ? (updates || {}) : sessionIdOrSession;
-
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
 
-  const cleaned: any = removeUndefinedFields(finalUpdates);
-  const tz = cleaned.timezone || DEFAULT_CLUB_TIMEZONE;
-  cleaned.timezone = tz;
+  let mergedInput: Partial<Session>;
+  if (typeof sessionIdOrSession === 'string') {
+    const existingSnap = await getDoc(sessionRef);
+    const existingData = existingSnap.exists() ? (existingSnap.data() as Session) : {};
+    mergedInput = {
+      ...existingData,
+      ...(updates || {}),
+      id: sessionId,
+    };
+  } else {
+    mergedInput = sessionIdOrSession;
+  }
 
-  if (cleaned.date && cleaned.startTime) {
-    cleaned.startAt = Timestamp.fromDate(parseDateTimeInZone(cleaned.date, cleaned.startTime, tz));
-  }
-  if (cleaned.date && cleaned.endTime) {
-    cleaned.endAt = Timestamp.fromDate(parseDateTimeInZone(cleaned.date, cleaned.endTime, tz));
-  }
+  // Derive missing date/startTime/endTime strings only if legacy doc has startAt/endAt without HH:mm
+  const nowIso = new Date().toISOString();
+  const tz = mergedInput.timezone || DEFAULT_CLUB_TIMEZONE;
+  const normalizeHhMm = (hhmm: string) => hhmm.replace(/^24:/, '00:');
+  const derivedDate = mergedInput.date || (mergedInput.startAt ? formatDateInClubTz(mergedInput.startAt, tz) : '');
+  const derivedStartTime =
+    mergedInput.startTime || (mergedInput.startAt ? normalizeHhMm(formatTimeInClubTz(mergedInput.startAt, tz, true)) : '');
+  const derivedEndTime =
+    mergedInput.endTime || (mergedInput.endAt ? normalizeHhMm(formatTimeInClubTz(mergedInput.endAt, tz, true)) : '');
+  const validatedSession = createSessionPayload({
+    id: sessionId,
+    title: mergedInput.title || '',
+    track: mergedInput.track || 'Hardware & Robotics',
+    date: derivedDate,
+    startTime: derivedStartTime,
+    endTime: derivedEndTime,
+    location: mergedInput.location || '',
+    host: mergedInput.host,
+    description: mergedInput.description,
+    sessionCode: mergedInput.sessionCode,
+    timezone: tz,
+    status: mergedInput.status,
+    checkInMode: mergedInput.checkInMode,
+    openMinutesBefore: mergedInput.openMinutesBefore,
+    graceMinutesAfter: mergedInput.graceMinutesAfter,
+    lateAfterMinutes: mergedInput.lateAfterMinutes,
+    points: mergedInput.points,
+    maxCapacity: mergedInput.maxCapacity,
+    createdAt: mergedInput.createdAt,
+    createdBy: mergedInput.createdBy,
+    updatedAt: nowIso,
+    deletedAt: mergedInput.deletedAt,
+  });
 
-  try {
-    await updateDoc(sessionRef, cleaned);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
-  }
+  const batch = writeBatch(db);
+  batch.update(sessionRef, removeUndefinedFields(validatedSession) as Record<string, any>);
 
   if (isRescheduled) {
-    try {
-      const annId = `ann_${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}`;
-      const announcement: Announcement = {
-        id: annId,
-        type: 'session_rescheduled',
-        sessionId,
-        title: `Rescheduled: ${finalUpdates.title || 'Session'}`,
-        message: `The session schedule has been updated to ${finalUpdates.date || ''} at ${finalUpdates.location || ''}.`,
-        createdAt: new Date().toISOString(),
-        createdBy: auth.currentUser?.uid || 'admin',
-      };
-      await setDoc(doc(db, ANNOUNCEMENTS_COLLECTION, annId), announcement);
-    } catch (annErr) {
-      console.warn('Non-fatal: Rescheduled announcement could not be dispatched:', annErr);
-    }
+    const annId = `ann_${sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}`;
+    const announcement: Announcement = {
+      id: annId,
+      type: 'session_rescheduled',
+      sessionId,
+      title: `Rescheduled: ${validatedSession.title}`,
+      message: `The session schedule has been updated to ${validatedSession.date} (${validatedSession.startTime}–${validatedSession.endTime}) at ${validatedSession.location}.`,
+      createdAt: nowIso,
+      createdBy: auth.currentUser?.uid || 'admin',
+    };
+    batch.set(doc(db, ANNOUNCEMENTS_COLLECTION, annId), removeUndefinedFields(announcement));
   }
 
+  createAuditLogInBatch(
+    batch,
+    'update_session',
+    `Updated session "${validatedSession.title}" (${sessionId})`,
+    { targetId: sessionId, targetName: validatedSession.title }
+  );
+
   try {
-    await createAuditLog('update_session', `Updated session ${sessionId}`);
-  } catch (auditErr) {
-    console.warn('Non-fatal: Could not write session update audit log:', auditErr);
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
   }
 }
 
@@ -1749,25 +1802,20 @@ export async function setSessionCheckInMode(
   mode: Session['checkInMode']
 ): Promise<void> {
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  const batch = writeBatch(db);
+  batch.update(sessionRef, {
+    checkInMode: mode,
+    updatedAt: new Date().toISOString(),
+  });
+  createAuditLogInBatch(batch, 'session_open_close', `Set session ${sessionId} check-in mode to ${mode}`, {
+    targetId: sessionId,
+  });
   try {
-    await updateDoc(sessionRef, { checkInMode: mode });
-    await createAuditLog('session_open_close', `Set session ${sessionId} check-in mode to ${mode}`);
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
   }
 }
-
-import {
-  type SessionBatchPlan,
-  buildCompleteSessionBatchPlan,
-  buildReopenSessionBatchPlan,
-} from '../utils/sessionPlans';
-
-export {
-  type SessionBatchPlan,
-  buildCompleteSessionBatchPlan,
-  buildReopenSessionBatchPlan,
-};
 
 export async function completeSession(sessionId: string): Promise<void> {
   const operatorUid = auth.currentUser?.uid;
@@ -1821,41 +1869,132 @@ export async function reopenSession(
 export async function cancelSession(sessionId: string, sessionTitle: string): Promise<void> {
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
   const annId = `ann_${sessionId}_cancel_${Date.now()}`;
+  const nowIso = new Date().toISOString();
   const announcement: Announcement = {
     id: annId,
     type: 'session_cancelled',
     sessionId,
     title: `Cancelled: ${sessionTitle}`,
     message: `The session "${sessionTitle}" has been cancelled.`,
-    createdAt: new Date().toISOString(),
+    createdAt: nowIso,
     createdBy: auth.currentUser?.uid || 'admin',
   };
 
   const batch = writeBatch(db);
-  batch.update(sessionRef, { status: 'cancelled', checkInMode: 'closed' });
-  batch.set(doc(db, ANNOUNCEMENTS_COLLECTION, annId), announcement);
+  batch.update(sessionRef, {
+    status: 'cancelled',
+    checkInMode: 'closed',
+    cancelledAt: nowIso,
+    updatedAt: nowIso,
+  });
+  batch.set(doc(db, ANNOUNCEMENTS_COLLECTION, annId), removeUndefinedFields(announcement));
+  createAuditLogInBatch(batch, 'cancel_session', `Cancelled session "${sessionTitle}" (${sessionId})`, {
+    targetId: sessionId,
+    targetName: sessionTitle,
+  });
 
   try {
     await batch.commit();
-    await createAuditLog('cancel_session', `Cancelled session ${sessionId}`);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
   }
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function softDeleteSession(sessionId: string, sessionTitle?: string): Promise<void> {
+  const operatorUid = auth.currentUser?.uid;
+  if (!operatorUid) {
+    throw new Error('Authentication required: only administrators can archive or delete sessions.');
+  }
+  const plan = buildSoftDeleteSessionBatchPlan(
+    sessionId,
+    sessionTitle,
+    operatorUid,
+    auth.currentUser?.email || undefined
+  );
   const sessionRef = doc(db, SESSIONS_COLLECTION, sessionId);
+  const auditRef = doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id);
+
+  const batch = writeBatch(db);
+  batch.update(sessionRef, plan.sessionUpdate);
+  batch.set(
+    auditRef,
+    removeUndefinedFields({
+      ...plan.auditEntry,
+      timestamp: serverTimestamp(),
+    })
+  );
+
   try {
-    await deleteDoc(sessionRef);
-    await createAuditLog('delete_session', `Deleted session ${sessionId}`);
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `sessions/${sessionId}`);
+  }
+}
+
+export async function permanentDeleteSession(sessionId: string, sessionTitle?: string): Promise<void> {
+  const operatorUid = auth.currentUser?.uid;
+  if (!operatorUid) {
+    throw new Error('Authentication required: only administrators can permanently delete sessions.');
+  }
+
+  try {
+    const [checkInsSnap, announcementsSnap] = await Promise.all([
+      getDocs(query(collection(db, CHECKINS_COLLECTION), where('sessionId', '==', sessionId))),
+      getDocs(query(collection(db, ANNOUNCEMENTS_COLLECTION), where('sessionId', '==', sessionId))),
+    ]);
+
+    const plan = buildPermanentDeleteSessionOpsPlan({
+      sessionId,
+      sessionTitle,
+      checkInIds: checkInsSnap.docs.map((d) => d.id),
+      announcementIds: announcementsSnap.docs.map((d) => d.id),
+      includeSessionToken: true,
+      operatorUid,
+      operatorEmail: auth.currentUser?.email || undefined,
+      maxBatchOps: 400,
+    });
+
+    for (const chunk of plan.chunks) {
+      const batch = writeBatch(db);
+      for (const op of chunk) {
+        if (op.op === 'delete') {
+          batch.delete(doc(db, op.collection, op.docId));
+        } else {
+          batch.set(
+            doc(db, AUDIT_LOGS_COLLECTION, op.docId),
+            removeUndefinedFields({
+              ...op.data,
+              timestamp: serverTimestamp(),
+            })
+          );
+        }
+      }
+      await batch.commit();
+    }
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `sessions/${sessionId}`);
   }
 }
 
+export async function deleteSession(sessionId: string, sessionTitle?: string): Promise<void> {
+  await permanentDeleteSession(sessionId, sessionTitle);
+}
+
 // ==========================================
 // Rotating Kiosk Tokens (sessionTokens/{sessionId})
 // ==========================================
+
+export async function getSessionTokenDoc(
+  sessionId: string
+): Promise<{ token: string; prevToken?: string; rotatedAt?: Timestamp } | null> {
+  const tokenRef = doc(db, SESSION_TOKENS_COLLECTION, sessionId);
+  try {
+    const snap = await getDoc(tokenRef);
+    return snap.exists() ? (snap.data() as any) : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function writeKioskToken(sessionId: string, token: string, prevToken: string): Promise<void> {
   const tokenRef = doc(db, SESSION_TOKENS_COLLECTION, sessionId);
@@ -1933,6 +2072,39 @@ export function subscribeToAllCheckIns(
   );
 }
 
+function createFirestoreCheckInStore(): CheckInStoreAdapter {
+  return {
+    isOnline: () => typeof navigator === 'undefined' || navigator.onLine !== false,
+    writeSelfCheckIn: async (checkInId, record) => {
+      await setDoc(doc(db, CHECKINS_COLLECTION, checkInId), removeUndefinedFields(record));
+    },
+    getExistingCheckIn: async (checkInId) => {
+      const snap = await getDoc(doc(db, CHECKINS_COLLECTION, checkInId));
+      return snap.exists() ? (snap.data() as CheckInRecord) : null;
+    },
+    syncLeaderboard: async (memberId, monthKey, points) => {
+      await syncMemberCheckInToPublicLeaderboard(memberId, monthKey, points);
+    },
+    getMember: async (memberId) => {
+      const snap = await getDoc(doc(db, MEMBERS_COLLECTION, memberId));
+      return snap.exists() ? ({ id: snap.id, ...(snap.data() as any) } as Member) : null;
+    },
+    getSession: async (sessionId) => {
+      const snap = await getDoc(doc(db, SESSIONS_COLLECTION, sessionId));
+      return snap.exists() ? ({ id: snap.id, ...(snap.data() as any) } as Session) : null;
+    },
+    writeManualCheckInBatch: async (checkInId, record, auditDetails) => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, CHECKINS_COLLECTION, checkInId), removeUndefinedFields(record));
+      createAuditLogInBatch(batch, 'check_in_manual', auditDetails, {
+        targetId: checkInId,
+        targetName: record.memberId,
+      });
+      await batch.commit();
+    },
+  };
+}
+
 export async function recordSelfCheckIn(
   sessionId: string,
   memberId: string,
@@ -1945,58 +2117,18 @@ export async function recordSelfCheckIn(
     throw new Error('You must be signed in to check in.');
   }
 
-  const checkInId = `${sessionId}_${memberId}`;
-  const checkInRef = doc(db, CHECKINS_COLLECTION, checkInId);
+  await ensureFreshServerTimeOffset();
 
-  // Check if check-in already recorded
-  const existingSnap = await getDoc(checkInRef);
-  if (existingSnap.exists()) {
-    return {
-      success: true,
-      message: 'You are already checked in for this session!',
-      record: existingSnap.data() as CheckInRecord,
-      isDuplicate: true,
-    };
-  }
-
-  const state = getSessionState(session);
-  if (state.phase !== 'open') {
-    throw new Error(
-      state.phase === 'upcoming'
-        ? `Check-in is not open yet. Opens at ${state.opensAt.toLocaleTimeString()}.`
-        : `Check-in for this session is closed.`
-    );
-  }
-
-  const status: CheckInStatus = state.isLate() ? 'late' : 'present';
-  const monthKey = session.date.substring(0, 7);
-
-  const newRecord: CheckInRecord = {
-    id: checkInId,
+  return await executeSelfCheckInWithStore(createFirestoreCheckInStore(), {
     sessionId,
     memberId,
     authUid: currentUser.uid,
+    token,
+    session,
     method,
-    token: token.trim().toUpperCase(),
-    checkedInAt: serverTimestamp() as any,
-    status,
-    monthKey,
-  };
-
-  try {
-    await setDoc(checkInRef, newRecord);
-    syncMemberCheckInToPublicLeaderboard(memberId, monthKey, session.points ?? 10).catch(() => {});
-    return {
-      success: true,
-      message: status === 'late' ? 'Check-in recorded (marked late).' : 'Check-in verified successfully!',
-      record: {
-        ...newRecord,
-        checkedInAt: new Date().toISOString(),
-      },
-    };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `checkIns/${checkInId}`);
-  }
+    checkedInAtValue: serverTimestamp(),
+    nowMs: getCorrectedNowMs(),
+  });
 }
 
 export async function recordAdminManualCheckIn(
@@ -2010,74 +2142,54 @@ export async function recordAdminManualCheckIn(
     throw new Error('Admin authentication required.');
   }
 
-  const checkInId = `${sessionId}_${memberId}`;
-  const checkInRef = doc(db, CHECKINS_COLLECTION, checkInId);
-
-  const existingSnap = await getDoc(checkInRef);
-  if (existingSnap.exists()) {
-    return {
-      success: true,
-      message: 'Member is already checked in for this session.',
-      record: existingSnap.data() as CheckInRecord,
-      isDuplicate: true,
-    };
-  }
-
-  let session: Session | null = null;
+  let sessionHint: Session | null = null;
   let notes: string | undefined = undefined;
 
   if (typeof sessionOrNotes === 'string') {
     notes = sessionOrNotes;
   } else if (sessionOrNotes && typeof sessionOrNotes === 'object') {
-    session = sessionOrNotes;
+    sessionHint = sessionOrNotes;
     notes = notesOrOperator;
   }
 
-  if (!session) {
-    const sDoc = await getDoc(doc(db, SESSIONS_COLLECTION, sessionId));
-    if (sDoc.exists()) {
-      session = { id: sessionId, ...(sDoc.data() as any) } as Session;
-    }
-  }
+  await ensureFreshServerTimeOffset();
 
-  const isLateCheck = session ? getSessionState(session).isLate() : false;
-  const status: CheckInStatus = isLateCheck ? 'late' : 'present';
-  const monthKey = session?.date ? session.date.substring(0, 7) : new Date().toISOString().substring(0, 7);
-
-  const newRecord = {
-    id: checkInId,
+  return await executeManualCheckInWithStore(createFirestoreCheckInStore(), {
     sessionId,
     memberId,
-    method: 'manual_entry' as CheckInMethod,
-    checkedInAt: serverTimestamp(),
-    status,
-    monthKey,
+    operatorUid: currentUser.uid,
+    checkedInAtValue: serverTimestamp(),
+    sessionHint,
     notes,
-    verifiedBy: currentUser.uid,
-  };
-
-  try {
-    await setDoc(checkInRef, removeUndefinedFields(newRecord));
-    syncMemberCheckInToPublicLeaderboard(memberId, monthKey, session?.points ?? 10).catch(() => {});
-    await createAuditLog('check_in_manual', `Admin checked in member ${memberId} for session ${sessionId}`);
-    return {
-      success: true,
-      message: 'Manual check-in confirmed.',
-      record: {
-        ...newRecord,
-        checkedInAt: new Date().toISOString(),
-      } as any,
-    };
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, `checkIns/${checkInId}`);
-  }
+    nowMs: getCorrectedNowMs(),
+  });
 }
 
-export async function deleteCheckInRecord(checkInId: string): Promise<void> {
-  const checkInRef = doc(db, CHECKINS_COLLECTION, checkInId);
+export async function deleteCheckInRecord(checkInId: string, reason: string = ''): Promise<void> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('Admin authentication required to delete attendance check-ins.');
+  }
+
+  const plan = buildDeleteCheckInBatchPlan({
+    checkInId,
+    reason,
+    operatorUid: currentUser.uid,
+    operatorEmail: currentUser.email || undefined,
+  });
+
+  const batch = writeBatch(db);
+  batch.delete(doc(db, CHECKINS_COLLECTION, checkInId));
+  batch.set(
+    doc(db, AUDIT_LOGS_COLLECTION, plan.auditEntry.id),
+    removeUndefinedFields({
+      ...plan.auditEntry,
+      timestamp: serverTimestamp(),
+    })
+  );
+
   try {
-    await deleteDoc(checkInRef);
-    await createAuditLog('delete_check_in', `Deleted attendance check-in record ${checkInId}`);
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `checkIns/${checkInId}`);
   }
@@ -2801,23 +2913,24 @@ export async function recordCheckInAtomic(
   sessionId: string,
   memberId: string,
   method: CheckInMethod = 'camera_scan',
-  notes?: string,
+  notesOrOptions?: string | { token?: string; notes?: string; operatorUid?: string },
   operatorUid?: string
 ): Promise<{ success: boolean; message: string; record?: CheckInRecord; isDuplicate?: boolean }> {
-  if (operatorUid) {
-    return await recordAdminManualCheckIn(sessionId, memberId, notes, operatorUid);
+  const isOptionsObj = typeof notesOrOptions === 'object' && notesOrOptions !== null;
+  const resolvedNotes = isOptionsObj ? notesOrOptions.notes : notesOrOptions;
+  const resolvedToken = isOptionsObj ? notesOrOptions.token : undefined;
+  const resolvedOperatorUid = (isOptionsObj ? notesOrOptions.operatorUid : undefined) || operatorUid;
+
+  // Only explicit manual_entry by an admin routes through recordAdminManualCheckIn.
+  // Admin self check-ins (camera_scan / code_input) always take recordSelfCheckIn.
+  if (resolvedOperatorUid && method === 'manual_entry') {
+    return await recordAdminManualCheckIn(sessionId, memberId, resolvedNotes, resolvedOperatorUid);
   }
 
-  const checkInId = `${sessionId}_${memberId}`;
-  const checkInRef = doc(db, CHECKINS_COLLECTION, checkInId);
-  const snap = await getDoc(checkInRef);
-  if (snap.exists()) {
-    return {
-      success: true,
-      message: 'You are already checked in for this session!',
-      record: snap.data() as CheckInRecord,
-      isDuplicate: true,
-    };
+  // Create-first: NEVER pre-read checkIns/{sessionId}_{memberId} before attempting write.
+  const cleanToken = (resolvedToken || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  if (!/^[A-Z0-9]{8}$/.test(cleanToken)) {
+    throw new Error('Valid 8-character rotating kiosk QR code or backup code is required for self check-in.');
   }
 
   const sessionSnap = await getDoc(doc(db, SESSIONS_COLLECTION, sessionId));
@@ -2825,7 +2938,7 @@ export async function recordCheckInAtomic(
     throw new Error('Session not found in club directory.');
   }
   const session = { id: sessionId, ...(sessionSnap.data() as any) } as Session;
-  return await recordSelfCheckIn(sessionId, memberId, 'DIRECT_VERIFIED', session, method);
+  return await recordSelfCheckIn(sessionId, memberId, cleanToken, session, method);
 }
 
 // Backward-compatible aliases for existing App and component calls
@@ -2857,8 +2970,12 @@ export const updateMemberInFirestore = async (member: Member): Promise<void> => 
   );
 };
 
-export const adminDeleteSession = async (sessionId: string, _title?: string, _permanent?: boolean): Promise<void> => {
-  await deleteSession(sessionId);
+export const adminDeleteSession = async (sessionId: string, title?: string, permanent = false): Promise<void> => {
+  if (permanent) {
+    await permanentDeleteSession(sessionId, title);
+  } else {
+    await softDeleteSession(sessionId, title);
+  }
 };
 
 export const adminDeleteMember = async (
@@ -2874,8 +2991,13 @@ export const adminDeleteMember = async (
   }
 };
 
-export const adminDeleteCheckIn = async (checkInId: string, _memberName?: string, _sessionTitle?: string): Promise<void> => {
-  await deleteCheckInRecord(checkInId);
+export const adminDeleteCheckIn = async (
+  checkInId: string,
+  _memberName?: string,
+  _sessionTitle?: string,
+  reason = ''
+): Promise<void> => {
+  await deleteCheckInRecord(checkInId, reason);
 };
 
 export const initializeFirestoreWithDefaults = async (
@@ -2954,6 +3076,28 @@ export async function executeUserStateRepair(items: UserStateRepairItem[]): Prom
     await batch.commit();
   }
   await createAuditLog('user_state_repair', `Executed user state repair on ${modifiedCount} user documents`);
+  return modifiedCount;
+}
+
+/**
+ * Executes a prepared legacy session migration plan (idempotent backfill of startAt, endAt,
+ * checkInMode, openMinutesBefore, graceMinutesAfter, lateAfterMinutes, host, timezone, points).
+ * Batched in chunks of up to 400 writes and logged cleanly to auditLogs.
+ */
+export async function executeSessionMigration(items: SessionMigrationItem[]): Promise<number> {
+  let modifiedCount = 0;
+  const chunkSize = 400;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    for (const item of chunk) {
+      const sessionRef = doc(db, SESSIONS_COLLECTION, item.sessionId);
+      batch.set(sessionRef, removeUndefinedFields(item.migratedDoc), { merge: true });
+      modifiedCount++;
+    }
+    await batch.commit();
+  }
+  await createAuditLog('update_session', `Executed legacy session migration on ${modifiedCount} session document(s)`);
   return modifiedCount;
 }
 

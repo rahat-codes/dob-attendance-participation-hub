@@ -902,6 +902,94 @@ async function runRulesTests() {
     );
   });
 
+  // ========================================================================
+  // SUITE 14: LEGACY SESSION DEFAULTS (sessionOpen & isValidCheckInStatus) (written, NOT RUN)
+  // ========================================================================
+  await test('Legacy Session Compatibility: sessionOpen and isValidCheckInStatus apply map.get defaults when optional config fields are omitted (written, NOT RUN)', async () => {
+    const now = new Date();
+    const startAt = new Date(now.getTime() - 5 * 60 * 1000); // 5 min ago -> within default 10 min late threshold
+    const endAt = new Date(now.getTime() + 60 * 60 * 1000);
+    const yyyy = now.getUTCFullYear();
+    const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(now.getUTCDate()).padStart(2, '0');
+    const sessionDate = `${yyyy}-${mm}-${dd}`;
+    const monthKey = `${yyyy}-${mm}`;
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'sessions', 'sess_legacy_defaults_1'), {
+        id: 'sess_legacy_defaults_1',
+        title: 'Legacy Hardware Session',
+        track: 'Hardware & Robotics',
+        date: sessionDate,
+        status: 'scheduled',
+        location: 'Maker Bay',
+        startAt,
+        endAt,
+        // Intentionally omit checkInMode, openMinutesBefore, graceMinutesAfter, lateAfterMinutes
+      });
+      await setDoc(doc(context.firestore(), 'sessionTokens', 'sess_legacy_defaults_1'), {
+        token: 'LEG8TOKN',
+        prevToken: 'LEG8PRVK',
+        rotatedAt: serverTimestamp(),
+      });
+    });
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const db = memberContext.firestore();
+
+    await assertSucceeds(
+      setDoc(doc(db, 'checkIns', 'sess_legacy_defaults_1_mem_active_1'), {
+        id: 'sess_legacy_defaults_1_mem_active_1',
+        sessionId: 'sess_legacy_defaults_1',
+        memberId: 'mem_active_1',
+        authUid: 'user_active_1',
+        method: 'camera_scan',
+        token: 'LEG8TOKN',
+        checkedInAt: serverTimestamp(),
+        status: 'present',
+        monthKey,
+      })
+    );
+  });
+
+  // ========================================================================
+  // SUITE 15: SESSION SOFT-DELETE WHITELIST (deletedAt) (written, NOT RUN)
+  // ========================================================================
+  await test('Session Soft-Delete: Admin can update status/checkInMode/cancelledAt/deletedAt/updatedAt only (written, NOT RUN)', async () => {
+    const adminContext = testEnv.authenticatedContext('admin_super_1', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    const adminDb = adminContext.firestore();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'sessions', 'sess_softdel_test_1'), {
+        id: 'sess_softdel_test_1',
+        title: 'Soft Delete Target',
+        track: 'Software & Systems',
+        date: '2026-11-22',
+        status: 'scheduled',
+        location: 'Room 101',
+        startAt: new Date(Date.UTC(2026, 10, 22, 18, 0, 0)),
+        endAt: new Date(Date.UTC(2026, 10, 22, 20, 0, 0)),
+      });
+    });
+
+    await assertSucceeds(
+      updateDoc(doc(adminDb, 'sessions', 'sess_softdel_test_1'), {
+        status: 'cancelled',
+        checkInMode: 'closed',
+        cancelledAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
   console.log('\n========================================');
   console.log(`PHASE 2 RULES TEST SUITE COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);

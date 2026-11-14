@@ -562,7 +562,40 @@ function testMemberLifecyclePlans() {
   assert(!computeIsApprovedMember(activeUser, deactivatedMember), 'isApprovedMember must be false when linkedMember is Inactive');
   assert(computeIsApprovedMember(activeUser, activeMember), 'isApprovedMember is true only when member exists and is Active');
 
-  console.log('✓ F13 deactivateMember/reactivateMember batch plans, nextUserState reactivation routing, and isApprovedMember guards passed');
+  // Super Admin protection: deactivating the Super Admin must throw
+  let superAdminBlocked = false;
+  try {
+    buildDeactivateMemberPlan({
+      member: { ...activeMember, id: 'mem_super', name: 'Super Lead' },
+      linkedUsers: [{ ...activeUser, id: 'uid_super', email: 'super.lead@example.com' }],
+      actorUid: 'uid_other_admin',
+      superAdminEmail: 'super.lead@example.com',
+    });
+  } catch (err: any) {
+    superAdminBlocked = String(err?.message || '').includes('Super Administrator');
+  }
+  assert(superAdminBlocked, 'buildDeactivateMemberPlan must throw when linkedUsers includes superAdminEmail');
+
+  // Delegated Admin preservation warning: records preservesAdminRoleUids & mentions admins/{uid}
+  const delegatedPlan = buildDeactivateMemberPlan({
+    member: activeMember,
+    linkedUsers: [activeUser],
+    actorUid: 'uid_super',
+    superAdminEmail: 'super.lead@example.com',
+    delegatedAdminUids: ['uid_grace'],
+    nowIso: '2026-11-12T12:00:00.000Z',
+    logId: 'log_deact_delegated',
+  });
+  assert(
+    delegatedPlan.preservesAdminRoleUids.length === 1 && delegatedPlan.preservesAdminRoleUids[0] === 'uid_grace',
+    'buildDeactivateMemberPlan preserves delegated admin UID list'
+  );
+  assert(
+    delegatedPlan.auditEntry.details.includes('admins/uid_grace'),
+    'buildDeactivateMemberPlan records admins/{uid} preservation notice in audit details'
+  );
+
+  console.log('✓ F13 deactivateMember/reactivateMember batch plans, Super Admin block, delegated admin notice, and isApprovedMember guards passed');
 }
 
 function runAll() {

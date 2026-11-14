@@ -30,6 +30,7 @@ export interface DeactivateMemberPlan {
   };
   userUpdates: DeactivateUserUpdatePlan[];
   removeLeaderboardProjection: boolean;
+  preservesAdminRoleUids: string[];
   auditEntry: MemberAuditPlan;
 }
 
@@ -57,10 +58,30 @@ export function buildDeactivateMemberPlan(params: {
   linkedUsers: UserProfile[];
   actorUid: string;
   actorEmail?: string;
+  superAdminEmail?: string;
+  delegatedAdminUids?: string[];
   nowIso?: string;
   logId?: string;
 }): DeactivateMemberPlan {
-  const { member, linkedUsers, actorUid, actorEmail } = params;
+  const {
+    member,
+    linkedUsers,
+    actorUid,
+    actorEmail,
+    superAdminEmail,
+    delegatedAdminUids = [],
+  } = params;
+  const normalizedSuperEmail = superAdminEmail?.trim().toLowerCase();
+  const adminUidSet = new Set(delegatedAdminUids);
+
+  const hasSuperAdminUser = Boolean(
+    normalizedSuperEmail &&
+      linkedUsers.some((u) => u?.email?.trim().toLowerCase() === normalizedSuperEmail)
+  );
+  if (hasSuperAdminUser) {
+    throw new Error('Cannot deactivate the designated Super Administrator account.');
+  }
+
   const now = params.nowIso || new Date().toISOString();
   const logId =
     params.logId ||
@@ -68,10 +89,15 @@ export function buildDeactivateMemberPlan(params: {
 
   const seenUids = new Set<string>();
   const userUpdates: DeactivateUserUpdatePlan[] = [];
+  const preservesAdminRoleUids: string[] = [];
 
   for (const u of linkedUsers) {
     if (!u?.id || seenUids.has(u.id)) continue;
     seenUids.add(u.id);
+
+    if (adminUidSet.has(u.id)) {
+      preservesAdminRoleUids.push(u.id);
+    }
 
     const transition = nextUserState(u, member, 'deactivate');
     userUpdates.push({
@@ -87,6 +113,11 @@ export function buildDeactivateMemberPlan(params: {
     });
   }
 
+  const adminNote =
+    preservesAdminRoleUids.length > 0
+      ? ` (Note: delegated admins/${preservesAdminRoleUids.join(', ')} role remains intact until revoked separately)`
+      : '';
+
   return {
     memberId: member.id,
     memberUpdate: {
@@ -94,6 +125,7 @@ export function buildDeactivateMemberPlan(params: {
     },
     userUpdates,
     removeLeaderboardProjection: true,
+    preservesAdminRoleUids,
     auditEntry: {
       id: logId,
       action: 'deactivate_member',
@@ -101,7 +133,7 @@ export function buildDeactivateMemberPlan(params: {
       ...(actorEmail ? { performedByEmail: actorEmail } : {}),
       targetId: member.id,
       targetName: member.name,
-      details: `Deactivated builder "${member.name}" (${member.id}) and reset ${userUpdates.length} linked user account(s) to declined`,
+      details: `Deactivated builder "${member.name}" (${member.id}) and reset ${userUpdates.length} linked user account(s) to declined${adminNote}`,
     },
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertTriangle,
   Trash2,
@@ -7,7 +7,6 @@ import {
   Clock,
   MapPin,
   AlertCircle,
-  FileText,
 } from 'lucide-react';
 import { Session, Member, CheckInRecord } from '../types';
 import { ModalSheet } from './ModalSheet';
@@ -21,6 +20,8 @@ export interface DeleteRecordTarget {
   member?: Member;
   checkIn?: CheckInRecord;
   relatedCheckInsCount?: number;
+  isTargetSuperAdmin?: boolean;
+  isTargetDelegatedAdmin?: boolean;
 }
 
 interface RecordDeleteModalProps {
@@ -30,7 +31,7 @@ interface RecordDeleteModalProps {
   onConfirmDelete: (
     target: DeleteRecordTarget,
     permanent: boolean,
-    options?: { deleteAttendance?: boolean }
+    options?: { deleteAttendance?: boolean; reason?: string }
   ) => Promise<void>;
 }
 
@@ -42,13 +43,34 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
 }) => {
   const [deleteMode, setDeleteMode] = useState<'soft' | 'permanent'>('soft');
   const [confirmInput, setConfirmInput] = useState('');
+  const [reason, setReason] = useState('');
   const [deleteAttendance, setDeleteAttendance] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen && target) {
+      setDeleteMode(target.type === 'checkin' ? 'permanent' : 'soft');
+      setConfirmInput('');
+      setReason('');
+      setDeleteAttendance(false);
+      setErrorMessage(null);
+    }
+  }, [isOpen, target]);
+
   if (!isOpen || !target) return null;
 
-  const { type, session, member, checkIn, relatedCheckInsCount = 0 } = target;
+  const {
+    type,
+    session,
+    member,
+    checkIn,
+    relatedCheckInsCount = 0,
+    isTargetSuperAdmin = false,
+    isTargetDelegatedAdmin = false,
+  } = target;
+  const isBlockedMemberAction = type === 'member' && isTargetSuperAdmin;
+  const effectiveMode = type === 'checkin' ? 'permanent' : deleteMode;
 
   const getRecordTitle = () => {
     switch (type) {
@@ -74,9 +96,15 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
 
   const requiredText = getRequiredConfirmationText();
   const isInputValidForPermanent = confirmInput.trim().toLowerCase() === requiredText.toLowerCase();
+  const cleanReason = reason.trim();
+  const isReasonValid = type !== 'checkin' || (cleanReason.length > 0 && cleanReason.length <= 300);
 
   const handleConfirm = async () => {
-    if (deleteMode === 'permanent' && !isInputValidForPermanent) {
+    if (type === 'checkin' && !cleanReason) {
+      setErrorMessage('Please enter a reason for deleting this attendance check-in record.');
+      return;
+    }
+    if (effectiveMode === 'permanent' && !isInputValidForPermanent) {
       setErrorMessage(`Please type "${requiredText}" to confirm permanent deletion.`);
       return;
     }
@@ -84,7 +112,10 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
     setIsDeleting(true);
     setErrorMessage(null);
     try {
-      await onConfirmDelete(target, deleteMode === 'permanent', { deleteAttendance });
+      await onConfirmDelete(target, effectiveMode === 'permanent', {
+        deleteAttendance,
+        ...(type === 'checkin' ? { reason: cleanReason } : {}),
+      });
       onClose();
     } catch (err: any) {
       console.error('Record deletion failed:', err);
@@ -98,7 +129,7 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
     <ModalSheet
       isOpen={isOpen}
       onClose={onClose}
-      title={type === 'session' ? 'Delete / Cancel Meeting' : type === 'member' ? 'Remove Builder Profile' : 'Remove Attendance Check-In'}
+      title={type === 'session' ? 'Archive or Delete Session' : type === 'member' ? 'Remove Builder Profile' : 'Remove Attendance Check-In'}
       subtitle={getRecordTitle()}
       icon={<AlertTriangle className="w-5 h-5 text-red-400" />}
       maxWidth="md"
@@ -116,16 +147,26 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={isDeleting || (deleteMode === 'permanent' && !isInputValidForPermanent)}
+            disabled={
+              isDeleting ||
+              isBlockedMemberAction ||
+              !isReasonValid ||
+              (effectiveMode === 'permanent' && !isInputValidForPermanent)
+            }
             className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-bold font-display uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-md disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 min-h-11 ${
-              deleteMode === 'permanent'
+              effectiveMode === 'permanent'
                 ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-600/30'
                 : 'bg-[#b5ff00] hover:bg-[#c6ff24] text-black shadow-[#b5ff00]/20'
             }`}
           >
             {isDeleting ? (
               <span>Processing...</span>
-            ) : deleteMode === 'permanent' ? (
+            ) : type === 'checkin' ? (
+              <>
+                <Trash2 className="h-4 w-4" />
+                <span>Delete Check-In</span>
+              </>
+            ) : effectiveMode === 'permanent' ? (
               <>
                 <Trash2 className="h-4 w-4" />
                 <span>Permanently Delete</span>
@@ -134,7 +175,7 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
               <>
                 <Archive className="h-4 w-4" />
                 <span>
-                  {type === 'session' ? 'Cancel & Archive' : 'Deactivate Profile'}
+                  {type === 'session' ? 'Soft Delete & Archive' : 'Deactivate Profile'}
                 </span>
               </>
             )}
@@ -169,11 +210,36 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
 
           {type === 'checkin' && checkIn && (
             <div className="text-zinc-400 font-mono text-xs pt-1 space-y-1">
-              <div>Member: <span className="text-zinc-200 font-semibold">{checkIn.memberName}</span> ({checkIn.memberHandle})</div>
+              <div>Member: <span className="text-zinc-200 font-semibold">{checkIn.memberName || checkIn.memberId}</span> {checkIn.memberHandle ? `(${checkIn.memberHandle})` : ''}</div>
               <div>Method: <span className="text-zinc-300">{checkIn.method}</span></div>
             </div>
           )}
         </div>
+
+        {isBlockedMemberAction && (
+          <div className="rounded-2xl border border-red-500/50 bg-red-950/50 p-3.5 space-y-1.5 text-red-200 text-xs">
+            <div className="flex items-center gap-2 font-bold text-red-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>Super Administrator Protected</span>
+            </div>
+            <p className="leading-relaxed">
+              The Super Administrator&apos;s roster profile and account cannot be deactivated or purged.
+            </p>
+          </div>
+        )}
+
+        {!isBlockedMemberAction && type === 'member' && isTargetDelegatedAdmin && (
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-950/40 p-3.5 space-y-1.5 text-amber-200 text-xs">
+            <div className="flex items-center gap-2 font-bold text-amber-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>Delegated Administrator Notice</span>
+            </div>
+            <p className="leading-relaxed">
+              This builder currently holds delegated administrator permissions (<span className="font-mono text-amber-300">admins/{member?.authUid || 'uid'}</span>).
+              Deactivating their member profile revokes member check-in access and resets their linked user profile, while <span className="font-mono">admins/{'{uid}'}</span> admin access remains active until revoked separately in Administrators.
+            </p>
+          </div>
+        )}
 
         {/* Mode Selector (Soft Archive vs Permanent Deletion) */}
         {type !== 'checkin' && (
@@ -193,11 +259,11 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
               >
                 <div className="flex items-center gap-2 font-bold text-xs">
                   <Archive className="h-4 w-4 text-[#b5ff00]" />
-                  <span>{type === 'session' ? 'Mark Cancelled (Safe)' : 'Deactivate Member'}</span>
+                  <span>{type === 'session' ? 'Soft Delete & Archive (Recommended)' : 'Deactivate Member'}</span>
                 </div>
                 <p className="text-xs text-zinc-400 mt-1 leading-normal">
                   {type === 'session'
-                    ? 'Preserves past check-in records while closing attendance.'
+                    ? 'Cancels check-in, hides session from active list (deletedAt), and preserves check-ins & stats.'
                     : 'Disables check-in rights while preserving past attendance data.'}
                 </p>
               </button>
@@ -216,15 +282,39 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
                   <span>Permanent Purge</span>
                 </div>
                 <p className="text-xs text-zinc-400 mt-1 leading-normal">
-                  Irreversible! Removes the record completely from Firestore.
+                  {type === 'session'
+                    ? `Irreversible! Deletes session, kiosk token, announcements, and ${relatedCheckInsCount} check-in(s).`
+                    : 'Irreversible! Removes the record completely from Firestore.'}
                 </p>
               </button>
             </div>
           </div>
         )}
 
+        {/* Required Audit Reason for Check-In Deletion */}
+        {type === 'checkin' && (
+          <div className="rounded-2xl border border-amber-500/30 bg-zinc-950/80 p-3.5 space-y-2">
+            <label htmlFor="checkin-delete-reason" className="text-xs text-zinc-200 font-semibold block">
+              Reason for Deleting Check-In <span className="text-red-400">*</span>
+            </label>
+            <input
+              id="checkin-delete-reason"
+              type="text"
+              required
+              maxLength={300}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Accidental duplicate scan or builder did not stay"
+              className="w-full bg-black border border-white/15 rounded-xl px-3 py-2.5 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] min-h-11 text-base sm:text-xs"
+            />
+            <p className="text-[11px] text-zinc-400 font-mono">
+              Recorded permanently in the admin audit log alongside this check-in deletion.
+            </p>
+          </div>
+        )}
+
         {/* Warning Callout */}
-        {deleteMode === 'permanent' && (
+        {effectiveMode === 'permanent' && (
           <div className="rounded-2xl border border-red-500/40 bg-red-950/40 p-3.5 space-y-2 text-red-200 text-xs">
             <div className="flex items-center gap-2 font-bold text-red-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -232,10 +322,10 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
             </div>
             <p className="leading-relaxed text-zinc-300">
               {type === 'session'
-                ? `Deleting this session will permanently purge all associated check-in records (${relatedCheckInsCount} records). This action cannot be undone.`
+                ? `Permanently deleting this session will cascade-delete the session document, its rotating kiosk token (sessionTokens), related announcements, and all ${relatedCheckInsCount} associated check-in record(s) in atomic batches. This action cannot be undone.`
                 : type === 'member'
                 ? `Permanently deleting ${member?.name || 'this builder'} immediately frees their handle (${member?.handle || ''}) and student ID for reuse. Their user login is reset to allow re-applying.`
-                : 'Deleting this check-in atomically decrements the builder attendance counter and updates stats.'}
+                : 'Deleting this check-in removes the attendance record and logs the reason atomically in auditLogs.'}
             </p>
 
             {type === 'member' && (
@@ -262,7 +352,7 @@ export const RecordDeleteModal: React.FC<RecordDeleteModalProps> = ({
         )}
 
         {/* Permanent Deletion Guard Input */}
-        {deleteMode === 'permanent' && (
+        {effectiveMode === 'permanent' && (
           <div className="rounded-2xl border border-red-500/30 bg-red-950/20 p-3.5 space-y-2">
             <label className="text-xs text-zinc-300 font-semibold block">
               To confirm permanent deletion, type{' '}

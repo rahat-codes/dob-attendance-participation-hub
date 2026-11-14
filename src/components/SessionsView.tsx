@@ -33,7 +33,7 @@ interface SessionsViewProps {
   onOpenNewSession: () => void;
   onEditSession?: (session: Session) => void;
   onLaunchKioskForSession: (sessionId: string) => void;
-  onCheckInToSession: (sessionId: string, memberId: string) => void;
+  onCheckInToSession: (sessionId: string, memberId: string) => Promise<any> | void;
   onRemoveCheckIn: (checkIn: CheckInRecord) => void;
   onUpdateSessionStatus?: (sessionId: string, status: SessionStatus, mode?: CheckInMode) => void;
   onDeleteSession?: (session: Session) => void;
@@ -55,16 +55,35 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'upcoming' | 'completed'>('all');
   const [trackFilter, setTrackFilter] = useState<string>('all');
+  const [showArchived, setShowArchived] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSessionForRoster, setSelectedSessionForRoster] = useState<string | null>(
-    sessions[0]?.id || null
+    sessions.find((s) => !s.deletedAt)?.id || sessions[0]?.id || null
   );
   const [isRosterOpen, setIsRosterOpen] = useState(false);
   const [manualAddMemberId, setManualAddMemberId] = useState('');
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [inFlightMemberId, setInFlightMemberId] = useState<string | null>(null);
+
+  const archivedCount = sessions.filter((s) => Boolean(s.deletedAt)).length;
+
+  const handleManualAdd = async (sessionId: string, memberId: string, clearSelection = false) => {
+    if (!memberId || inFlightMemberId) return;
+    setInFlightMemberId(memberId);
+    try {
+      await onCheckInToSession(sessionId, memberId);
+      if (clearSelection) {
+        setManualAddMemberId('');
+        setMemberSearchQuery('');
+      }
+    } finally {
+      setInFlightMemberId(null);
+    }
+  };
 
   const filteredSessions = sessions
     .filter((s) => {
+      if (!showArchived && s.deletedAt) return false;
       if (statusFilter !== 'all') {
         const temporal = getSessionTemporalInfo(s);
         if (statusFilter === 'open' && !temporal.isOpenNow) return false;
@@ -179,6 +198,20 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
             <option value="AI & Embedded">AI & Embedded</option>
             <option value="Open Hack & Demo">Open Hack & Demo</option>
           </select>
+
+          {archivedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowArchived((prev) => !prev)}
+              className={`px-3 py-2.5 sm:py-1.5 rounded-xl border font-mono text-xs transition-colors cursor-pointer min-h-[44px] sm:min-h-0 ${
+                showArchived
+                  ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 font-semibold'
+                  : 'bg-[#141720] border-white/10 text-zinc-300 hover:text-white'
+              }`}
+            >
+              {showArchived ? `Hide Archived (${archivedCount})` : `Show Archived (${archivedCount})`}
+            </button>
+          )}
         </div>
 
         {/* Search */}
@@ -264,6 +297,11 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                           </span>
                         </>
                       )}
+                      {session.deletedAt && (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-500/15 border border-rose-500/30 text-rose-300 font-mono text-[10px] font-bold uppercase whitespace-nowrap shrink-0">
+                          Archived
+                        </span>
+                      )}
                     </div>
 
                     <h3 className="text-base sm:text-lg font-bold font-display text-white break-words">
@@ -278,7 +316,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                   <div className="text-right shrink-0">
                     <div className="text-sm font-mono font-bold text-zinc-100 tabular-nums whitespace-nowrap">
                       {checkedCount}
-                      {session.maxCapacity && (
+                      {(session.maxCapacity ?? 0) > 0 && (
                         <span className="text-zinc-500 font-normal"> / {session.maxCapacity}</span>
                       )}
                     </div>
@@ -565,18 +603,12 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
 
                       <button
                         type="button"
-                        disabled={!manualAddMemberId}
-                        onClick={() => {
-                          if (manualAddMemberId) {
-                            onCheckInToSession(activeRosterSession.id, manualAddMemberId);
-                            setManualAddMemberId('');
-                            setMemberSearchQuery('');
-                          }
-                        }}
+                        disabled={!manualAddMemberId || Boolean(inFlightMemberId)}
+                        onClick={() => handleManualAdd(activeRosterSession.id, manualAddMemberId, true)}
                         className="px-4 py-2 bg-[#b5ff00] hover:bg-[#c6ff24] disabled:opacity-30 disabled:cursor-not-allowed text-black text-xs font-bold uppercase tracking-wider rounded-xl transition-all whitespace-nowrap cursor-pointer shadow-[0_0_15px_rgba(181,255,0,0.3)] active:scale-95 min-h-[44px] flex items-center gap-1.5 font-mono shrink-0"
                       >
                         <UserCheck className="h-4 w-4 stroke-[2.5]" />
-                        <span>Add</span>
+                        <span>{inFlightMemberId ? 'Adding...' : 'Add'}</span>
                       </button>
                     </div>
 
@@ -587,13 +619,12 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                           <button
                             key={m.id}
                             type="button"
-                            onClick={() => {
-                              onCheckInToSession(activeRosterSession.id, m.id);
-                            }}
-                            className="px-2 py-0.5 rounded-lg bg-[#141720] hover:bg-[#1f2433] hover:text-[#b5ff00] border border-white/5 hover:border-[#b5ff00]/40 text-[11px] text-zinc-300 transition-all font-mono truncate max-w-[140px] cursor-pointer"
+                            disabled={Boolean(inFlightMemberId)}
+                            onClick={() => handleManualAdd(activeRosterSession.id, m.id, false)}
+                            className="px-2 py-0.5 rounded-lg bg-[#141720] hover:bg-[#1f2433] hover:text-[#b5ff00] border border-white/5 hover:border-[#b5ff00]/40 text-[11px] text-zinc-300 transition-all font-mono truncate max-w-[140px] cursor-pointer disabled:opacity-40"
                             title={`Click to instantly add ${m.name}`}
                           >
-                            + {m.name.split(' ')[0]}
+                            {inFlightMemberId === m.id ? 'Adding...' : `+ ${m.name.split(' ')[0]}`}
                           </button>
                         ))}
                       </div>
@@ -605,8 +636,8 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-zinc-400">
                     <span>Recorded Check-Ins ({rosterCheckIns.length})</span>
-                    <span className="font-mono text-zinc-500">
-                      Cap: {activeRosterSession.maxCapacity || 'Unlimited'}
+                    <span className={`font-mono ${(activeRosterSession.maxCapacity ?? 0) > 0 && rosterCheckIns.length >= (activeRosterSession.maxCapacity ?? 0) ? 'text-amber-400 font-bold' : 'text-zinc-500'}`}>
+                      Cap: {(activeRosterSession.maxCapacity ?? 0) > 0 ? activeRosterSession.maxCapacity : 'Unlimited'}
                     </span>
                   </div>
 

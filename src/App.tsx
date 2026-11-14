@@ -30,10 +30,12 @@ import {
 import {
   subscribeToMembers,
   subscribeToSessions,
-  subscribeToCheckIns,
+  subscribeToAllCheckIns,
+  subscribeToMemberCheckIns,
   subscribeToUsers,
   subscribeToPublicLeaderboard,
   subscribeToUserNotifications,
+  checkIsAdmin,
   checkAndSend30MinuteReminders,
   approveUserMembershipLink,
   approveExistingMember,
@@ -43,8 +45,10 @@ import {
   updateMemberInFirestore,
   createSessionInFirestore,
   updateSessionInFirestore,
+  setSessionCheckInMode,
   completeSession,
   reopenSession,
+  cancelSession,
   recordCheckInAtomic,
   adminDeleteMember,
   reactivateMember,
@@ -53,6 +57,10 @@ import {
   initializeFirestoreWithDefaults,
   backfillPublicLeaderboard,
 } from './firebase/firestoreService';
+import { getSubscriptionPlan } from './utils/listenerScope';
+import { ensureFreshServerTimeOffset } from './utils/serverTime';
+import { isSessionRescheduled } from './utils/sessionValidation';
+import { SUPER_ADMIN_EMAIL } from './config/constants';
 import { decodeApplication, isApplicationSubmitted } from './utils/application';
 import { Navbar, NavigationTab } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -246,6 +254,11 @@ export default function App() {
   useEffect(() => {
     setMandatoryProfileDismissed(false);
   }, [user?.uid]);
+
+  // Sync client/server clock offset via GET /api/time at startup
+  useEffect(() => {
+    ensureFreshServerTimeOffset().catch(() => {});
+  }, []);
 
   // Check if an approved/active builder must complete the mandatory profile form
   const isMandatoryProfileRequired = useMemo(() => {
@@ -446,45 +459,81 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // Real-time Firestore sync (Active only when authenticated)
+  // Real-time Firestore sync (F11: strictly scoped by role and active approval status)
   useEffect(() => {
-    if (!user) return;
+    const plan = getSubscriptionPlan({
+      hasUser: Boolean(user),
+      isAdmin,
+      isApprovedMember,
+      linkedMemberId: linkedMember?.id,
+    });
 
-    const unsubMembers = subscribeToMembers(
-      (remoteMembers) => {
-        setMembers(remoteMembers);
-        saveStoredMembers(remoteMembers);
-        setFirestoreError(null);
-      },
-      (err) => {
-        setFirestoreError('Could not sync members directory: ' + err.message);
+    if (!plan.members && !plan.sessions && plan.checkInsMode === 'none' && !plan.usersDirectory) {
+      pendingDetectorRef.current.reset();
+      hasCheckedInitialPendingRef.current = false;
+      if (!user) {
+        setMembers([]);
+        setSessions([]);
+        setCheckIns([]);
+        setAllUsers([]);
       }
-    );
+      return;
+    }
 
-    const unsubSessions = subscribeToSessions(
-      (remoteSessions) => {
-        setSessions(remoteSessions);
-        saveStoredSessions(remoteSessions);
-        setFirestoreError(null);
-      },
-      (err) => {
-        setFirestoreError('Could not sync sessions: ' + err.message);
-      }
-    );
+    const unsubMembers = plan.members
+      ? subscribeToMembers(
+          (remoteMembers) => {
+            setMembers(remoteMembers);
+            saveStoredMembers(remoteMembers);
+            setFirestoreError(null);
+          },
+          (err) => {
+            setFirestoreError('Could not sync members directory: ' + err.message);
+          }
+        )
+      : undefined;
 
-    const unsubCheckIns = subscribeToCheckIns(
-      (remoteCheckIns) => {
-        setCheckIns(remoteCheckIns);
-        saveStoredCheckIns(remoteCheckIns);
-        setFirestoreError(null);
-      },
-      (err) => {
-        setFirestoreError('Could not sync attendance records: ' + err.message);
-      }
-    );
+    const unsubSessions = plan.sessions
+      ? subscribeToSessions(
+          (remoteSessions) => {
+            setSessions(remoteSessions);
+            saveStoredSessions(remoteSessions);
+            setFirestoreError(null);
+          },
+          (err) => {
+            setFirestoreError('Could not sync sessions: ' + err.message);
+          }
+        )
+      : undefined;
+
+    let unsubCheckIns: (() => void) | undefined;
+    if (plan.checkInsMode === 'all') {
+      unsubCheckIns = subscribeToAllCheckIns(
+        (remoteCheckIns) => {
+          setCheckIns(remoteCheckIns);
+          saveStoredCheckIns(remoteCheckIns);
+          setFirestoreError(null);
+        },
+        (err) => {
+          setFirestoreError('Could not sync attendance records: ' + err.message);
+        }
+      );
+    } else if (plan.checkInsMode === 'self' && linkedMember?.id) {
+      unsubCheckIns = subscribeToMemberCheckIns(
+        linkedMember.id,
+        (remoteCheckIns) => {
+          setCheckIns(remoteCheckIns);
+          saveStoredCheckIns(remoteCheckIns);
+          setFirestoreError(null);
+        },
+        (err) => {
+          setFirestoreError('Could not sync attendance records: ' + err.message);
+        }
+      );
+    }
 
     let unsubUsers: (() => void) | undefined;
-    if (isAdmin) {
+    if (plan.usersDirectory) {
       unsubUsers = subscribeToUsers(
         (remoteUsers) => {
           setAllUsers(remoteUsers);
@@ -516,12 +565,12 @@ export default function App() {
     }
 
     return () => {
-      unsubMembers();
-      unsubSessions();
-      unsubCheckIns();
+      if (unsubMembers) unsubMembers();
+      if (unsubSessions) unsubSessions();
+      if (unsubCheckIns) unsubCheckIns();
       if (unsubUsers) unsubUsers();
     };
-  }, [user, isAdmin]);
+  }, [user, isAdmin, isApprovedMember, linkedMember?.id]);
 
   // Request browser notification permission when an admin logs in
   useEffect(() => {
@@ -568,9 +617,9 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
-  // Automated 30-Minute Meeting Reminders Scheduled Background Sweep
+  // Automated 30-Minute Meeting Reminders Scheduled Background Sweep (Admin-only)
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isAdmin) return;
 
     // Run sweep once immediately upon login/session refresh
     checkAndSend30MinuteReminders().catch((err) => {
@@ -616,11 +665,15 @@ export default function App() {
       sessionId: string,
       memberId: string,
       method: CheckInMethod,
-      notes?: string
+      notesOrOptions?: string | { token?: string; notes?: string }
     ): Promise<{ success: boolean; message: string; record?: CheckInRecord; isDuplicate?: boolean }> => {
-      // Execute atomic transaction in Firestore with deterministic document ID {sessionId}_{memberId}
-      const operatorUid = isAdmin ? user?.uid : undefined;
-      const res = await recordCheckInAtomic(sessionId, memberId, method, notes, operatorUid);
+      // Only explicit door-staff manual_entry passes operatorUid; admin self-scans stay recordSelfCheckIn
+      const operatorUid = isAdmin && method === 'manual_entry' ? user?.uid : undefined;
+      const options =
+        typeof notesOrOptions === 'object' && notesOrOptions !== null
+          ? { ...notesOrOptions, operatorUid }
+          : { notes: notesOrOptions, operatorUid };
+      const res = await recordCheckInAtomic(sessionId, memberId, method, options);
       return res;
     },
     [isAdmin, user]
@@ -630,7 +683,7 @@ export default function App() {
   const handleExecuteRecordDeletion = async (
     target: DeleteRecordTarget,
     permanent: boolean,
-    options?: { deleteAttendance?: boolean }
+    options?: { deleteAttendance?: boolean; reason?: string }
   ) => {
     if (!isAdmin) {
       throw new Error('Unauthorized: Only administrators can delete club records.');
@@ -645,7 +698,8 @@ export default function App() {
         await adminDeleteCheckIn(
           target.id,
           target.checkIn?.memberName,
-          target.checkIn?.sessionTitle
+          target.checkIn?.sessionTitle,
+          options?.reason || ''
         );
       }
       setDeleteTarget(null);
@@ -661,10 +715,7 @@ export default function App() {
     }
     try {
       if (editingSession) {
-        const isRescheduled = Boolean(
-          editingSession.date !== sessionPayload.date ||
-          editingSession.startTime !== sessionPayload.startTime
-        );
+        const isRescheduled = isSessionRescheduled(editingSession, sessionPayload);
         await updateSessionInFirestore(sessionPayload, undefined, isRescheduled);
       } else {
         await createSessionInFirestore(sessionPayload);
@@ -685,22 +736,23 @@ export default function App() {
   const handleUpdateSessionStatus = async (sessionId: string, status: SessionStatus, mode?: CheckInMode) => {
     if (!isAdmin) return;
     try {
+      const target = sessions.find((s) => s.id === sessionId);
       if (status === 'completed') {
         await completeSession(sessionId);
+      } else if (status === 'cancelled') {
+        await cancelSession(sessionId, target?.title || sessionId);
       } else if (status === 'scheduled') {
-        const target = sessions.find((s) => s.id === sessionId);
         if (target && (target.status === 'completed' || target.status === 'cancelled')) {
           await reopenSession(sessionId, mode || 'auto');
+        } else if (target && mode) {
+          await setSessionCheckInMode(sessionId, mode);
         } else if (target) {
           const nextMode = mode || target.checkInMode || 'auto';
           await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
         }
-      } else {
-        const target = sessions.find((s) => s.id === sessionId);
-        if (target) {
-          const nextMode = mode || target.checkInMode || 'auto';
-          await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
-        }
+      } else if (target) {
+        const nextMode = mode || target.checkInMode || 'auto';
+        await updateSessionInFirestore({ ...target, status, checkInMode: nextMode });
       }
       setFirestoreError(null);
     } catch (err: any) {
@@ -850,7 +902,8 @@ export default function App() {
       description: 'Hands-on hardware hacking, robotics firmware, and collaborative build session.',
       sessionCode: `DOB-SPRINT-${todayStr.replace(/-/g, '').substring(2)}`,
       points: 10,
-      status: 'active',
+      status: 'scheduled',
+      checkInMode: 'auto',
       timezone: DEFAULT_CLUB_TIMEZONE,
       host: user.displayName || 'Guild Lead',
     };
@@ -1393,9 +1446,7 @@ export default function App() {
                     setActiveKioskSessionId(sessionId);
                     handleSelectTab('kiosk');
                   }}
-                  onCheckInToSession={(sId, mId) => {
-                    handleRecordCheckIn(sId, mId, 'manual_entry');
-                  }}
+                  onCheckInToSession={(sId, mId) => handleRecordCheckIn(sId, mId, 'manual_entry')}
                   onRemoveCheckIn={(checkIn) => {
                     if (!isAdmin) return;
                     setDeleteTarget({
@@ -1456,12 +1507,25 @@ export default function App() {
                     setPrefillMember(null);
                     setIsAddMemberOpen(true);
                   }}
-                  onDeleteMember={(member) => {
+                  onDeleteMember={async (member) => {
                     if (!isAdmin) return;
+                    const linkedUser = allUsers.find(
+                      (u) => u.id === member.authUid || u.memberId === member.id
+                    );
+                    const isTargetSuperAdmin = Boolean(
+                      linkedUser?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim()
+                    );
+                    let isTargetDelegatedAdmin = false;
+                    const targetUid = member.authUid || linkedUser?.id;
+                    if (!isTargetSuperAdmin && targetUid) {
+                      isTargetDelegatedAdmin = await checkIsAdmin(targetUid).catch(() => false);
+                    }
                     setDeleteTarget({
                       type: 'member',
                       id: member.id,
                       member,
+                      isTargetSuperAdmin,
+                      isTargetDelegatedAdmin,
                     });
                   }}
                   onReactivateMember={async (member) => {
@@ -1698,6 +1762,7 @@ export default function App() {
         onSaveSession={handleSaveSession}
         existingSessionsCount={sessions.length}
         initialSession={editingSession}
+        defaultHost={linkedMember?.name || user?.displayName || ''}
       />
 
       <AddMemberModal
@@ -1804,6 +1869,7 @@ export default function App() {
         onClose={() => setIsBackupOpen(false)}
         members={members}
         users={allUsers}
+        sessions={sessions}
       />
       </Suspense>
     </div>

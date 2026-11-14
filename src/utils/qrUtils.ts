@@ -45,7 +45,7 @@ export async function generateQRCodeDataUrl(
  * 2. window.location.origin
  */
 export function getAppBaseUrl(): string {
-  const envUrl = (import.meta.env.VITE_PUBLIC_BASE_URL || '').trim();
+  const envUrl = ((import.meta as any).env?.VITE_PUBLIC_BASE_URL || '').trim();
   if (envUrl) {
     return envUrl.replace(/\/+$/, '');
   }

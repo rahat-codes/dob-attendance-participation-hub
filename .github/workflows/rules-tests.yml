@@ -1,0 +1,44 @@
+name: Firestore Security Rules Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'firestore.rules'
+      - 'docs/rules/**'
+      - 'tests/firestore-rules.test.ts'
+      - '.github/workflows/rules-tests.yml'
+  pull_request:
+    paths:
+      - 'firestore.rules'
+      - 'docs/rules/**'
+      - 'tests/firestore-rules.test.ts'
+      - '.github/workflows/rules-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  firestore-rules:
+    name: Run Firestore Emulator Rules Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21 (Required for Firestore Emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Firestore Security Rules Test Suite
+        run: npx -y firebase-tools@15.36.0 emulators:exec --only firestore "npx tsx tests/firestore-rules.test.ts"

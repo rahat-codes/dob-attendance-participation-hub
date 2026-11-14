@@ -193,10 +193,10 @@ export const GuideModal: React.FC<GuideModalProps> = ({
 
             <div className="rounded-2xl p-4 bg-[#0d0f15] border border-white/5 neu-inset space-y-1.5">
               <span className="font-bold uppercase text-[#b5ff00] font-mono block text-xs">
-                2. 8-Character Backup Code
+                2. 8-Character Rotating Backup Code
               </span>
               <p className="text-zinc-400 leading-relaxed text-xs">
-                If a member&apos;s camera is unavailable, the kiosk displays an 8-character backup code (e.g. <span className="font-mono text-white">ABCD-EFGH</span>) that members can enter directly in the scanner modal.
+                If a member&apos;s camera is unavailable, open the scanner modal&apos;s <strong className="text-zinc-200">Enter Code</strong> tab, select the active session, and type the live 8-character rotating kiosk token (e.g. <span className="font-mono text-white">ABCD-EFGH</span>). Static session reference codes are display labels only and never authorize check-in.
               </p>
             </div>
 

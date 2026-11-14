@@ -32,6 +32,13 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+app.get('/api/time', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    nowMs: Date.now(),
+  });
+});
+
 // Single Page Application (SPA) catch-all fallback
 app.get('*', (_req, res) => {
   if (fs.existsSync(indexPath)) {

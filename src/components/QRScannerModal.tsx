@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { Session, Member, CheckInRecord, CheckInMethod } from '../types';
 import { parseScannedQR, playCheckInChime } from '../utils/qrUtils';
+import { getSessionState, getTargetSession, formatTimeInClubTz } from '../utils/sessionWindow';
+import { getPendingCheckIn, clearPendingCheckIn } from '../utils/deepLink';
 import { useAuth } from '../firebase/AuthContext';
 import { AttendanceConfirmationData } from './AttendanceConfirmationModal';
 
@@ -31,7 +33,7 @@ interface QRScannerModalProps {
     sessionId: string,
     memberId: string,
     method: CheckInMethod,
-    notes?: string
+    notesOrOptions?: string | { token?: string; notes?: string }
   ) => Promise<{ success: boolean; message: string; record?: CheckInRecord; isDuplicate?: boolean }>;
   onAttendanceConfirmed?: (data: AttendanceConfirmationData) => void;
 }
@@ -73,14 +75,24 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   // Manual code entry
   const [manualCode, setManualCode] = useState('');
   const [selectedSessionId, setSelectedSessionId] = useState<string>(
-    sessions.find((s) => s.status === 'active')?.id || sessions[0]?.id || ''
+    () => getTargetSession(sessions)?.id || ''
   );
+
+  useEffect(() => {
+    if (!sessions.length) return;
+    if (!selectedSessionId || !sessions.some((s) => s.id === selectedSessionId)) {
+      const target = getTargetSession(sessions);
+      if (target) setSelectedSessionId(target.id);
+    }
+  }, [sessions, selectedSessionId]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanLoopRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const inFlightRef = useRef(false);
+  const deepLinkConsumedRef = useRef(false);
 
   // Stop camera stream cleanly
   const stopCamera = useCallback(() => {
@@ -152,8 +164,14 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   // Process decoded QR payload
   const handleDecodedString = useCallback(
     async (rawString: string, source: CheckInMethod) => {
-      if (isProcessing) return;
+      if (inFlightRef.current || isProcessing) return;
+      inFlightRef.current = true;
       setIsProcessing(true);
+
+      const finish = () => {
+        inFlightRef.current = false;
+        setIsProcessing(false);
+      };
 
       if (!user) {
         setFeedback({
@@ -162,7 +180,19 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           details: 'You must be signed in with Google to record workshop attendance.',
           timestamp: new Date().toLocaleTimeString(),
         });
-        setIsProcessing(false);
+        finish();
+        return;
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        if (soundEnabled) playCheckInChime('warning');
+        setFeedback({
+          type: 'error',
+          title: 'You Appear Offline',
+          details: 'Check-in verification requires an active internet connection. Reconnect and scan again.',
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        finish();
         return;
       }
 
@@ -170,6 +200,8 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
       let targetSession: Session | undefined;
       let targetMember: Member | undefined;
+      let checkInToken: string | undefined;
+      let effectiveMethod: CheckInMethod = source;
 
       if (decoded.kind === 'session') {
         if (decoded.sessionId) {
@@ -181,7 +213,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           );
         }
 
-        // Self-check-in uses the authenticated user's linked member ID ONLY
         if (!linkedMember) {
           if (soundEnabled) playCheckInChime('warning');
           setFeedback({
@@ -190,12 +221,31 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
             details: 'Your signed-in account is not linked to an approved builder profile in the directory.',
             timestamp: new Date().toLocaleTimeString(),
           });
-          setIsProcessing(false);
+          finish();
           return;
         }
         targetMember = linkedMember;
+        checkInToken = decoded.token;
+      } else if (decoded.kind === 'backup_code') {
+        targetSession =
+          sessions.find((s) => s.id === selectedSessionId) ||
+          getTargetSession(sessions);
+
+        if (!linkedMember) {
+          if (soundEnabled) playCheckInChime('warning');
+          setFeedback({
+            type: 'warning',
+            title: 'Account Not Linked',
+            details: 'Your signed-in account is not linked to an approved builder profile in the directory.',
+            timestamp: new Date().toLocaleTimeString(),
+          });
+          finish();
+          return;
+        }
+        targetMember = linkedMember;
+        checkInToken = decoded.token;
+        effectiveMethod = 'code_input';
       } else if (decoded.kind === 'member') {
-        // Scanned a member pass: Only authorized admins can scan member passes
         if (!isAdmin) {
           if (soundEnabled) playCheckInChime('warning');
           setFeedback({
@@ -204,13 +254,13 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
             details: 'This is a personal builder pass. To check yourself in, please scan the meeting QR code displayed on the host screen.',
             timestamp: new Date().toLocaleTimeString(),
           });
-          setIsProcessing(false);
+          finish();
           return;
         }
 
         targetSession =
           sessions.find((s) => s.id === selectedSessionId) ||
-          sessions.find((s) => s.status === 'active');
+          getTargetSession(sessions);
 
         if (decoded.memberId) {
           targetMember = members.find((m) => m.id === decoded.memberId);
@@ -223,20 +273,27 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
             (m) => m.handle.toLowerCase() === cleanHandle.toLowerCase()
           );
         }
+        effectiveMethod = 'manual_entry';
       } else {
-        // Fallback match by session code
+        // Static sessionCode or session ID is not a rotating token; provide actionable guidance
         const matchedByCode = sessions.find(
           (s) =>
-            (s.sessionCode && s.sessionCode.toLowerCase() === rawString.toLowerCase()) ||
-            s.id.toLowerCase() === rawString.toLowerCase()
+            (s.sessionCode && s.sessionCode.toLowerCase() === rawString.trim().toLowerCase()) ||
+            s.id.toLowerCase() === rawString.trim().toLowerCase()
         );
         if (matchedByCode) {
-          targetSession = matchedByCode;
-          if (linkedMember) targetMember = linkedMember;
+          if (soundEnabled) playCheckInChime('warning');
+          setFeedback({
+            type: 'warning',
+            title: 'Rotating Kiosk Code Required',
+            details: `Please scan the live QR on the kiosk or enter the 8-character rotating code shown below it for "${matchedByCode.title}".`,
+            timestamp: new Date().toLocaleTimeString(),
+          });
+          finish();
+          return;
         }
       }
 
-      // Validations
       if (!targetSession) {
         if (soundEnabled) playCheckInChime('warning');
         setFeedback({
@@ -245,19 +302,27 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           details: 'Could not identify an active build session from this code. Please scan the official meeting QR code.',
           timestamp: new Date().toLocaleTimeString(),
         });
-        setIsProcessing(false);
+        finish();
         return;
       }
 
-      if (targetSession.status !== 'active' && !isAdmin) {
+      // Finding H: Check computed session window/mode instead of raw status === 'active'
+      const sessionState = getSessionState(targetSession);
+      if (sessionState.phase !== 'open' && effectiveMethod !== 'manual_entry') {
         if (soundEnabled) playCheckInChime('warning');
+        const reasonDetail =
+          sessionState.phase === 'cancelled'
+            ? `"${targetSession.title}" was cancelled. Check-in is closed.`
+            : sessionState.phase === 'upcoming'
+            ? `Check-in for "${targetSession.title}" opens at ${formatTimeInClubTz(sessionState.opensAt)}.`
+            : `Check-in for "${targetSession.title}" is closed.`;
         setFeedback({
           type: 'warning',
-          title: 'Session Check-In Closed',
-          details: `Check-in is currently ${targetSession.status.toUpperCase()} for "${targetSession.title}".`,
+          title: sessionState.phase === 'upcoming' ? 'Session Not Open Yet' : 'Session Check-In Closed',
+          details: reasonDetail,
           timestamp: new Date().toLocaleTimeString(),
         });
-        setIsProcessing(false);
+        finish();
         return;
       }
 
@@ -269,14 +334,31 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           details: 'Could not match this code with a registered member profile.',
           timestamp: new Date().toLocaleTimeString(),
         });
-        setIsProcessing(false);
+        finish();
+        return;
+      }
+
+      if (effectiveMethod !== 'manual_entry' && !checkInToken) {
+        if (soundEnabled) playCheckInChime('warning');
+        setFeedback({
+          type: 'warning',
+          title: 'Missing Security Token',
+          details: 'Please scan the rotating kiosk QR code or enter the 8-character kiosk code.',
+          timestamp: new Date().toLocaleTimeString(),
+        });
+        finish();
         return;
       }
 
       try {
-        const res = await onRecordCheckIn(targetSession.id, targetMember.id, source);
+        const res = await onRecordCheckIn(
+          targetSession.id,
+          targetMember.id,
+          effectiveMethod,
+          checkInToken ? { token: checkInToken } : undefined
+        );
 
-        if (res.success) {
+        if (res.success && !res.isDuplicate) {
           if (soundEnabled) playCheckInChime('success');
           setShowSuccessGlow(true);
           setConfirmedAttendeeName(targetMember.name);
@@ -317,14 +399,29 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
           });
         }
       } catch (err: any) {
+        const rawMsg = String(err?.message || '');
+        const isOffline =
+          (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+          err?.code === 'unavailable' ||
+          /offline|network/i.test(rawMsg);
+        const isPermission = err?.code === 'permission-denied' || /permission-denied|insufficient permissions/i.test(rawMsg);
+        if (soundEnabled) playCheckInChime('warning');
         setFeedback({
           type: 'error',
-          title: 'Network or Permission Error',
-          details: err?.message || 'Failed to verify check-in in Firestore.',
+          title: isOffline
+            ? 'Offline Check-In Failed'
+            : isPermission
+            ? 'Expired Code or Closed Window'
+            : 'Check-In Verification Error',
+          details: isOffline
+            ? 'Network unavailable while submitting check-in. Reconnect and scan again.'
+            : isPermission
+            ? 'This QR/backup code may have expired or the session window closed. Scan the current kiosk code.'
+            : rawMsg || 'Failed to verify check-in in Firestore.',
           timestamp: new Date().toLocaleTimeString(),
         });
       } finally {
-        setIsProcessing(false);
+        finish();
       }
     },
     [
@@ -340,6 +437,26 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
       onAttendanceConfirmed,
     ]
   );
+
+  // Auto-consume stored deep link (?s=...&t=...) once scanner opens and member/sessions are loaded
+  useEffect(() => {
+    if (!isOpen) {
+      deepLinkConsumedRef.current = false;
+      return;
+    }
+    if (!user || !linkedMember || sessions.length === 0 || deepLinkConsumedRef.current) {
+      return;
+    }
+    const pending = getPendingCheckIn();
+    if (pending?.sessionId && pending?.token) {
+      deepLinkConsumedRef.current = true;
+      clearPendingCheckIn();
+      handleDecodedString(
+        JSON.stringify({ sessionId: pending.sessionId, token: pending.token }),
+        'camera_scan'
+      );
+    }
+  }, [isOpen, user, linkedMember, sessions.length, handleDecodedString]);
 
   // Scan frame animation loop
   const scanFrame = useCallback(() => {
@@ -753,19 +870,22 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
               <div>
                 <label className="block text-zinc-300 font-medium text-xs mb-1">
-                  Meeting Code
+                  8-Character Rotating Kiosk Code
                 </label>
                 <input
                   type="text"
                   value={manualCode}
                   onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. DOB-2610-101"
+                  placeholder="e.g. AB34-CD56"
                   autoComplete="off"
                   autoCapitalize="characters"
                   spellCheck="false"
                   enterKeyHint="done"
                   className="w-full bg-black border border-zinc-800 rounded-xl px-3 py-2 text-base sm:text-xs text-zinc-200 font-mono uppercase focus:outline-none focus:border-[#b5ff00] min-h-11"
                 />
+                <p className="text-[11px] text-zinc-400 mt-1.5">
+                  Select your session above and enter the live rotating code shown on the projector kiosk. Static session reference codes never authorize check-in.
+                </p>
               </div>
 
               <button
@@ -778,7 +898,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 disabled={!manualCode.trim() || isProcessing}
                 className="btn-glossy-primary w-full min-h-11 py-3.5 px-6 rounded-full disabled:opacity-50 text-black font-bold text-xs uppercase tracking-wider cursor-pointer flex items-center justify-center"
               >
-                Verify Code &amp; Record Attendance
+                {isProcessing ? 'Verifying...' : 'Verify Code & Record Attendance'}
               </button>
             </div>
           )}

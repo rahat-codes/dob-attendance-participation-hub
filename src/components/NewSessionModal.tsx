@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Save, AlertCircle, RefreshCw, CheckCircle2, MapPin, Clock, Edit2 } from 'lucide-react';
-import { Timestamp } from 'firebase/firestore';
 import { Session, BuilderTrack, SessionStatus } from '../types';
 import { ModalSheet } from './ModalSheet';
-import { todayInClubTz, parseDateTimeInZone, formatDateInClubTz, formatInClubTz } from '../utils/sessionWindow';
+import { todayInClubTz, formatDateInClubTz, formatInClubTz } from '../utils/sessionWindow';
+import { createSessionPayload, DEFAULT_SESSION_CONFIG } from '../utils/sessionValidation';
 import { DEFAULT_CLUB_TIMEZONE } from '../config/constants';
 
 interface NewSessionModalProps {
@@ -12,6 +12,7 @@ interface NewSessionModalProps {
   onSaveSession: (session: Session) => Promise<void> | void;
   existingSessionsCount?: number;
   initialSession?: Session | null;
+  defaultHost?: string;
 }
 
 const COMMON_LOCATIONS = [
@@ -38,6 +39,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   onSaveSession,
   existingSessionsCount = 0,
   initialSession,
+  defaultHost = '',
 }) => {
   const isEditing = !!initialSession;
 
@@ -50,8 +52,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [description, setDescription] = useState('');
   const [points, setPoints] = useState(25);
   const [maxCapacity, setMaxCapacity] = useState(24);
-  const [status, setStatus] = useState<SessionStatus>('active');
-  const [host, setHost] = useState('Rahat Mahadi');
+  const [status, setStatus] = useState<SessionStatus>(DEFAULT_SESSION_CONFIG.status);
+  const [host, setHost] = useState(defaultHost);
   const [customCode, setCustomCode] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -67,10 +69,10 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       setEndTime(initialSession.endTime || '21:30');
       setLocation(initialSession.location || 'Bay 4 Prototyping Workshop');
       setDescription(initialSession.description || '');
-      setPoints(initialSession.points || 25);
-      setMaxCapacity(initialSession.maxCapacity || 24);
-      setStatus(initialSession.status || 'active');
-      setHost(initialSession.host || 'Guild Lead');
+      setPoints(initialSession.points ?? 25);
+      setMaxCapacity(initialSession.maxCapacity ?? 24);
+      setStatus(initialSession.status || DEFAULT_SESSION_CONFIG.status);
+      setHost(initialSession.host || defaultHost || DEFAULT_SESSION_CONFIG.host);
       setCustomCode(initialSession.sessionCode || '');
       setError(null);
       setSuccessMessage(null);
@@ -84,13 +86,13 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
       setDescription('');
       setPoints(25);
       setMaxCapacity(24);
-      setStatus('active');
-      setHost('Rahat Mahadi');
+      setStatus(DEFAULT_SESSION_CONFIG.status);
+      setHost(defaultHost);
       setCustomCode('');
       setError(null);
       setSuccessMessage(null);
     }
-  }, [initialSession, isOpen]);
+  }, [initialSession, isOpen, defaultHost]);
 
   const [isManualDateMode, setIsManualDateMode] = useState(false);
 
@@ -171,33 +173,36 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     }
 
     const tz = initialSession?.timezone || DEFAULT_CLUB_TIMEZONE;
-    const startAtDate = parseDateTimeInZone(date, startTime.trim() || '18:00', tz);
-    const endAtDate = parseDateTimeInZone(date, endTime.trim() || '21:30', tz);
 
-    const sessionPayload: Session = {
-      ...(initialSession || {}),
-      id: initialSession?.id || `sess_${Date.now()}`,
-      title: cleanTitle,
-      track,
-      date,
-      startTime: startTime.trim() || '18:00',
-      endTime: endTime.trim() || '21:30',
-      startAt: Timestamp.fromDate(startAtDate),
-      endAt: Timestamp.fromDate(endAtDate),
-      timezone: tz,
-      location: cleanLocation,
-      description: description.trim() || 'Club builder sprint and hands-on laboratory session.',
-      sessionCode: finalSessionCode,
-      points: Number(points) || 20,
-      maxCapacity: Number(maxCapacity) || 25,
-      status,
-      host: host.trim() || 'Guild Lead',
-      checkInMode: initialSession?.checkInMode || 'auto',
-      openMinutesBefore: initialSession?.openMinutesBefore ?? 15,
-      graceMinutesAfter: initialSession?.graceMinutesAfter ?? 30,
-      lateAfterMinutes: initialSession?.lateAfterMinutes ?? 10,
-      createdAt: initialSession?.createdAt || new Date().toISOString(),
-    };
+    let sessionPayload: Session;
+    try {
+      sessionPayload = createSessionPayload({
+        id: initialSession?.id,
+        title: cleanTitle,
+        track,
+        date,
+        startTime: startTime.trim() || '18:00',
+        endTime: endTime.trim() || '21:30',
+        timezone: tz,
+        location: cleanLocation,
+        description: description.trim() || 'Club builder sprint and hands-on laboratory session.',
+        sessionCode: finalSessionCode,
+        points: Number.isFinite(Number(points)) ? Math.max(0, Math.min(1000, Math.round(Number(points)))) : 20,
+        maxCapacity: Number.isFinite(Number(maxCapacity)) ? Math.max(0, Math.min(5000, Math.round(Number(maxCapacity)))) : 25,
+        status,
+        host: host.trim() || defaultHost.trim() || DEFAULT_SESSION_CONFIG.host,
+        checkInMode: initialSession?.checkInMode || DEFAULT_SESSION_CONFIG.checkInMode,
+        openMinutesBefore: initialSession?.openMinutesBefore ?? DEFAULT_SESSION_CONFIG.openMinutesBefore,
+        graceMinutesAfter: initialSession?.graceMinutesAfter ?? DEFAULT_SESSION_CONFIG.graceMinutesAfter,
+        lateAfterMinutes: initialSession?.lateAfterMinutes ?? DEFAULT_SESSION_CONFIG.lateAfterMinutes,
+        createdAt: initialSession?.createdAt,
+        createdBy: initialSession?.createdBy,
+        deletedAt: initialSession?.deletedAt,
+      });
+    } catch (validationErr: any) {
+      setError(validationErr?.message || 'Invalid session schedule details.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -309,9 +314,15 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               onChange={(e) => setStatus(e.target.value as SessionStatus)}
               className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] cursor-pointer min-h-11 text-base sm:text-xs"
             >
-              <option value="active">Active Now (Kiosk Ready)</option>
-              <option value="upcoming">Upcoming</option>
+              <option value="scheduled">Scheduled (Auto Window)</option>
               <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+              {isEditing && initialSession?.status === 'active' && (
+                <option value="active">Active (Legacy Status)</option>
+              )}
+              {isEditing && initialSession?.status === 'upcoming' && (
+                <option value="upcoming">Upcoming (Legacy Status)</option>
+              )}
             </select>
           </div>
         </div>
@@ -513,12 +524,12 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Max Capacity</label>
+            <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Max Capacity (0 = Unlimited)</label>
             <input
               type="number"
               value={maxCapacity}
               onChange={(e) => setMaxCapacity(Number(e.target.value))}
-              min={1}
+              min={0}
               inputMode="numeric"
               className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] font-mono min-h-11 text-base sm:text-xs"
             />
@@ -529,7 +540,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               type="number"
               value={points}
               onChange={(e) => setPoints(Number(e.target.value))}
-              min={5}
+              min={0}
+              max={1000}
               inputMode="numeric"
               className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] font-mono min-h-11 text-base sm:text-xs"
             />
@@ -540,7 +552,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
               type="text"
               value={host}
               onChange={(e) => setHost(e.target.value)}
-              placeholder="Rahat Mahadi"
+              placeholder="Guild Lead"
               autoComplete="name"
               enterKeyHint="next"
               className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 focus:outline-none focus:border-[#b5ff00] min-h-11 text-base sm:text-xs"
@@ -550,17 +562,20 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
         <div>
           <label className="block text-zinc-300 font-medium mb-1.5 text-xs">
-            Custom Check-in Code (Optional)
+            Session Reference Code (Optional &mdash; Display Only)
           </label>
           <input
             type="text"
             value={customCode}
             onChange={(e) => setCustomCode(e.target.value)}
-            placeholder="Leave blank to auto-generate"
+            placeholder="Leave blank to auto-generate reference label"
             autoCapitalize="characters"
             autoComplete="off"
             className="w-full bg-[#0d0f15] border border-white/10 neu-inset rounded-xl px-3.5 py-2 text-zinc-100 font-mono uppercase placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] min-h-11 text-base sm:text-xs"
           />
+          <p className="text-[11px] text-zinc-400 mt-1">
+            Label for schedule search &amp; CSV exports only (never authorizes check-in). Builders check in with the 45s rotating kiosk QR/code.
+          </p>
         </div>
 
         <div>

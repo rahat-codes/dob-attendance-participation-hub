@@ -53,10 +53,13 @@ service cloud.firestore {
 
     function sessionOpen(sid) {
       let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
-      return s.status != 'cancelled' && s.status != 'completed' && s.checkInMode != 'closed' && (
-        s.checkInMode == 'open' ||
-        (request.time >= s.startAt - duration.value(s.openMinutesBefore, 'm') &&
-         request.time <= s.endAt + duration.value(s.graceMinutesAfter, 'm'))
+      let mode = s.get('checkInMode', 'auto');
+      let openMins = s.get('openMinutesBefore', 15);
+      let graceMins = s.get('graceMinutesAfter', 30);
+      return s.status != 'cancelled' && s.status != 'completed' && mode != 'closed' && (
+        mode == 'open' ||
+        (request.time >= s.startAt - duration.value(openMins, 'm') &&
+         request.time <= s.endAt + duration.value(graceMins, 'm'))
       );
     }
 
@@ -81,7 +84,8 @@ service cloud.firestore {
 
     function isValidCheckInStatus(sid, status) {
       let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
-      let lateAt = s.startAt + duration.value(s.lateAfterMinutes, 'm');
+      let lateMins = s.get('lateAfterMinutes', 10);
+      let lateAt = s.startAt + duration.value(lateMins, 'm');
       return (status == 'present' && request.time <= lateAt + duration.value(15, 's')) ||
              (status == 'late' && request.time >= lateAt - duration.value(15, 's'));
     }
@@ -190,7 +194,8 @@ service cloud.firestore {
              (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 20)) &&
              (!('endTime' in data) || (data.endTime is string && data.endTime.size() <= 20)) &&
              (!('sessionCode' in data) || (data.sessionCode is string && data.sessionCode.size() <= 20)) &&
-             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000));
+             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000)) &&
+             (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 50));
     }
 
     // [Group A2]: Notification validator
@@ -339,7 +344,7 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidId(sessionId) && isValidSessionFull(request.resource.data);
       allow update: if isAdmin() && isValidId(sessionId) && (
         isValidSessionFull(request.resource.data) ||
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt', 'deletedAt'])
       );
       allow delete: if isAdmin() && isValidId(sessionId);
     }

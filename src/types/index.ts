@@ -163,6 +163,7 @@ export interface Session {
   createdAt?: string;
   createdBy?: string;
   updatedAt?: string;
+  deletedAt?: string;
 }
 
 export type SessionPhase = 'upcoming' | 'open' | 'closed' | 'cancelled';

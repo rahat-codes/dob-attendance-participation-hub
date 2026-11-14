@@ -16,22 +16,29 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ModalSheet } from './ModalSheet';
-import { exportFullBackupJSON, executeMemberDataRepair, executeUserStateRepair } from '../firebase/firestoreService';
+import {
+  exportFullBackupJSON,
+  executeMemberDataRepair,
+  executeUserStateRepair,
+  executeSessionMigration,
+} from '../firebase/firestoreService';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { useAuth } from '../firebase/AuthContext';
-import { Member, UserProfile } from '../types';
+import { Member, Session, UserProfile } from '../types';
 import {
   prepareMemberDataRepair,
   prepareUserStateRepair,
   MemberDataRepairItem,
   UserStateRepairItem,
 } from '../utils/repairTools';
+import { prepareSessionMigration, SessionMigrationPlan } from '../utils/sessionValidation';
 
 interface AdminBackupModalProps {
   isOpen: boolean;
   onClose: () => void;
   members?: Member[];
   users?: UserProfile[];
+  sessions?: Session[];
 }
 
 export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
@@ -39,6 +46,7 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
   onClose,
   members = [],
   users = [],
+  sessions = [],
 }) => {
   const { user } = useAuth();
   const [exporting, setExporting] = useState(false);
@@ -49,6 +57,7 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
   // Repair tool state
   const [memberRepairPlan, setMemberRepairPlan] = useState<MemberDataRepairItem[] | null>(null);
   const [userRepairPlan, setUserRepairPlan] = useState<UserStateRepairItem[] | null>(null);
+  const [sessionMigrationPlan, setSessionMigrationPlan] = useState<SessionMigrationPlan | null>(null);
   const [repairing, setRepairing] = useState(false);
 
   const isSuperAdmin = user?.email?.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim();
@@ -120,6 +129,30 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
     }
   };
 
+  const handlePreviewSessionMigration = () => {
+    setErrorMessage(null);
+    const plan = prepareSessionMigration(sessions);
+    setSessionMigrationPlan(plan);
+    if (plan.itemsNeedingMigration === 0) {
+      setStatusMessage(`Session Migration Check: All ${plan.totalScanned} session(s) already include required timestamps and window defaults.`);
+    }
+  };
+
+  const handleExecuteSessionMigration = async () => {
+    if (!sessionMigrationPlan || sessionMigrationPlan.items.length === 0) return;
+    setRepairing(true);
+    setErrorMessage(null);
+    try {
+      const count = await executeSessionMigration(sessionMigrationPlan.items);
+      setStatusMessage(`Session Migration Completed: Backfilled ${count} legacy session(s).`);
+      setSessionMigrationPlan(null);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to execute legacy session migration.');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <ModalSheet
       isOpen={isOpen}
@@ -129,6 +162,7 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
         setStatusMessage(null);
         setMemberRepairPlan(null);
         setUserRepairPlan(null);
+        setSessionMigrationPlan(null);
         onClose();
       }}
       title="Database Operations & Integrity"
@@ -370,6 +404,54 @@ export const AdminBackupModal: React.FC<AdminBackupModalProps> = ({
                       >
                         {repairing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
                         <span>Execute State Repair ({userRepairPlan.length} Users)</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Tool 3: Legacy Session Migration */}
+                <div className="sm:col-span-2 p-4 rounded-xl bg-zinc-900/70 border border-white/10 space-y-3 flex flex-col justify-between">
+                  <div className="space-y-1.5">
+                    <span className="font-bold text-xs text-white uppercase tracking-wider font-mono block">
+                      Legacy Session Migration (Idempotent)
+                    </span>
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      Backfills missing <span className="font-mono text-zinc-300">startAt</span>, <span className="font-mono text-zinc-300">endAt</span>, <span className="font-mono text-zinc-300">checkInMode</span>, and check-in window defaults on legacy <span className="font-mono text-zinc-300">sessions</span> documents before live events.
+                    </p>
+                    {sessionMigrationPlan && (
+                      <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] font-mono text-zinc-300 space-y-1">
+                        <div>
+                          Dry run: <strong>{sessionMigrationPlan.itemsNeedingMigration}</strong> of {sessionMigrationPlan.totalScanned} session(s) need migration ({sessionMigrationPlan.skippedCount} already compliant).
+                        </div>
+                        {sessionMigrationPlan.items.slice(0, 5).map((item) => (
+                          <div key={item.sessionId} className="text-[10px] text-zinc-400 truncate">
+                            • {item.title}: +{item.addedFields.join(', ')}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={repairing}
+                      onClick={handlePreviewSessionMigration}
+                      className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold cursor-pointer min-h-10 disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-[#b5ff00]" />
+                      <span>Preview Session Migration (Dry Run)</span>
+                    </button>
+
+                    {sessionMigrationPlan && sessionMigrationPlan.items.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={repairing}
+                        onClick={handleExecuteSessionMigration}
+                        className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black text-xs font-bold uppercase tracking-wider cursor-pointer min-h-10 disabled:opacity-50"
+                      >
+                        {repairing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
+                        <span>Execute Session Migration ({sessionMigrationPlan.items.length})</span>
                       </button>
                     )}
                   </div>

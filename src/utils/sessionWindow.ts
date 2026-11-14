@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Timestamp } from 'firebase/firestore';
 import { Session, SessionState, SessionPhase } from '../types';
 import { DEFAULT_CLUB_TIMEZONE } from '../config/constants';
+import { getCorrectedNow } from './serverTime';
 
 export type SessionTemporalStatus = 'open_now' | 'upcoming' | 'closed' | 'cancelled';
 export type SessionBadgeVariant = 'open_now' | 'upcoming' | 'upcoming_soon' | 'closed' | 'cancelled';
@@ -77,7 +78,7 @@ export function parseDateTimeInZone(dateStr: string, timeStr: string, tz?: strin
  * - otherwise 'upcoming'
  */
 export function getSessionState(session: Session, nowInput?: Date | number): SessionState {
-  const now = nowInput instanceof Date ? nowInput : typeof nowInput === 'number' ? new Date(nowInput) : new Date();
+  const now = nowInput instanceof Date ? nowInput : typeof nowInput === 'number' ? new Date(nowInput) : getCorrectedNow();
   const nowMs = now.getTime();
 
   let startDate: Date;
@@ -88,7 +89,7 @@ export function getSessionState(session: Session, nowInput?: Date | number): Ses
   } else if (session.date && session.startTime) {
     startDate = parseDateTimeInZone(session.date, session.startTime, session.timezone);
   } else {
-    startDate = new Date();
+    startDate = new Date(nowMs);
   }
 
   if (session.endAt) {
@@ -99,15 +100,17 @@ export function getSessionState(session: Session, nowInput?: Date | number): Ses
     endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
   }
 
+  // Matches firestore.rules s.get('openMinutesBefore', 15), s.get('graceMinutesAfter', 30), s.get('lateAfterMinutes', 10)
+  // for Timestamp-backed sessions; pre-migration display-only sessions without startAt/endAt use exact HH:mm boundaries.
   const openMins = typeof session.openMinutesBefore === 'number'
     ? session.openMinutesBefore
-    : (session.startAt ? 15 : 0);
+    : session.startAt ? 15 : 0;
   const graceMins = typeof session.graceMinutesAfter === 'number'
     ? session.graceMinutesAfter
-    : (session.endAt ? 30 : 0);
+    : session.endAt ? 30 : 0;
   const lateMins = typeof session.lateAfterMinutes === 'number'
     ? session.lateAfterMinutes
-    : (session.startAt ? 10 : 0);
+    : 10;
 
   const opensAt = new Date(startDate.getTime() - openMins * 60 * 1000);
   const closesAt = new Date(endDate.getTime() + graceMins * 60 * 1000);
@@ -142,17 +145,6 @@ export function getSessionState(session: Session, nowInput?: Date | number): Ses
   }
 
   if (session.checkInMode === 'open') {
-    return {
-      phase: 'open',
-      opensAt,
-      closesAt,
-      minutesToOpen: 0,
-      isLate,
-    };
-  }
-
-  // If status is legacy 'active', treat as open
-  if ((session.status as any) === 'active') {
     return {
       phase: 'open',
       opensAt,

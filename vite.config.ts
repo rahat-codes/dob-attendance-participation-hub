@@ -6,7 +6,20 @@ import {defineConfig} from 'vite';
 export default defineConfig(({ mode }) => {
   return {
     mode: 'production',
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'api-time-dev-endpoint',
+        configureServer(server) {
+          server.middlewares.use('/api/time', (_req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-store');
+            res.end(JSON.stringify({ nowMs: Date.now() }));
+          });
+        },
+      },
+    ],
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),

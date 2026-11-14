@@ -21,9 +21,15 @@ import {
 import { m } from 'motion/react';
 import { Session, Member, CheckInRecord, CheckInMethod } from '../types';
 import { generateQRCodeDataUrl, encodeSessionQRPayload, playCheckInChime } from '../utils/qrUtils';
-import { generateSecureToken, formatBackupCode } from '../utils/token';
-import { writeKioskToken } from '../firebase/firestoreService';
-import { getSessionState, formatTimeInClubTz, formatInClubTz } from '../utils/sessionWindow';
+import { formatBackupCode } from '../utils/token';
+import {
+  createInitialKioskTokenState,
+  stepKioskRotation,
+  detectActiveRemoteKiosk,
+  shouldTriggerKioskTickRotation,
+} from '../utils/kioskRotation';
+import { getSessionTokenDoc, subscribeToSessionToken, writeKioskToken } from '../firebase/firestoreService';
+import { getSessionState, getTargetSession, formatTimeInClubTz, formatInClubTz } from '../utils/sessionWindow';
 import { downloadCSV, generateAttendanceCSV } from '../utils/storage';
 import { TOKEN_ROTATION_SECONDS } from '../config/constants';
 
@@ -57,17 +63,22 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
   onExitKiosk,
 }) => {
   const [selectedSessionId, setSelectedSessionId] = useState<string>(
-    activeKioskSessionId || sessions.find((s) => s.status === 'scheduled')?.id || sessions[0]?.id || ''
+    activeKioskSessionId || getTargetSession(sessions)?.id || ''
   );
 
   useEffect(() => {
     if (activeKioskSessionId && sessions.some((s) => s.id === activeKioskSessionId)) {
       setSelectedSessionId(activeKioskSessionId);
+    } else if (!selectedSessionId && sessions.length > 0) {
+      const target = getTargetSession(sessions);
+      if (target) setSelectedSessionId(target.id);
     }
-  }, [activeKioskSessionId, sessions]);
+  }, [activeKioskSessionId, sessions, selectedSessionId]);
 
-  const [currentToken, setCurrentToken] = useState<string>(() => generateSecureToken());
-  const [prevToken, setPrevToken] = useState<string>(() => generateSecureToken());
+  const [tokenPair, setTokenPair] = useState(() => createInitialKioskTokenState());
+  const currentToken = tokenPair.currentToken;
+  const prevToken = tokenPair.prevToken;
+
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
@@ -75,6 +86,19 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
   const [searchMemberQuery, setSearchMemberQuery] = useState<string>('');
   const [hasCopiedLink, setHasCopiedLink] = useState<boolean>(false);
   const [manualCheckInStatus, setManualCheckInStatus] = useState<string | null>(null);
+  const [checkingInMemberId, setCheckingInMemberId] = useState<string | null>(null);
+  const [isClosingSession, setIsClosingSession] = useState<boolean>(false);
+  const [tokenWriteWarning, setTokenWriteWarning] = useState<string | null>(null);
+  const [kioskConflict, setKioskConflict] = useState<{ remoteToken: string; ageSeconds: number } | null>(null);
+
+  const tokenPairRef = useRef(tokenPair);
+  tokenPairRef.current = tokenPair;
+  const lastWrittenTokenRef = useRef<string | null>(null);
+  const takenOverAtMsRef = useRef<number | null>(null);
+  const lastRotationAtMsRef = useRef<number>(Date.now());
+  const rotationInFlightRef = useRef<boolean>(false);
+  const conflictRef = useRef<boolean>(false);
+  conflictRef.current = Boolean(kioskConflict);
 
   const currentSession = sessions.find((s) => s.id === selectedSessionId) || sessions[0];
   const sessionCheckIns = checkIns.filter((c) => c.sessionId === currentSession?.id);
@@ -83,45 +107,159 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
   const sessionState = currentSession ? getSessionState(currentSession) : null;
   const isOpen = sessionState?.phase === 'open';
 
-  // Rotation callback
-  const rotateToken = useCallback(async () => {
-    if (!currentSession || !isOpen || !isAdmin) return;
+  const commitTokenPair = useCallback(async (sessionId: string, pair: { currentToken: string; prevToken: string }) => {
+    lastWrittenTokenRef.current = pair.currentToken;
+    lastRotationAtMsRef.current = Date.now();
+    try {
+      await writeKioskToken(sessionId, pair.currentToken, pair.prevToken);
+      setTokenWriteWarning(null);
+    } catch (err: any) {
+      setTokenWriteWarning(
+        `Failed to publish rotating kiosk token to Firestore (${err?.message || 'network or permission error'}). Gate check-ins may fail until synced.`
+      );
+    }
+  }, []);
 
-    const nextToken = generateSecureToken();
-    setPrevToken(currentToken);
-    setCurrentToken(nextToken);
+  // Single-flight rotation triggered cleanly outside any React state updater
+  const performRotation = useCallback(async () => {
+    if (!currentSession || !isOpen || !isAdmin) return;
+    if (rotationInFlightRef.current || conflictRef.current) return;
+
+    rotationInFlightRef.current = true;
+    const nextPair = stepKioskRotation(tokenPairRef.current);
+    tokenPairRef.current = nextPair;
+    setTokenPair(nextPair);
+    setCountdown(TOKEN_ROTATION_SECONDS);
+    lastRotationAtMsRef.current = Date.now();
+
+    try {
+      await commitTokenPair(currentSession.id, nextPair);
+    } finally {
+      rotationInFlightRef.current = false;
+    }
+  }, [currentSession, isOpen, isAdmin, commitTokenPair]);
+
+  const handleTakeOverKiosk = useCallback(async () => {
+    if (!currentSession || !isOpen || !isAdmin || rotationInFlightRef.current) return;
+    rotationInFlightRef.current = true;
+    takenOverAtMsRef.current = Date.now();
+    conflictRef.current = false;
+    setKioskConflict(null);
+
+    const freshPair = stepKioskRotation(tokenPairRef.current);
+    tokenPairRef.current = freshPair;
+    setTokenPair(freshPair);
     setCountdown(TOKEN_ROTATION_SECONDS);
 
     try {
-      await writeKioskToken(currentSession.id, nextToken, currentToken);
-    } catch (err) {
-      console.warn('Failed to commit rotated kiosk token:', err);
+      await commitTokenPair(currentSession.id, freshPair);
+    } finally {
+      rotationInFlightRef.current = false;
     }
-  }, [currentSession, isOpen, isAdmin, currentToken]);
+  }, [currentSession, isOpen, isAdmin, commitTokenPair]);
 
-  // Initial token registration on session open
+  // Monitor sessionTokens/{sessionId} for concurrent active kiosks (rotated within <= 60s)
   useEffect(() => {
-    if (currentSession && isOpen && isAdmin) {
-      writeKioskToken(currentSession.id, currentToken, prevToken).catch(() => {});
+    const sid = currentSession?.id;
+    if (!sid || !isAdmin) {
+      setKioskConflict(null);
+      return;
     }
-  }, [currentSession?.id, isOpen, isAdmin]);
 
-  // Real 45s countdown ticker & rotation trigger
+    const unsubscribe = subscribeToSessionToken(
+      sid,
+      (remoteDoc) => {
+        const status = detectActiveRemoteKiosk({
+          remoteDoc,
+          localCurrentToken: tokenPairRef.current.currentToken,
+          localLastWrittenToken: lastWrittenTokenRef.current,
+          takenOverAtMs: takenOverAtMsRef.current,
+          nowMs: Date.now(),
+        });
+        if (status.conflict && status.remoteToken !== undefined) {
+          setKioskConflict({
+            remoteToken: status.remoteToken,
+            ageSeconds: status.ageSeconds ?? 0,
+          });
+        } else {
+          setKioskConflict(null);
+        }
+      },
+      () => {
+        // Listener error handled via warning banner on write if permissions are missing
+      }
+    );
+
+    return () => unsubscribe();
+  }, [currentSession?.id, isAdmin]);
+
+  // Initial token registration: inspect existing doc first to avoid overwriting an active remote kiosk
   useEffect(() => {
-    if (!isOpen) return;
+    const sid = currentSession?.id;
+    if (!sid || !isOpen || !isAdmin) return;
+
+    let cancelled = false;
+    const initPair = createInitialKioskTokenState();
+    tokenPairRef.current = initPair;
+    lastWrittenTokenRef.current = null;
+    takenOverAtMsRef.current = null;
+    lastRotationAtMsRef.current = Date.now();
+    setTokenPair(initPair);
+    setCountdown(TOKEN_ROTATION_SECONDS);
+    setTokenWriteWarning(null);
+
+    (async () => {
+      const existing = await getSessionTokenDoc(sid);
+      if (cancelled) return;
+      const conflictCheck = detectActiveRemoteKiosk({
+        remoteDoc: existing,
+        localCurrentToken: initPair.currentToken,
+        localLastWrittenToken: null,
+        takenOverAtMs: null,
+        nowMs: Date.now(),
+      });
+      if (conflictCheck.conflict && conflictCheck.remoteToken) {
+        setKioskConflict({
+          remoteToken: conflictCheck.remoteToken,
+          ageSeconds: conflictCheck.ageSeconds ?? 0,
+        });
+        return;
+      }
+      await commitTokenPair(sid, initPair);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentSession?.id, isOpen, isAdmin, commitTokenPair]);
+
+  // 1s ticker with zero side effects inside state updaters; strictly one rotation per interval
+  useEffect(() => {
+    if (!isOpen || !isAdmin) return;
 
     const interval = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          rotateToken();
-          return TOKEN_ROTATION_SECONDS;
-        }
-        return prev - 1;
-      });
+      const nowMs = Date.now();
+      const elapsedSeconds = Math.floor((nowMs - lastRotationAtMsRef.current) / 1000);
+      const remaining = Math.max(0, TOKEN_ROTATION_SECONDS - elapsedSeconds);
+      setCountdown(remaining);
+
+      if (
+        shouldTriggerKioskTickRotation({
+          isOpen,
+          isAdmin,
+          hasConflict: conflictRef.current,
+          isInFlight: rotationInFlightRef.current,
+          lastRotationAtMs: lastRotationAtMsRef.current,
+          nowMs,
+          intervalMs: TOKEN_ROTATION_SECONDS * 1000,
+        })
+      ) {
+        void performRotation();
+      }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isOpen, rotateToken]);
+  }, [isOpen, isAdmin, performRotation]);
 
   // Regenerate QR data URL whenever currentToken or session changes
   useEffect(() => {
@@ -207,7 +345,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
   };
 
   const handleManualCheckIn = async (memberId: string) => {
-    if (!currentSession) return;
+    if (!currentSession || checkingInMemberId) return;
     const mem = members.find((m) => m.id === memberId);
     if (mem?.status === 'Inactive') {
       setManualCheckInStatus(`Cannot check in ${mem.name}: Member status is Inactive.`);
@@ -215,6 +353,7 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
       return;
     }
 
+    setCheckingInMemberId(memberId);
     try {
       const res = await onRecordCheckIn(currentSession.id, memberId, 'manual_entry');
       if (soundEnabled) {
@@ -225,6 +364,8 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
     } catch (err: any) {
       setManualCheckInStatus(err?.message || 'Check-in failed');
       setTimeout(() => setManualCheckInStatus(null), 4000);
+    } finally {
+      setCheckingInMemberId(null);
     }
   };
 
@@ -237,8 +378,8 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
     return true;
   });
 
-  const isOverCapacity =
-    currentSession?.maxCapacity && sessionCheckIns.length > currentSession.maxCapacity;
+  const maxCap = currentSession?.maxCapacity ?? 0;
+  const isOverCapacity = maxCap > 0 && sessionCheckIns.length > maxCap;
 
   return (
     <div className="space-y-6 w-full min-w-0">
@@ -348,6 +489,51 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
         </div>
       )}
 
+      {tokenWriteWarning && (
+        <div
+          role="alert"
+          className="p-3.5 rounded-2xl bg-red-950/70 border border-red-500/50 text-xs font-mono text-red-200 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+            <span>{tokenWriteWarning}</span>
+          </div>
+          {currentSession && (
+            <button
+              type="button"
+              onClick={() => void commitTokenPair(currentSession.id, tokenPairRef.current)}
+              className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold uppercase tracking-wider cursor-pointer min-h-9 shrink-0"
+            >
+              Retry Sync
+            </button>
+          )}
+        </div>
+      )}
+
+      {kioskConflict && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl bg-amber-950/70 border border-amber-500/60 text-xs font-mono text-amber-200 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 min-w-0">
+            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-bold text-amber-300 uppercase">Another Active Kiosk Detected</p>
+              <p className="text-amber-200/90">
+                Token rotated {kioskConflict.ageSeconds}s ago by another admin screen. Auto-rotation is paused here so that screen&apos;s QR code stays valid.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleTakeOverKiosk()}
+            className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold uppercase tracking-wider cursor-pointer min-h-11 shrink-0"
+          >
+            Take Over Kiosk
+          </button>
+        </div>
+      )}
+
       {currentSession ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Main Stage: QR Projection Card */}
@@ -423,9 +609,9 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
             </div>
 
             {/* Backup Code Display */}
-            <div className="mt-6 p-4 rounded-2xl bg-[#0e1017] border border-white/10 neu-inset w-full max-w-md text-center space-y-1">
+            <div className="mt-6 p-4 rounded-2xl bg-[#0e1017] border border-white/10 neu-inset w-full max-w-md text-center space-y-1.5">
               <span className="text-[11px] font-mono text-zinc-400 uppercase tracking-wider block">
-                Camera Unavailable? Use 8-Character Backup Code:
+                Camera Unavailable? Type 8-Character Rotating Code:
               </span>
               <div className="flex items-center justify-center gap-3">
                 <span className="font-mono text-2xl font-black text-[#b5ff00] tracking-widest select-all">
@@ -439,6 +625,9 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
                   {hasCopiedLink ? <Check className="h-4 w-4 text-[#b5ff00]" /> : <Copy className="h-4 w-4" />}
                 </button>
               </div>
+              <p className="text-[10px] font-mono text-zinc-400">
+                Select this session in Check-In &rarr; Enter Code and enter this live rotating token (45s + 30s grace).
+              </p>
             </div>
           </div>
 
@@ -451,9 +640,9 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
                   <Users className="h-4 w-4 text-[#b5ff00]" />
                   <span>Live Attendance Count</span>
                 </span>
-                {currentSession.maxCapacity && (
+                {maxCap > 0 && (
                   <span className={`text-xs font-mono font-bold ${isOverCapacity ? 'text-amber-400' : 'text-zinc-400'}`}>
-                    {sessionCheckIns.length} / {currentSession.maxCapacity} Capacity
+                    {sessionCheckIns.length} / {maxCap} Capacity
                   </span>
                 )}
               </div>
@@ -483,19 +672,24 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
                 </button>
                 {isAdmin && onCloseCheckIn && isOpen && (
                   <button
+                    type="button"
+                    disabled={isClosingSession}
                     onClick={async () => {
                       if (window.confirm(`Close check-in and mark "${currentSession.title}" as completed?`)) {
+                        setIsClosingSession(true);
                         try {
                           await onCloseCheckIn(currentSession.id);
                         } catch (err: any) {
                           setManualCheckInStatus(`Failed to close check-in: ${err?.message || 'Access denied'}`);
                           setTimeout(() => setManualCheckInStatus(null), 5000);
+                        } finally {
+                          setIsClosingSession(false);
                         }
                       }
                     }}
-                    className="py-3 px-4 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-200 text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
+                    className="py-3 px-4 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-700/60 text-red-200 text-xs font-bold font-display uppercase tracking-wider transition-all cursor-pointer min-h-[44px] disabled:opacity-50"
                   >
-                    Close Check-In
+                    {isClosingSession ? 'Closing...' : 'Close Check-In'}
                   </button>
                 )}
               </div>
@@ -538,11 +732,13 @@ export const QRKioskView: React.FC<QRKioskViewProps> = ({
                         </span>
                       ) : (
                         <button
+                          type="button"
+                          disabled={checkingInMemberId === member.id}
                           onClick={() => handleManualCheckIn(member.id)}
                           aria-label={`Check in ${member.name}`}
-                          className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-[#b5ff00] hover:text-black text-zinc-300 text-[11px] font-bold uppercase transition-colors shrink-0 cursor-pointer min-h-[36px]"
+                          className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-[#b5ff00] hover:text-black text-zinc-300 text-[11px] font-bold uppercase transition-colors shrink-0 cursor-pointer min-h-[36px] disabled:opacity-50"
                         >
-                          Check In
+                          {checkingInMemberId === member.id ? 'Saving...' : 'Check In'}
                         </button>
                       )}
                     </div>
