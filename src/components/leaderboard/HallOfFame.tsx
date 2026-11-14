@@ -43,17 +43,21 @@ export const HallOfFame: React.FC<HallOfFameProps> = ({ items, onSelectMember })
         year: 'numeric',
       });
 
+      const getMonthPts = (item: PublicLeaderboardItem) =>
+        item.monthlyPoints?.[mKey] ??
+        item.monthlyScores?.[mKey] ??
+        (item.monthlyCheckIns?.[mKey] || 0) * 10;
+
       let maxPoints = 0;
       items.forEach((item) => {
-        const count = item.monthlyCheckIns?.[mKey] || 0;
-        const pts = count * 10;
+        const pts = getMonthPts(item);
         if (pts > maxPoints) {
           maxPoints = pts;
         }
       });
 
       const champions = maxPoints > 0
-        ? items.filter((item) => (item.monthlyCheckIns?.[mKey] || 0) * 10 === maxPoints)
+        ? items.filter((item) => getMonthPts(item) === maxPoints)
         : [];
 
       return {

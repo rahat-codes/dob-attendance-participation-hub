@@ -37,7 +37,7 @@ import {
   ClubNotification,
 } from '../types';
 import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE, DEFAULT_CHECKIN_SETTINGS } from '../config/constants';
-import { buildPublicLeaderboardItems } from '../utils/stats';
+import { buildPublicLeaderboardItems, buildLeaderboardRecomputeOpsPlan } from '../utils/stats';
 import {
   getSessionState,
   getSessionTemporalInfo,
@@ -2244,68 +2244,46 @@ export function subscribeToPublicLeaderboard(
 
 export async function syncMemberCheckInToPublicLeaderboard(
   memberId: string,
-  monthKey: string,
-  pointsAwarded: number = 10
+  _monthKey?: string,
+  _pointsAwarded?: number
 ): Promise<void> {
   try {
-    const memberDoc = await getDoc(doc(db, MEMBERS_COLLECTION, memberId));
-    if (!memberDoc.exists()) return;
-    const member = memberDoc.data() as Member;
-    if (member.status === 'Inactive' || member.leaderboardOptOut) {
-      // Opted out or inactive: ensure not in publicLeaderboard
+    const memberSnap = await getDoc(doc(db, MEMBERS_COLLECTION, memberId));
+    if (!memberSnap.exists()) {
       await deleteDoc(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId));
       return;
     }
 
-    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId);
-    const pubSnap = await getDoc(pubRef);
-    if (pubSnap.exists()) {
-      const existing = pubSnap.data() as PublicLeaderboardItem;
-      const currentMonthly = existing.monthlyCheckIns || {};
-      const newMonthly = {
-        ...currentMonthly,
-        [monthKey]: (currentMonthly[monthKey] || 0) + 1,
-      };
-      const newTotalPts = (existing.totalPoints || existing.points || 0) + pointsAwarded;
-      const newTotalCheckIns = (existing.totalCheckIns || 0) + 1;
-      const newStreak = (existing.currentStreak || 0) + 1;
-      const newBestStreak = Math.max(existing.bestStreak || 0, newStreak);
-
-      await updateDoc(pubRef, {
-        totalCheckIns: newTotalCheckIns,
-        points: newTotalPts,
-        totalPoints: newTotalPts,
-        currentStreak: newStreak,
-        bestStreak: newBestStreak,
-        monthlyCheckIns: newMonthly,
-        displayName: member.name,
-        name: member.name,
-        handle: member.handle,
-        avatar: member.avatarUrl || '',
-        avatarUrl: member.avatarUrl || '',
-        lastUpdated: new Date().toISOString(),
-      });
-    } else {
-      const newEntry: PublicLeaderboardItem = {
-        id: memberId,
-        name: member.name,
-        displayName: member.name,
-        handle: member.handle,
-        role: member.role,
-        avatarUrl: member.avatarUrl || '',
-        avatar: member.avatarUrl || '',
-        tracks: member.tracks || [],
-        totalCheckIns: 1,
-        currentStreak: 1,
-        bestStreak: 1,
-        points: pointsAwarded,
-        totalPoints: pointsAwarded,
-        monthlyCheckIns: { [monthKey]: 1 },
-        lastUpdated: new Date().toISOString(),
-      };
-      await setDoc(pubRef, removeUndefinedFields(newEntry));
+    const member = { id: memberSnap.id, ...(memberSnap.data() as any) } as Member;
+    if (member.status === 'Inactive' || member.leaderboardOptOut) {
+      await deleteDoc(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId));
+      return;
     }
-  } catch (err) {
+
+    // Recompute authoritatively from sessions + member's checkIns instead of naive +1 math
+    const [sessionsSnap, memberCheckInsSnap] = await Promise.all([
+      getDocs(collection(db, SESSIONS_COLLECTION)),
+      getDocs(query(collection(db, CHECKINS_COLLECTION), where('memberId', '==', memberId))),
+    ]);
+
+    const sessions = sessionsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Session);
+    const memberCheckIns = memberCheckInsSnap.docs.map(
+      (d) => ({ id: d.id, ...(d.data() as any) }) as CheckInRecord
+    );
+
+    const items = buildPublicLeaderboardItems([member], sessions, memberCheckIns);
+    if (items.length === 0) {
+      await deleteDoc(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId));
+      return;
+    }
+
+    await setDoc(doc(db, PUBLIC_LEADERBOARD_COLLECTION, memberId), removeUndefinedFields(items[0]));
+  } catch (err: any) {
+    // Score writes on publicLeaderboard are admin-restricted under firestore.rules;
+    // non-admin self check-ins ignore permission-denied cleanly (recomputed on admin sync/session refresh).
+    if (err?.code === 'permission-denied') {
+      return;
+    }
     console.warn('Public leaderboard sync notice:', err);
   }
 }
@@ -2319,6 +2297,55 @@ export async function removeFromPublicLeaderboard(memberId: string): Promise<voi
   }
 }
 
+async function commitLeaderboardRecomputePlan(
+  members: Member[],
+  sessions: Session[],
+  checkIns: CheckInRecord[],
+  auditDetailsPrefix: string
+): Promise<{ totalBackfilled: number; totalRemoved: number }> {
+  const currentPubSnap = await getDocs(collection(db, PUBLIC_LEADERBOARD_COLLECTION));
+  const existingPublicIds = currentPubSnap.docs.map((d) => d.id);
+
+  const plan = buildLeaderboardRecomputeOpsPlan({
+    members,
+    sessions,
+    checkIns,
+    existingPublicIds,
+    chunkLimit: 400,
+  });
+
+  const auditDetails = `${auditDetailsPrefix} (${plan.items.length} active builders synced, ${plan.totalRemoved} opted-out/inactive pruned)`;
+
+  if (plan.batches.length === 0) {
+    const batch = writeBatch(db);
+    createAuditLogInBatch(batch, 'recompute_leaderboard', auditDetails, {
+      targetName: 'publicLeaderboard',
+    });
+    await batch.commit();
+  } else {
+    for (let i = 0; i < plan.batches.length; i++) {
+      const ops = plan.batches[i];
+      const batch = writeBatch(db);
+      for (const op of ops) {
+        const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, op.memberId);
+        if (op.type === 'set') {
+          batch.set(pubRef, removeUndefinedFields(op.item));
+        } else {
+          batch.delete(pubRef);
+        }
+      }
+      if (i === plan.batches.length - 1) {
+        createAuditLogInBatch(batch, 'recompute_leaderboard', auditDetails, {
+          targetName: 'publicLeaderboard',
+        });
+      }
+      await batch.commit();
+    }
+  }
+
+  return { totalBackfilled: plan.items.length, totalRemoved: plan.totalRemoved };
+}
+
 export async function backfillPublicLeaderboard(): Promise<{ totalBackfilled: number; totalRemoved: number }> {
   try {
     const [membersSnap, sessionsSnap, checkInsSnap] = await Promise.all([
@@ -2327,33 +2354,16 @@ export async function backfillPublicLeaderboard(): Promise<{ totalBackfilled: nu
       getDocs(collection(db, CHECKINS_COLLECTION)),
     ]);
 
-    const members = membersSnap.docs.map((d) => d.data() as Member);
-    const sessions = sessionsSnap.docs.map((d) => d.data() as Session);
-    const checkIns = checkInsSnap.docs.map((d) => d.data() as CheckInRecord);
+    const members = membersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Member);
+    const sessions = sessionsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Session);
+    const checkIns = checkInsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as CheckInRecord);
 
-    const items = buildPublicLeaderboardItems(members, sessions, checkIns);
-    const batch = writeBatch(db);
-
-    const activeOptedInIds = new Set<string>();
-    for (const item of items) {
-      activeOptedInIds.add(item.id);
-      const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, item.id);
-      batch.set(pubRef, removeUndefinedFields(item));
-    }
-
-    // Prune any member docs in publicLeaderboard who are inactive or opted out
-    const currentPubSnap = await getDocs(collection(db, PUBLIC_LEADERBOARD_COLLECTION));
-    let totalRemoved = 0;
-    currentPubSnap.docs.forEach((d) => {
-      if (!activeOptedInIds.has(d.id)) {
-        batch.delete(d.ref);
-        totalRemoved++;
-      }
-    });
-
-    await batch.commit();
-    await createAuditLog('recompute_leaderboard', `Backfilled ${items.length} builders and pruned ${totalRemoved} opted-out/inactive profiles`);
-    return { totalBackfilled: items.length, totalRemoved };
+    return await commitLeaderboardRecomputePlan(
+      members,
+      sessions,
+      checkIns,
+      'Backfilled public leaderboard'
+    );
   } catch (err) {
     console.error('Failed to backfill public leaderboard:', err);
     throw err;
@@ -2365,17 +2375,13 @@ export async function recomputeAndSaveLeaderboard(
   sessions: Session[],
   checkIns: CheckInRecord[]
 ): Promise<void> {
-  const items = buildPublicLeaderboardItems(members, sessions, checkIns);
-  const batch = writeBatch(db);
-
-  for (const item of items) {
-    const itemRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, item.id);
-    batch.set(itemRef, removeUndefinedFields(item));
-  }
-
   try {
-    await batch.commit();
-    await createAuditLog('recompute_leaderboard', `Refreshed public leaderboard rankings for ${items.length} builders`);
+    await commitLeaderboardRecomputePlan(
+      members,
+      sessions,
+      checkIns,
+      'Recomputed public leaderboard rankings'
+    );
   } catch (err) {
     console.warn('Failed to commit public leaderboard projection:', err);
   }

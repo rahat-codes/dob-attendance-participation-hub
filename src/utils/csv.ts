@@ -20,8 +20,8 @@ export function sanitizeCSVCell(value: unknown): string {
   }
   let str = String(value);
 
-  // Formula injection defense: prefix dangerous leading characters with a single quote
-  if (/^[=+\-@]/.test(str)) {
+  // Formula injection defense: prefix dangerous leading characters (=, +, -, @, tab, CR, LF, or spaces before them) with a single quote
+  if (/^[\t\r\n=+\-@]|^[ ]+[=+\-@]/.test(str)) {
     str = `'${str}`;
   }
 
@@ -117,7 +117,8 @@ export function generateMembersRosterCSV(
   members: Member[],
   sessions: Session[],
   checkIns: CheckInRecord[],
-  privateDataMap?: Map<string, MemberPrivate>
+  privateDataMap?: Map<string, MemberPrivate>,
+  now: Date = new Date()
 ): string {
   const headers = [
     'Member ID',
@@ -138,7 +139,7 @@ export function generateMembersRosterCSV(
   }
 
   const rows = members.map((m) => {
-    const stats = computeMemberStats(m, sessions, checkIns);
+    const stats = computeMemberStats(m, sessions, checkIns, now);
     const priv = privateDataMap?.get(m.id);
 
     const cols = [
@@ -186,15 +187,17 @@ export function generateMonthlyReportCSV(stats: {
   topBuilders?: any[];
 }): string {
   const lines = [
-    'Metric,Value',
-    `Month,"${stats.monthLabel || ''}"`,
-    `Total Scheduled Sessions,${stats.totalSessions}`,
-    `Total Check-in Events,${stats.totalCheckIns}`,
-    `Unique Builders Attended,${stats.uniqueBuilders}`,
-    `Average Attendance Per Session,${stats.averageAttendancePerSession}`,
-    `Club Active Participation Rate,${stats.activeRatePercent}%`,
+    ['Metric', 'Value'].map(sanitizeCSVCell).join(','),
+    ['Month', stats.monthLabel || ''].map(sanitizeCSVCell).join(','),
+    ['Total Scheduled Sessions', stats.totalSessions].map(sanitizeCSVCell).join(','),
+    ['Total Check-in Events', stats.totalCheckIns].map(sanitizeCSVCell).join(','),
+    ['Unique Builders Attended', stats.uniqueBuilders].map(sanitizeCSVCell).join(','),
+    ['Average Attendance Per Session', stats.averageAttendancePerSession].map(sanitizeCSVCell).join(','),
+    ['Club Active Participation Rate', `${stats.activeRatePercent}%`].map(sanitizeCSVCell).join(','),
     '',
-    'Rank,Builder Name,Handle,Sessions Attended,Streak,Attendance Rate',
+    ['Rank', 'Builder Name', 'Handle', 'Sessions Attended', 'Monthly Points', 'Streak', 'Attendance Rate']
+      .map(sanitizeCSVCell)
+      .join(','),
   ];
 
   if (stats.topBuilders && stats.topBuilders.length > 0) {
@@ -202,12 +205,15 @@ export function generateMonthlyReportCSV(stats: {
       lines.push(
         [
           i + 1,
-          sanitizeCSVCell(tb.member?.name || 'Unknown'),
-          sanitizeCSVCell(tb.member?.handle || ''),
-          tb.monthlyCount,
-          tb.streak,
-          `${tb.participationRate}%`,
-        ].join(',')
+          tb.member?.name || 'Unknown',
+          tb.member?.handle || '',
+          tb.monthlyCount ?? 0,
+          tb.monthlyPoints ?? (tb.monthlyCount ?? 0) * 10,
+          tb.streak ?? 0,
+          `${tb.participationRate ?? 0}%`,
+        ]
+          .map(sanitizeCSVCell)
+          .join(',')
       );
     });
   }

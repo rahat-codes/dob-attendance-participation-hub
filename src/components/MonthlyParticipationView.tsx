@@ -134,27 +134,50 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
     return pct;
   }, [currentMonthStats, prevMonthStats]);
 
-  // Filtered check-in records for current month
+  const memberMap = useMemo(() => {
+    const map = new Map<string, Member>();
+    members.forEach((m) => map.set(m.id, m));
+    return map;
+  }, [members]);
+
+  const sessionMap = useMemo(() => {
+    const map = new Map<string, Session>();
+    sessions.forEach((s) => map.set(s.id, s));
+    return map;
+  }, [sessions]);
+
+  // Filtered check-in records for current month (authoritatively joined against members & sessions)
   const monthlyRecords = useMemo(() => {
     return checkIns.filter((c) => {
-      if (c.monthKey !== selectedMonth) return false;
-      if (selectedTrackFilter !== 'all' && c.track !== selectedTrackFilter) return false;
+      const sess = sessionMap.get(c.sessionId);
+      const mem = memberMap.get(c.memberId);
+      if (sess && (sess.status === 'cancelled' || sess.deletedAt)) return false;
+
+      const recordMonthKey = c.monthKey || sess?.date?.substring(0, 7) || c.date?.substring(0, 7);
+      if (recordMonthKey !== selectedMonth) return false;
+
+      const track = sess?.track || c.track || '';
+      if (selectedTrackFilter !== 'all' && track !== selectedTrackFilter) return false;
+
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
+        const mName = mem?.name || c.memberName || '';
+        const mHandle = mem?.handle || c.memberHandle || '';
+        const sTitle = sess?.title || c.sessionTitle || '';
         return (
-          Boolean(c.memberName && c.memberName.toLowerCase().includes(q)) ||
-          Boolean(c.memberHandle && c.memberHandle.toLowerCase().includes(q)) ||
-          Boolean(c.sessionTitle && c.sessionTitle.toLowerCase().includes(q))
+          mName.toLowerCase().includes(q) ||
+          mHandle.toLowerCase().includes(q) ||
+          sTitle.toLowerCase().includes(q)
         );
       }
       return true;
     });
-  }, [checkIns, selectedMonth, selectedTrackFilter, searchQuery]);
+  }, [checkIns, memberMap, sessionMap, selectedMonth, selectedTrackFilter, searchQuery]);
 
   // Month sessions
   const currentMonthSessions = useMemo(() => {
     return sessions
-      .filter((s) => s.date.startsWith(selectedMonth))
+      .filter((s) => s.status !== 'cancelled' && !s.deletedAt && s.date.startsWith(selectedMonth))
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [sessions, selectedMonth]);
 
@@ -168,7 +191,7 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
   };
 
   const handleExportAttendance = () => {
-    const csv = generateAttendanceCSV(monthlyRecords);
+    const csv = generateAttendanceCSV(monthlyRecords, members, sessions);
     downloadCSV(`den-of-builders-attendance-${selectedMonth}.csv`, csv);
   };
 
@@ -790,7 +813,15 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                       {/* Milestones mini strip */}
                       <div className="pt-2 flex items-center justify-between border-t border-zinc-800/80">
                         <span className="text-[10px] text-zinc-500 font-mono uppercase">Milestones</span>
-                        <AttendanceBadges member={item.member} mode="mini" />
+                        <AttendanceBadges
+                          member={item.member}
+                          mode="mini"
+                          stats={{
+                            total: memberStatsMap.get(item.member.id)?.total ?? 0,
+                            streak: item.streak,
+                            bestStreak: item.bestStreak,
+                          }}
+                        />
                       </div>
                     </div>
 
@@ -886,7 +917,15 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                           </span>
                         </td>
                         <td className="py-3 px-3">
-                          <AttendanceBadges member={item.member} mode="mini" />
+                          <AttendanceBadges
+                            member={item.member}
+                            mode="mini"
+                            stats={{
+                              total: memberStatsMap.get(item.member.id)?.total ?? 0,
+                              streak: item.streak,
+                              bestStreak: item.bestStreak,
+                            }}
+                          />
                         </td>
                         <td className="py-3 px-3 text-right">
                           <button
@@ -965,28 +1004,36 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                   </td>
                 </tr>
               ) : (
-                monthlyRecords.map((record) => (
-                  <tr key={record.id} className="hover:bg-zinc-800/40 transition-colors">
-                    <td className="py-2.5 px-3 font-mono text-zinc-400 whitespace-nowrap">
-                      {formatTimeInClubTz(record.checkedInAt || record.timestamp)}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <div className="font-medium text-zinc-200">{record.memberName}</div>
-                      <div className="text-[11px] text-zinc-500 font-mono">{record.memberHandle}</div>
-                    </td>
-                    <td className="py-2.5 px-3 text-zinc-300 max-w-xs truncate">
-                      {record.sessionTitle}
-                    </td>
-                    <td className="py-2.5 px-3 text-zinc-400 whitespace-nowrap">
-                      {record.track}
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      <span className="font-mono text-[10px] text-[#b5ff00] uppercase font-semibold">
-                        {record.method.replace('_', ' ')}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                monthlyRecords.map((record) => {
+                  const mem = memberMap.get(record.memberId);
+                  const sess = sessionMap.get(record.sessionId);
+                  const displayName = mem?.name || record.memberName || 'Club Builder';
+                  const displayHandle = mem?.handle || record.memberHandle || '';
+                  const displaySession = sess?.title || record.sessionTitle || 'Workshop Session';
+                  const displayTrack = sess?.track || record.track || '—';
+                  return (
+                    <tr key={record.id} className="hover:bg-zinc-800/40 transition-colors">
+                      <td className="py-2.5 px-3 font-mono text-zinc-400 whitespace-nowrap">
+                        {formatTimeInClubTz(record.checkedInAt || record.timestamp)}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-medium text-zinc-200">{displayName}</div>
+                        <div className="text-[11px] text-zinc-500 font-mono">{displayHandle}</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-300 max-w-xs truncate">
+                        {displaySession}
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-400 whitespace-nowrap">
+                        {displayTrack}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <span className="font-mono text-[10px] text-[#b5ff00] uppercase font-semibold">
+                          {record.method.replace('_', ' ')}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -287,6 +287,7 @@ export interface PublicLeaderboardItem {
   currentStreak: number;
   bestStreak: number;
   tier?: BuilderTier;
+  monthlyPoints?: Record<string, number>;
   monthlyScores?: Record<string, number>;
   points?: number;
   totalPoints?: number;

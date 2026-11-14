@@ -18,57 +18,79 @@ export function calculateMonthlyStats(
   monthKey: string,
   members: Member[],
   sessions: Session[],
-  checkIns: CheckInRecord[]
+  checkIns: CheckInRecord[],
+  now: Date = new Date()
 ) {
-  const monthSessions = sessions.filter((s) => s.date && s.date.startsWith(monthKey));
+  const sessionMap = new Map<string, Session>();
+  sessions.forEach((s) => sessionMap.set(s.id, s));
+
+  const monthSessions = sessions.filter(
+    (s) => s.status !== 'cancelled' && !s.deletedAt && s.date && s.date.startsWith(monthKey)
+  );
   const monthCheckIns = checkIns.filter((c) => {
+    const sess = sessionMap.get(c.sessionId);
+    if (sess && (sess.status === 'cancelled' || sess.deletedAt)) return false;
     if (c.monthKey) return c.monthKey === monthKey;
+    if (sess?.date) return sess.date.startsWith(monthKey);
     if (c.date) return c.date.startsWith(monthKey);
     return false;
   });
+
+  const activeMembers = members.filter((m) => m.status !== 'Inactive');
+  const activeMemberIds = new Set(activeMembers.map((m) => m.id));
 
   const uniqueBuilderIds = new Set(monthCheckIns.map((c) => c.memberId));
   const totalSessions = monthSessions.length;
   const totalCheckIns = monthCheckIns.length;
   const uniqueBuilders = uniqueBuilderIds.size;
+  const activeUniqueBuilders = Array.from(uniqueBuilderIds).filter((id) => activeMemberIds.has(id)).length;
   const averageAttendancePerSession =
     totalSessions > 0 ? Number((totalCheckIns / totalSessions).toFixed(1)) : 0;
   const activeRatePercent =
-    members.length > 0 ? Math.round((uniqueBuilders / members.length) * 100) : 0;
+    activeMembers.length > 0 ? Math.round((activeUniqueBuilders / activeMembers.length) * 100) : 0;
 
   const monthLabel = formatMonthLabel(monthKey);
 
   const trackBreakdown: Record<string, number> = {};
   monthCheckIns.forEach((c) => {
-    const track = c.track || 'Hardware & Robotics';
+    const sess = sessionMap.get(c.sessionId);
+    const track = sess?.track || c.track || 'Hardware & Robotics';
     trackBreakdown[track] = (trackBreakdown[track] || 0) + 1;
   });
 
   const sessionPointsMap = new Map<string, number>();
-  monthSessions.forEach((s) => {
+  sessions.forEach((s) => {
     sessionPointsMap.set(s.id, typeof s.points === 'number' ? s.points : 10);
   });
 
-  const topBuilders = members.map((m) => {
-    const memberMonthRecords = monthCheckIns.filter((c) => c.memberId === m.id);
-    const memberMonthCheckIns = memberMonthRecords.length;
-    let monthlyPoints = 0;
-    memberMonthRecords.forEach((c) => {
-      monthlyPoints += sessionPointsMap.get(c.sessionId) ?? 10;
-    });
-    const stats = computeMemberStats(m, sessions, checkIns);
-    const streak = stats.streak;
-    const participationRate = totalSessions > 0 ? Math.round((memberMonthCheckIns / totalSessions) * 100) : 0;
-    return {
-      member: m,
-      monthlyCount: memberMonthCheckIns,
-      monthlyPoints,
-      streak,
-      bestStreak: stats.bestStreak,
-      totalPoints: stats.points,
-      participationRate,
-    };
-  });
+  const topBuilders = activeMembers
+    .map((m) => {
+      const memberMonthRecords = monthCheckIns.filter((c) => c.memberId === m.id);
+      const memberMonthCheckIns = memberMonthRecords.length;
+      let monthlyPoints = 0;
+      memberMonthRecords.forEach((c) => {
+        monthlyPoints += sessionPointsMap.get(c.sessionId) ?? 10;
+      });
+      const stats = computeMemberStats(m, sessions, checkIns, now);
+      const streak = stats.streak;
+      const participationRate = totalSessions > 0 ? Math.round((memberMonthCheckIns / totalSessions) * 100) : 0;
+      return {
+        member: m,
+        monthlyCount: memberMonthCheckIns,
+        monthlyPoints,
+        streak,
+        bestStreak: stats.bestStreak,
+        totalPoints: stats.points,
+        participationRate,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.monthlyPoints - a.monthlyPoints ||
+        b.monthlyCount - a.monthlyCount ||
+        b.streak - a.streak ||
+        a.member.name.localeCompare(b.member.name)
+    );
 
   return {
     totalSessions,

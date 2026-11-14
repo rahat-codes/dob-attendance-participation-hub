@@ -958,13 +958,19 @@ async function runRulesTests() {
   // ========================================================================
   // SUITE 15: SESSION SOFT-DELETE WHITELIST (deletedAt) (written, NOT RUN)
   // ========================================================================
-  await test('Session Soft-Delete: Admin can update status/checkInMode/cancelledAt/deletedAt/updatedAt only (written, NOT RUN)', async () => {
+  await test('Session Soft-Delete: Admin can update status/checkInMode/cancelledAt/deletedAt/updatedAt only; non-admin & unwhitelisted partial fields denied (written, NOT RUN)', async () => {
     const adminContext = testEnv.authenticatedContext('admin_super_1', {
       email: SUPER_ADMIN_EMAIL,
       email_verified: true,
       firebase: { sign_in_provider: 'google.com' },
     });
     const adminDb = adminContext.firestore();
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const memberDb = memberContext.firestore();
 
     await testEnv.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'sessions', 'sess_softdel_test_1'), {
@@ -979,6 +985,28 @@ async function runRulesTests() {
       });
     });
 
+    // Non-admin member cannot soft-delete session
+    await assertFails(
+      updateDoc(doc(memberDb, 'sessions', 'sess_softdel_test_1'), {
+        status: 'cancelled',
+        checkInMode: 'closed',
+        cancelledAt: new Date().toISOString(),
+        deletedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Admin cannot touch unwhitelisted partial field (e.g. title) in partial soft-delete update
+    await assertFails(
+      updateDoc(doc(adminDb, 'sessions', 'sess_softdel_test_1'), {
+        status: 'cancelled',
+        checkInMode: 'closed',
+        deletedAt: new Date().toISOString(),
+        title: 'Tampered Partial Title',
+      })
+    );
+
+    // Valid admin soft-delete succeeds
     await assertSucceeds(
       updateDoc(doc(adminDb, 'sessions', 'sess_softdel_test_1'), {
         status: 'cancelled',
@@ -990,8 +1018,110 @@ async function runRulesTests() {
     );
   });
 
+  // ========================================================================
+  // SUITE 16: PERMANENT SESSION DELETE AUDIT SURVIVAL (written, NOT RUN)
+  // ========================================================================
+  await test('Audit Survival: auditLogs entry persists and remains immutable after permanent session delete (written, NOT RUN)', async () => {
+    const adminContext = testEnv.authenticatedContext('admin_super_1', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    });
+    const adminDb = adminContext.firestore();
+
+    const memberContext = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    });
+    const memberDb = memberContext.firestore();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'sessions', 'sess_permdel_1'), {
+        id: 'sess_permdel_1',
+        title: 'Permanent Delete Target',
+        track: 'AI & Embedded',
+        date: '2026-11-23',
+        status: 'cancelled',
+        checkInMode: 'closed',
+        location: 'Lab B',
+        startAt: new Date(Date.UTC(2026, 10, 23, 18, 0, 0)),
+        endAt: new Date(Date.UTC(2026, 10, 23, 20, 0, 0)),
+      });
+      await setDoc(doc(seedDb, 'sessionTokens', 'sess_permdel_1'), {
+        token: 'PERM8DEL',
+        prevToken: 'PRV8PERM',
+        rotatedAt: serverTimestamp(),
+      });
+      await setDoc(doc(seedDb, 'checkIns', 'sess_permdel_1_mem_active_1'), {
+        id: 'sess_permdel_1_mem_active_1',
+        sessionId: 'sess_permdel_1',
+        memberId: 'mem_active_1',
+        method: 'manual_entry',
+        verifiedBy: 'admin_super_1',
+        checkedInAt: serverTimestamp(),
+        status: 'present',
+        monthKey: '2026-11',
+      });
+      await setDoc(doc(seedDb, 'announcements', 'ann_permdel_1'), {
+        id: 'ann_permdel_1',
+        title: 'Lab B Workshop',
+        type: 'session_published',
+        sessionId: 'sess_permdel_1',
+        createdAt: new Date().toISOString(),
+        createdBy: 'admin_super_1',
+      });
+    });
+
+    // Execute permanent cleanup deletes + delete_session audit entry
+    await assertSucceeds(deleteDoc(doc(adminDb, 'checkIns', 'sess_permdel_1_mem_active_1')));
+    await assertSucceeds(deleteDoc(doc(adminDb, 'sessionTokens', 'sess_permdel_1')));
+    await assertSucceeds(deleteDoc(doc(adminDb, 'announcements', 'ann_permdel_1')));
+    await assertSucceeds(deleteDoc(doc(adminDb, 'sessions', 'sess_permdel_1')));
+    await assertSucceeds(
+      setDoc(doc(adminDb, 'auditLogs', 'log_perm_del_survive_1'), {
+        id: 'log_perm_del_survive_1',
+        action: 'delete_session',
+        performedBy: 'admin_super_1',
+        performedByEmail: SUPER_ADMIN_EMAIL,
+        targetId: 'sess_permdel_1',
+        targetName: 'Permanent Delete Target',
+        details: 'Permanently deleted cancelled session and cascaded 1 check-in and 1 announcement.',
+        timestamp: serverTimestamp(),
+      })
+    );
+
+    // Verify deleted session & cascaded docs no longer exist, while audit log survives and is readable by admin
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const verifyDb = context.firestore();
+      const [sessSnap, tokSnap, chkSnap, annSnap] = await Promise.all([
+        getDoc(doc(verifyDb, 'sessions', 'sess_permdel_1')),
+        getDoc(doc(verifyDb, 'sessionTokens', 'sess_permdel_1')),
+        getDoc(doc(verifyDb, 'checkIns', 'sess_permdel_1_mem_active_1')),
+        getDoc(doc(verifyDb, 'announcements', 'ann_permdel_1')),
+      ]);
+      if (sessSnap.exists() || tokSnap.exists() || chkSnap.exists() || annSnap.exists()) {
+        throw new Error('Expected session and cascaded documents to be deleted.');
+      }
+    });
+
+    const auditSnap = await assertSucceeds(getDoc(doc(adminDb, 'auditLogs', 'log_perm_del_survive_1')));
+    if (!auditSnap.exists() || auditSnap.data()?.action !== 'delete_session') {
+      throw new Error('Expected delete_session audit entry to survive permanent session delete.');
+    }
+
+    // Verify audit entry cannot be tampered with or deleted (even by Super Admin or regular member)
+    await assertFails(
+      updateDoc(doc(adminDb, 'auditLogs', 'log_perm_del_survive_1'), {
+        details: 'Attempted tamper after deletion',
+      })
+    );
+    await assertFails(deleteDoc(doc(adminDb, 'auditLogs', 'log_perm_del_survive_1')));
+    await assertFails(deleteDoc(doc(memberDb, 'auditLogs', 'log_perm_del_survive_1')));
+  });
+
   console.log('\n========================================');
-  console.log(`PHASE 2 RULES TEST SUITE COMPLETE`);
+  console.log(`PHASE 2-5 RULES TEST SUITE COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);
   console.log('========================================\n');
 

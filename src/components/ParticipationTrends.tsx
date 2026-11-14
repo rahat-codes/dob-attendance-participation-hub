@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Session, CheckInRecord } from '../types';
 import { useMotionSafe } from '../motion/useMotionSafe';
+import { toJsDate } from '../utils/sessionWindow';
 
 interface ParticipationTrendsProps {
   selectedMonth: string;
@@ -82,7 +83,9 @@ export const ParticipationTrends: React.FC<ParticipationTrendsProps> = ({
     ];
 
     const currentMonthCheckIns = checkIns.filter((c) => c.monthKey === selectedMonth);
-    const currentMonthSessions = sessions.filter((s) => s.date.startsWith(selectedMonth));
+    const currentMonthSessions = sessions.filter(
+      (s) => s.status !== 'cancelled' && !s.deletedAt && s.date.startsWith(selectedMonth)
+    );
 
     const sessionMap = new Map<string, Session>();
     sessions.forEach((s) => sessionMap.set(s.id, s));
@@ -95,10 +98,8 @@ export const ParticipationTrends: React.FC<ParticipationTrendsProps> = ({
         const dateStr = c.date || sess?.date;
         if (dateStr && dateStr.includes('-')) {
           day = parseInt(dateStr.split('-')[2], 10);
-        } else if (c.checkedInAt) {
-          day = new Date(typeof c.checkedInAt === 'string' ? c.checkedInAt : 'seconds' in c.checkedInAt ? c.checkedInAt.seconds * 1000 : 0).getDate();
-        } else if (c.timestamp) {
-          day = new Date(c.timestamp).getDate();
+        } else if (c.checkedInAt || c.timestamp) {
+          day = toJsDate(c.checkedInAt || c.timestamp).getDate();
         }
         return day >= w.start && day <= w.end;
       });

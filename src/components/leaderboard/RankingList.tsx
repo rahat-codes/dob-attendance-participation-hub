@@ -81,7 +81,11 @@ export const RankingList: React.FC<RankingListProps> = ({
     const prevSorted = [...items]
       .map((item) => {
         const count = item.monthlyCheckIns?.[prevMonthKey] || 0;
-        return { id: item.id, points: count * 10, count };
+        const points =
+          item.monthlyPoints?.[prevMonthKey] ??
+          item.monthlyScores?.[prevMonthKey] ??
+          count * 10;
+        return { id: item.id, points, count };
       })
       .filter((p) => p.points > 0)
       .sort((a, b) => b.points - a.points);
@@ -97,7 +101,10 @@ export const RankingList: React.FC<RankingListProps> = ({
 
       if (selectedPeriod === 'this_month') {
         periodCheckIns = item.monthlyCheckIns?.[currentMonthKey] || 0;
-        periodPoints = periodCheckIns * 10;
+        periodPoints =
+          item.monthlyPoints?.[currentMonthKey] ??
+          item.monthlyScores?.[currentMonthKey] ??
+          periodCheckIns * 10;
       } else {
         // all_time (default)
         periodPoints = item.totalPoints ?? item.points ?? 0;

@@ -139,7 +139,10 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
       if (selectedPeriod === 'this_month') {
         periodCheckIns = item.monthlyCheckIns?.[activeMonthKey] || 0;
-        periodPoints = periodCheckIns * 10;
+        periodPoints =
+          item.monthlyPoints?.[activeMonthKey] ??
+          item.monthlyScores?.[activeMonthKey] ??
+          periodCheckIns * 10;
       } else {
         periodPoints = item.totalPoints ?? item.points ?? 0;
         periodCheckIns = item.totalCheckIns || 0;
@@ -190,7 +193,11 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
   const totalMonthPoints = useMemo(() => {
     return activeItems.reduce(
-      (acc, i) => acc + ((i.monthlyCheckIns?.[activeMonthKey] || 0) * 10),
+      (acc, i) =>
+        acc +
+        (i.monthlyPoints?.[activeMonthKey] ??
+          i.monthlyScores?.[activeMonthKey] ??
+          (i.monthlyCheckIns?.[activeMonthKey] || 0) * 10),
       0
     );
   }, [activeItems, activeMonthKey]);

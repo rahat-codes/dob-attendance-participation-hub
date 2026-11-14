@@ -397,7 +397,7 @@ export const MembersView: React.FC<MembersViewProps> = ({
             <div className="px-3 py-1.5 rounded-xl bg-[#0d0f15]/80 border border-white/5 neu-inset text-zinc-300">
               <span className="text-zinc-500 text-[10px] uppercase mr-1.5">Active Builders:</span>
               <span className="font-bold text-zinc-100 tabular-nums">
-                {members.filter((m) => (m.totalCheckIns || 0) > 0).length} / {members.length}
+                {members.filter((m) => (memberStatsMap.get(m.id)?.total ?? m.totalCheckIns ?? 0) > 0).length} / {members.length}
               </span>
             </div>
           </div>
@@ -454,20 +454,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
                     <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 text-center">
                       <span className="text-[10px] text-zinc-500 uppercase block">Check-ins</span>
                       <span className="text-base font-bold text-zinc-100 tabular-nums">
-                        {mostFrequentAttendee.totalCheckIns}
+                        {memberStatsMap.get(mostFrequentAttendee.id)?.total ?? mostFrequentAttendee.totalCheckIns ?? 0}
                       </span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 text-center">
                       <span className="text-[10px] text-zinc-500 uppercase block">Current</span>
                       <span className="text-base font-bold text-[#b5ff00] tabular-nums flex items-center justify-center gap-0.5">
                         <Flame className="h-3.5 w-3.5" />
-                        {mostFrequentAttendee.currentStreak}d
+                        {memberStatsMap.get(mostFrequentAttendee.id)?.streak ?? mostFrequentAttendee.currentStreak ?? 0}d
                       </span>
                     </div>
                     <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 text-center">
                       <span className="text-[10px] text-zinc-500 uppercase block">Best Streak</span>
                       <span className="text-base font-bold text-amber-400 tabular-nums">
-                        {mostFrequentAttendee.bestStreak}d
+                        {memberStatsMap.get(mostFrequentAttendee.id)?.bestStreak ?? mostFrequentAttendee.bestStreak ?? 0}d
                       </span>
                     </div>
                   </div>
