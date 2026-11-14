@@ -79,7 +79,16 @@ export function generateAttendanceCSV(
     'Verified By',
   ];
 
-  const rows = records.map((r) => {
+  const validRecords = records.filter((r) => {
+    if (members.length > 0 && !memberMap.has(r.memberId)) return false;
+    if (sessions.length > 0) {
+      const sess = sessionMap.get(r.sessionId);
+      if (!sess || sess.status === 'cancelled' || sess.deletedAt) return false;
+    }
+    return true;
+  });
+
+  const rows = validRecords.map((r) => {
     const mem = memberMap.get(r.memberId);
     const sess = sessionMap.get(r.sessionId);
 

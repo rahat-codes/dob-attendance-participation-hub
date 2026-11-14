@@ -16,12 +16,15 @@ import {
   ChevronRight,
   ExternalLink,
   Database,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { SecureAvatar } from './common/SecureAvatar';
 import { CLOSE_SIDEBAR_ON_SELECT } from '../utils/navChrome';
+import { ThemeMode, getInitialTheme, applyTheme, toggleTheme } from '../utils/theme';
 
 interface SidebarProps {
   activeTab: NavigationTab;
@@ -57,6 +60,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   closeButtonRef,
 }) => {
   const { user, linkedMember, isAdmin, signOutUser } = useAuth();
+  const [theme, setTheme] = React.useState<ThemeMode>(() => getInitialTheme());
+
+  const handleToggleTheme = () => {
+    const next = toggleTheme(theme);
+    applyTheme(next);
+    setTheme(next);
+  };
 
   const handleClose = onClose || onCloseMobileDrawer;
   const isAnyDrawer = isDrawer || isMobileDrawer;
@@ -161,7 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ref={closeButtonRef}
               type="button"
               onClick={handleClose}
-              className="p-2 rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+              className="min-w-11 min-h-11 flex items-center justify-center rounded-xl text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
               aria-label="Close navigation menu"
             >
               ✕
@@ -349,6 +359,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleToggleTheme}
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-400 hover:text-white hover:bg-white/[0.04] transition-all cursor-pointer group min-h-11 border border-transparent focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+            >
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4 shrink-0 text-amber-400" />
+              ) : (
+                <Moon className="h-4 w-4 shrink-0 text-cyan-400" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-display uppercase tracking-wide truncate">
+                  {theme === 'dark' ? 'Light Theme' : 'Dark Theme'}
+                </div>
+              </div>
+            </button>
           </div>
         </div>
       </div>
@@ -380,7 +407,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onOpenEditProfile();
                   if (isAnyDrawer && handleClose) handleClose();
                 }}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer shrink-0"
+                className="min-w-11 min-h-11 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer shrink-0"
                 title="Edit Profile"
                 aria-label="Edit Profile"
               >

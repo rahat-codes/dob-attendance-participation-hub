@@ -146,24 +146,24 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
     return map;
   }, [sessions]);
 
-  // Filtered check-in records for current month (authoritatively joined against members & sessions)
+  // Filtered check-in records for current month (authoritatively joined against active/existing members & sessions)
   const monthlyRecords = useMemo(() => {
     return checkIns.filter((c) => {
-      const sess = sessionMap.get(c.sessionId);
       const mem = memberMap.get(c.memberId);
-      if (sess && (sess.status === 'cancelled' || sess.deletedAt)) return false;
+      const sess = sessionMap.get(c.sessionId);
+      if (!mem || !sess || sess.status === 'cancelled' || sess.deletedAt) return false;
 
-      const recordMonthKey = c.monthKey || sess?.date?.substring(0, 7) || c.date?.substring(0, 7);
+      const recordMonthKey = c.monthKey || sess.date?.substring(0, 7) || c.date?.substring(0, 7);
       if (recordMonthKey !== selectedMonth) return false;
 
-      const track = sess?.track || c.track || '';
+      const track = sess.track || c.track || '';
       if (selectedTrackFilter !== 'all' && track !== selectedTrackFilter) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const mName = mem?.name || c.memberName || '';
-        const mHandle = mem?.handle || c.memberHandle || '';
-        const sTitle = sess?.title || c.sessionTitle || '';
+        const mName = mem.name || c.memberName || '';
+        const mHandle = mem.handle || c.memberHandle || '';
+        const sTitle = sess.title || c.sessionTitle || '';
         return (
           mName.toLowerCase().includes(q) ||
           mHandle.toLowerCase().includes(q) ||
@@ -205,7 +205,7 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
       {/* Header and Month Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800 pb-5">
         <div>
-          <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-mono text-zinc-400">
             <span>Den of Builders</span>
             <span aria-hidden="true">/</span>
             <span>Guild Operations</span>
@@ -220,14 +220,15 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* Month selector dropdown */}
-          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-full px-3.5 py-1.5 focus-within:border-[#b5ff00]">
-            <Calendar className="h-4 w-4 text-[#b5ff00]" />
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-full px-3.5 min-h-11 focus-within:border-[#b5ff00]">
+            <Calendar className="h-4 w-4 text-[#b5ff00] shrink-0" aria-hidden="true" />
             <select
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="bg-transparent text-xs font-semibold text-zinc-200 focus:outline-none cursor-pointer"
+              aria-label="Select month"
+              className="bg-transparent text-xs font-semibold text-zinc-200 focus:outline-none cursor-pointer min-h-11"
             >
               {availableMonths.map((mKey) => (
                 <option key={mKey} value={mKey} className="bg-zinc-950 text-zinc-200">
@@ -238,34 +239,37 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
           </div>
 
           {/* Export Dropdown / Buttons (Admin Only) */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {isAdmin ? (
               <>
                 <button
+                  type="button"
                   onClick={handleExportSummary}
-                  className="btn-glossy-secondary inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold uppercase tracking-wider text-zinc-300 rounded-full transition-all cursor-pointer font-mono"
+                  className="btn-glossy-secondary min-h-11 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold uppercase tracking-wider text-zinc-200 rounded-full transition-all cursor-pointer font-mono"
                   title="Download Monthly Summary CSV"
                 >
-                  <Download className="h-3.5 w-3.5 text-zinc-400" />
+                  <Download className="h-3.5 w-3.5 text-zinc-300" aria-hidden="true" />
                   <span>Report CSV</span>
                 </button>
                 <button
+                  type="button"
                   onClick={handleExportAttendance}
-                  className="btn-glossy-secondary inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold uppercase tracking-wider text-zinc-300 rounded-full transition-all cursor-pointer font-mono"
+                  className="btn-glossy-secondary min-h-11 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold uppercase tracking-wider text-zinc-200 rounded-full transition-all cursor-pointer font-mono"
                   title="Download Raw Attendance Log CSV"
                 >
-                  <Download className="h-3.5 w-3.5 text-zinc-400" />
+                  <Download className="h-3.5 w-3.5 text-zinc-300" aria-hidden="true" />
                   <span>Raw CSV</span>
                 </button>
               </>
             ) : (
               onOpenAdminLogin && (
                 <button
+                  type="button"
                   onClick={onOpenAdminLogin}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-400 bg-zinc-950 border border-zinc-800 hover:border-[#b5ff00]/50 hover:text-white rounded-full transition-all cursor-pointer"
+                  className="min-h-11 inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-zinc-300 bg-zinc-950 border border-zinc-800 hover:border-[#b5ff00]/50 hover:text-white rounded-full transition-all cursor-pointer"
                   title="Admin login required to export data"
                 >
-                  <Lock className="h-3 w-3 text-[#b5ff00]" />
+                  <Lock className="h-3 w-3 text-[#b5ff00]" aria-hidden="true" />
                   <span>Admin Reports</span>
                 </button>
               )
@@ -644,10 +648,11 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                 {/* Footer Pass Action */}
                 <div className="mt-3 pt-2.5 border-t border-zinc-800/60">
                   <button
+                    type="button"
                     onClick={() => onViewMemberPass(builder)}
-                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-[#b5ff00]/50 rounded-xl text-[11px] font-mono text-zinc-300 hover:text-white transition-all cursor-pointer"
+                    className="w-full min-h-11 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-[#b5ff00]/50 rounded-xl text-xs font-mono text-zinc-200 hover:text-white transition-all cursor-pointer"
                   >
-                    <QrCode className="h-3 w-3 text-[#b5ff00]" />
+                    <QrCode className="h-3.5 w-3.5 text-[#b5ff00]" aria-hidden="true" />
                     <span>View Pass</span>
                   </button>
                 </div>
@@ -828,10 +833,11 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                     {/* Card Footer: Pass CTA */}
                     <div className="pt-2.5 border-t border-zinc-800/80">
                       <button
+                        type="button"
                         onClick={() => onViewMemberPass(item.member)}
-                        className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-[#b5ff00]/50 rounded-xl text-xs font-mono text-zinc-300 hover:text-white transition-all cursor-pointer"
+                        className="w-full min-h-11 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-[#b5ff00]/50 rounded-xl text-xs font-mono text-zinc-200 hover:text-white transition-all cursor-pointer"
                       >
-                        <QrCode className="h-3 w-3 text-[#b5ff00]" />
+                        <QrCode className="h-3.5 w-3.5 text-[#b5ff00]" aria-hidden="true" />
                         <span>View Pass</span>
                       </button>
                     </div>
@@ -927,10 +933,12 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                             }}
                           />
                         </td>
-                        <td className="py-3 px-3 text-right">
+                        <td className="py-2 px-3 text-right">
                           <button
+                            type="button"
                             onClick={() => onViewMemberPass(item.member)}
-                            className="px-2 py-1 text-[11px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono transition-colors cursor-pointer"
+                            aria-label={`View builder pass for ${item.member.name}`}
+                            className="min-h-11 min-w-11 px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg font-mono transition-colors cursor-pointer"
                           >
                             Pass
                           </button>
@@ -945,7 +953,7 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
       </div>
 
       {/* Filterable Check-in Activity Log */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-sm font-semibold text-zinc-100">
@@ -956,16 +964,17 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
             {/* Search */}
-            <div className="relative">
-              <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <div className="relative flex-1 sm:flex-initial min-w-[180px]">
+              <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" aria-hidden="true" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search builder or session in activity log"
                 placeholder="Search builder or session..."
-                className="bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00]"
+                className="w-full min-h-11 bg-zinc-950 border border-zinc-800 rounded-lg pl-8 pr-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:border-[#b5ff00]"
               />
             </div>
 
@@ -973,7 +982,8 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
             <select
               value={selectedTrackFilter}
               onChange={(e) => setSelectedTrackFilter(e.target.value)}
-              className="bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-[#b5ff00] cursor-pointer"
+              aria-label="Filter check-in log by track"
+              className="min-h-11 bg-zinc-950 border border-zinc-800 rounded-lg px-2.5 py-2 text-xs text-zinc-200 focus:outline-none focus:border-[#b5ff00] cursor-pointer"
             >
               <option value="all">All Tracks</option>
               <option value="Hardware & Robotics">Hardware & Robotics</option>

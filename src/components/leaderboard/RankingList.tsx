@@ -70,8 +70,8 @@ export const RankingList: React.FC<RankingListProps> = ({
 
   const prevMonthKey = useMemo(() => {
     const [y, m] = currentMonthKey.split('-').map(Number);
-    const d = new Date(y, m - 2, 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const d = new Date(Date.UTC(y, m - 2, 15, 12, 0, 0));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
   }, [currentMonthKey]);
 
   // Compute ranked list for each period
@@ -286,9 +286,17 @@ export const RankingList: React.FC<RankingListProps> = ({
             return (
               <m.div
                 key={item.id}
+                role="button"
+                tabIndex={0}
                 variants={disableAnimation ? undefined : fadeUp}
                 onClick={() => onSelectMember(item, rank)}
-                className={`p-3.5 sm:px-5 sm:py-3.5 rounded-2xl border transition-all duration-150 ease-out cursor-pointer flex flex-col sm:grid sm:grid-cols-12 gap-2 sm:gap-3 items-start sm:items-center hover:-translate-y-0.5 ${hoverBloomClass} ${
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectMember(item, rank);
+                  }
+                }}
+                className={`p-3.5 sm:px-5 sm:py-3.5 rounded-2xl border transition-all duration-150 ease-out cursor-pointer flex flex-col sm:grid sm:grid-cols-12 gap-2 sm:gap-3 items-start sm:items-center hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] ${hoverBloomClass} ${
                   isTop3
                     ? 'bg-white/[0.045] border-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
                     : 'bg-white/[0.025] border-white/5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'

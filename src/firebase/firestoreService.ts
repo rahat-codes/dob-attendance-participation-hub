@@ -1208,6 +1208,16 @@ export async function getMemberPrivate(memberId: string): Promise<MemberPrivate 
   }
 }
 
+export async function getAllMemberPrivateMap(auditReason = 'Admin Roster CSV export with PII'): Promise<Map<string, MemberPrivate>> {
+  const snap = await getDocs(collection(db, MEMBER_PRIVATE_COLLECTION));
+  const map = new Map<string, MemberPrivate>();
+  snap.docs.forEach((d) => {
+    map.set(d.id, d.data() as MemberPrivate);
+  });
+  await createAuditLog('export_roster_pii', `${auditReason} (${map.size} memberPrivate records accessed)`);
+  return map;
+}
+
 export async function addMemberToFirestore(
   publicData: Omit<Member, 'id' | 'createdAt'>,
   privateData?: MemberPrivate

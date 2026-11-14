@@ -1,5 +1,46 @@
 import { Member, Session, CheckInRecord, ComputedMemberStats, PublicLeaderboardItem } from '../types';
 import { toJsDate, parseDateTimeInZone, getMonthKeyInClubTz } from './sessionWindow';
+import {
+  normalizeGitHubUrl,
+  normalizeLinkedInUrl,
+  normalizePortfolioUrl,
+} from './profileLinks';
+
+export const BACKFILL_COOLDOWN_MS = 60_000;
+
+export function checkBackfillCooldown(
+  lastSyncedAtMs: number | null,
+  nowMs: number = Date.now(),
+  cooldownMs: number = BACKFILL_COOLDOWN_MS
+): { allowed: boolean; remainingMs: number; remainingSeconds: number } {
+  if (lastSyncedAtMs === null || lastSyncedAtMs <= 0) {
+    return { allowed: true, remainingMs: 0, remainingSeconds: 0 };
+  }
+  const elapsed = Math.max(0, nowMs - lastSyncedAtMs);
+  if (elapsed >= cooldownMs) {
+    return { allowed: true, remainingMs: 0, remainingSeconds: 0 };
+  }
+  const remainingMs = cooldownMs - elapsed;
+  return {
+    allowed: false,
+    remainingMs,
+    remainingSeconds: Math.ceil(remainingMs / 1000),
+  };
+}
+
+export function getLatestLeaderboardUpdate(items: PublicLeaderboardItem[]): string | null {
+  let latestMs = 0;
+  let latestIso: string | null = null;
+  for (const item of items) {
+    if (!item.lastUpdated) continue;
+    const ms = toJsDate(item.lastUpdated).getTime();
+    if (!Number.isNaN(ms) && ms > latestMs) {
+      latestMs = ms;
+      latestIso = typeof item.lastUpdated === 'string' ? item.lastUpdated : new Date(ms).toISOString();
+    }
+  }
+  return latestIso;
+}
 
 function resolveSessionStartMs(s: Session): number {
   if (s.startAt) return toJsDate(s.startAt).getTime();
@@ -13,9 +54,14 @@ function resolveSessionEndMs(s: Session): number {
   return 0;
 }
 
+function isValidAuthoritativeSession(s: Session | undefined): s is Session {
+  return Boolean(s && s.status !== 'cancelled' && !s.deletedAt);
+}
+
 /**
  * Computes live, unforgeable member statistics from authoritative session and check-in records.
  * No counter is ever stored or trusted from the client.
+ * Excludes orphan check-ins whose session has been permanently deleted, cancelled, or soft-deleted.
  */
 export function computeMemberStats(
   member: Member,
@@ -23,7 +69,16 @@ export function computeMemberStats(
   checkIns: CheckInRecord[],
   now: Date = new Date()
 ): ComputedMemberStats {
-  const memberCheckIns = checkIns.filter((c) => c.memberId === member.id);
+  const sessionMap = new Map<string, Session>();
+  const sessionPointsMap = new Map<string, number>();
+  sessions.forEach((s) => {
+    sessionMap.set(s.id, s);
+    sessionPointsMap.set(s.id, typeof s.points === 'number' ? s.points : 10);
+  });
+
+  const memberCheckIns = checkIns.filter(
+    (c) => c.memberId === member.id && isValidAuthoritativeSession(sessionMap.get(c.sessionId))
+  );
   const attendedSessionIds = new Set(memberCheckIns.map((c) => c.sessionId));
 
   const nowMs = now.getTime();
@@ -35,7 +90,7 @@ export function computeMemberStats(
   // 3. Started on or after member's joinedDate
   const eligibleSessions = sessions
     .filter((s) => {
-      if (s.status === 'cancelled' || s.deletedAt) return false;
+      if (!isValidAuthoritativeSession(s)) return false;
       const endMs = resolveSessionEndMs(s);
       const isConcluded = s.status === 'completed' || endMs <= nowMs;
       if (!isConcluded) return false;
@@ -49,11 +104,6 @@ export function computeMemberStats(
     .sort((a, b) => resolveSessionStartMs(a) - resolveSessionStartMs(b) || a.id.localeCompare(b.id));
 
   // Points: sum of session.points for attended sessions (preserves explicit 0 points)
-  const sessionPointsMap = new Map<string, number>();
-  sessions.forEach((s) => {
-    sessionPointsMap.set(s.id, typeof s.points === 'number' ? s.points : 10);
-  });
-
   let totalPoints = 0;
   attendedSessionIds.forEach((sid) => {
     totalPoints += sessionPointsMap.get(sid) ?? 10;
@@ -98,7 +148,8 @@ export function computeMemberStats(
 /**
  * Builds the public leaderboard projection from active members and live stats.
  * Excludes Inactive members and members with leaderboardOptOut === true.
- * Holds only non-PII public fields: name/displayName, handle, avatar, role, tracks, totals, streaks, and per-month metrics.
+ * Holds only non-PII public fields: name/displayName, handle, avatar, role, tracks, totals, streaks,
+ * per-month metrics, and canonical public links ONLY when showLinksPublicly === true.
  */
 export function buildPublicLeaderboardItems(
   members: Member[],
@@ -106,9 +157,11 @@ export function buildPublicLeaderboardItems(
   checkIns: CheckInRecord[],
   now: Date = new Date()
 ): PublicLeaderboardItem[] {
+  const sessionMap = new Map<string, Session>();
   const sessionMonthMap = new Map<string, string>();
   const sessionPointsMap = new Map<string, number>();
   sessions.forEach((s) => {
+    sessionMap.set(s.id, s);
     if (s.date) {
       sessionMonthMap.set(s.id, s.date.substring(0, 7));
     }
@@ -119,7 +172,9 @@ export function buildPublicLeaderboardItems(
     .filter((m) => m.status !== 'Inactive' && !m.leaderboardOptOut)
     .map((member) => {
       const stats = computeMemberStats(member, sessions, checkIns, now);
-      const memberCheckIns = checkIns.filter((c) => c.memberId === member.id);
+      const memberCheckIns = checkIns.filter(
+        (c) => c.memberId === member.id && isValidAuthoritativeSession(sessionMap.get(c.sessionId))
+      );
 
       // Deduplicate by sessionId so per-month counts and points match totalCheckIns/points
       const seenSessions = new Set<string>();
@@ -143,7 +198,12 @@ export function buildPublicLeaderboardItems(
         }
       });
 
-      return {
+      const showLinksPublicly = member.showLinksPublicly === true;
+      const gh = showLinksPublicly && member.githubUrl ? normalizeGitHubUrl(member.githubUrl) : null;
+      const li = showLinksPublicly && member.linkedinUrl ? normalizeLinkedInUrl(member.linkedinUrl) : null;
+      const pf = showLinksPublicly && member.portfolioUrl ? normalizePortfolioUrl(member.portfolioUrl) : null;
+
+      const publicItem: PublicLeaderboardItem = {
         id: member.id,
         name: member.name,
         displayName: member.name,
@@ -160,8 +220,17 @@ export function buildPublicLeaderboardItems(
         monthlyCheckIns,
         monthlyPoints,
         monthlyScores: monthlyPoints,
+        showLinksPublicly,
         lastUpdated: now.toISOString(),
       };
+
+      if (showLinksPublicly) {
+        if (gh?.valid && gh.canonicalUrl) publicItem.githubUrl = gh.canonicalUrl;
+        if (li?.valid && li.canonicalUrl) publicItem.linkedinUrl = li.canonicalUrl;
+        if (pf?.valid && pf.canonicalUrl) publicItem.portfolioUrl = pf.canonicalUrl;
+      }
+
+      return publicItem;
     })
     .sort((a, b) => {
       // Primary: Points, Secondary: Total Check-Ins, Tertiary: Current Streak, Best Streak, ID tie-break
@@ -242,4 +311,3 @@ export function buildLeaderboardRecomputeOpsPlan(params: {
     totalRemoved: deleteOps.length,
   };
 }
-

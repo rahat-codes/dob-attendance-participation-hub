@@ -9,9 +9,16 @@ import {
   CheckCircle2,
   Share2,
   Calendar,
+  ExternalLink,
+  Globe,
 } from 'lucide-react';
 import { m, AnimatePresence } from 'motion/react';
 import { SecureAvatar } from '../common/SecureAvatar';
+import {
+  normalizeGitHubUrl,
+  normalizeLinkedInUrl,
+  normalizePortfolioUrl,
+} from '../../utils/profileLinks';
 
 interface MemberProfileModalProps {
   item: PublicLeaderboardItem | null;
@@ -57,6 +64,18 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
       : item.monthlyScores || {}) as Record<string, number>
   ).sort((a, b) => b[0].localeCompare(a[0]));
 
+  const githubLink =
+    item.showLinksPublicly === true && item.githubUrl ? normalizeGitHubUrl(item.githubUrl) : null;
+  const linkedinLink =
+    item.showLinksPublicly === true && item.linkedinUrl ? normalizeLinkedInUrl(item.linkedinUrl) : null;
+  const portfolioLink =
+    item.showLinksPublicly === true && item.portfolioUrl ? normalizePortfolioUrl(item.portfolioUrl) : null;
+  const publicLinks = [
+    githubLink?.valid && githubLink.canonicalUrl ? { label: 'GitHub', url: githubLink.canonicalUrl } : null,
+    linkedinLink?.valid && linkedinLink.canonicalUrl ? { label: 'LinkedIn', url: linkedinLink.canonicalUrl } : null,
+    portfolioLink?.valid && portfolioLink.canonicalUrl ? { label: 'Portfolio', url: portfolioLink.canonicalUrl } : null,
+  ].filter(Boolean) as Array<{ label: string; url: string }>;
+
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
@@ -83,7 +102,7 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
               type="button"
               onClick={onClose}
               aria-label="Close modal"
-              className="absolute top-5 right-5 p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white/58 hover:text-white transition-colors cursor-pointer"
+              className="absolute top-4 right-4 min-w-11 min-h-11 w-11 h-11 flex items-center justify-center rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white/70 hover:text-white transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
             >
               <X className="w-4 h-4" />
             </button>
@@ -134,10 +153,29 @@ export const MemberProfileModal: React.FC<MemberProfileModalProps> = ({
                 {item.tracks.map((t: string) => (
                   <span
                     key={t}
-                    className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] text-[10px] font-rajdhani text-white/40"
+                    className="px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/[0.06] text-[10px] font-rajdhani text-white/60"
                   >
                     {t}
                   </span>
+                ))}
+              </div>
+            )}
+
+            {/* Canonical Public Links (gated strictly by showLinksPublicly + URL validator) */}
+            {publicLinks.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {publicLinks.map((lnk) => (
+                  <a
+                    key={lnk.label}
+                    href={lnk.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-11 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.12] text-xs font-rajdhani font-bold text-[#2DE2E6] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
+                  >
+                    <Globe className="w-3.5 h-3.5 shrink-0" />
+                    <span>{lnk.label}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0 opacity-75" />
+                  </a>
                 ))}
               </div>
             )}

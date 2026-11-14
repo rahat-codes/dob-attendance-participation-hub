@@ -135,6 +135,8 @@ const NotificationsModal = lazy(() =>
 const AttendanceConfirmationModal = lazy(() =>
   import('./components/AttendanceConfirmationModal').then((m) => ({ default: m.AttendanceConfirmationModal }))
 );
+import { NotFoundView } from './components/common/NotFoundView';
+import { resolveAppRoute } from './utils/routing';
 import {
   RotateCcw,
   Sparkles,
@@ -155,20 +157,8 @@ import {
 
 function getTabFromHash(): NavigationTab | null {
   if (typeof window === 'undefined') return null;
-  const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
-  const validTabs: NavigationTab[] = [
-    'home',
-    'sessions',
-    'participation',
-    'members',
-    'leaderboard',
-    'kiosk',
-    'requests',
-  ];
-  if (validTabs.includes(hash as NavigationTab)) {
-    return hash as NavigationTab;
-  }
-  return null;
+  const resolved = resolveAppRoute(window.location);
+  return resolved.tab;
 }
 
 export default function App() {
@@ -209,15 +199,17 @@ export default function App() {
   const [showGuestLeaderboard, setShowGuestLeaderboard] = useState(false);
   const [guestTab, setGuestTab] = useState<'leaderboard' | 'sessions' | 'guide'>('leaderboard');
 
-  // Navigation tab with History API & URL hash synchronization
+  // Navigation tab & 404 state synchronized with History API & URL hash
+  const [routeNotFound, setRouteNotFound] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const resolved = resolveAppRoute(window.location);
+    return resolved.isNotFound ? resolved.invalidRoute : null;
+  });
+
   const [activeTab, setActiveTab] = useState<NavigationTab>(() => {
     if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search);
-      if (p.get('sessionId') || p.get('checkin') || p.get('s') || p.get('t') || p.get('verify')) {
-        return 'home';
-      }
-      const hashTab = getTabFromHash();
-      if (hashTab) return hashTab;
+      const resolved = resolveAppRoute(window.location);
+      if (resolved.tab) return resolved.tab;
     }
     const saved = getSavedNavigationTab() as NavigationTab | null;
     return saved || 'home';
@@ -379,13 +371,14 @@ export default function App() {
         targetTab = 'home';
       }
 
+      setRouteNotFound(null);
       setActiveTab(targetTab);
       saveNavigationTab(targetTab);
 
       if (pushHistory && typeof window !== 'undefined') {
         const targetHash = `#/${targetTab}`;
-        if (window.location.hash !== targetHash) {
-          window.history.pushState({ tab: targetTab }, '', targetHash);
+        if (window.location.hash !== targetHash || window.location.pathname !== '/') {
+          window.history.pushState({ tab: targetTab }, '', `/${targetHash}`);
         }
       }
 
@@ -400,31 +393,40 @@ export default function App() {
     [isAdmin]
   );
 
-  // Popstate listener for real browser Back/Forward button navigation
+  // Popstate & hashchange listener for real browser Back/Forward button navigation & 404
   useEffect(() => {
-    const handlePopState = () => {
+    const syncFromLocation = () => {
       dispatchChrome({ type: 'routeChange' });
-      const hashTab = getTabFromHash();
-      if (hashTab) {
-        handleSelectTab(hashTab, false);
+      const resolved = resolveAppRoute(window.location);
+      if (resolved.isNotFound) {
+        setRouteNotFound(resolved.invalidRoute || 'unknown');
+        return;
+      }
+      setRouteNotFound(null);
+      if (resolved.tab) {
+        handleSelectTab(resolved.tab, false);
       } else {
         handleSelectTab('home', false);
       }
     };
 
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', syncFromLocation);
+    window.addEventListener('hashchange', syncFromLocation);
+    return () => {
+      window.removeEventListener('popstate', syncFromLocation);
+      window.removeEventListener('hashchange', syncFromLocation);
+    };
   }, [handleSelectTab]);
 
-  // Initial sync of hash if empty for authenticated users
+  // Initial sync of hash if empty (only when on valid route) for authenticated users
   useEffect(() => {
-    if (typeof window !== 'undefined' && user) {
-      const hashTab = getTabFromHash();
-      if (!hashTab) {
+    if (typeof window !== 'undefined' && user && !routeNotFound) {
+      const resolved = resolveAppRoute(window.location);
+      if (!resolved.isNotFound && !resolved.tab) {
         window.history.replaceState({ tab: activeTab }, '', `#/${activeTab}`);
       }
     }
-  }, [user, activeTab]);
+  }, [user, activeTab, routeNotFound]);
 
   // Enforce role-based access for tabs if role changes or tab loaded from storage
   useEffect(() => {
@@ -1156,6 +1158,23 @@ export default function App() {
       );
     }
 
+    if (routeNotFound) {
+      return (
+        <div className="min-h-dvh tech-grid flex flex-col justify-center font-sans">
+          <NotFoundView
+            invalidRoute={routeNotFound}
+            actionLabel="Return to Sign In"
+            onReturnHome={() => {
+              setRouteNotFound(null);
+              if (typeof window !== 'undefined') {
+                window.history.replaceState({}, '', '/#/home');
+              }
+            }}
+          />
+        </div>
+      );
+    }
+
     return (
       <LoginView
         onContinueAsGuest={() => {
@@ -1235,19 +1254,34 @@ export default function App() {
             animate="show"
             exit="exit"
             role="alert"
-            className="bg-red-950/80 border-b border-red-800 px-4 py-2 text-xs text-red-300 flex items-center justify-between"
+            className="bg-red-950/90 border-b border-red-800 px-4 py-2 text-xs text-red-200 flex flex-wrap items-center justify-between gap-2"
           >
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-              <span>{firestoreError}</span>
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-400" aria-hidden="true" />
+              <span className="break-words">{firestoreError}</span>
             </div>
-            <button
-              onClick={() => setFirestoreError(null)}
-              className="text-red-400 hover:text-red-200 cursor-pointer"
-              aria-label="Dismiss alert"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setFirestoreError(null);
+                  refreshProfile();
+                }}
+                className="min-h-11 px-3 py-1.5 rounded-lg bg-red-900/60 hover:bg-red-800/70 text-red-100 font-mono font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                aria-label="Retry loading profile and data"
+              >
+                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Retry</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFirestoreError(null)}
+                className="min-w-11 min-h-11 flex items-center justify-center text-red-300 hover:text-white cursor-pointer rounded-lg"
+                aria-label="Dismiss alert"
+              >
+                ✕
+              </button>
+            </div>
           </m.div>
         )}
       </AnimatePresence>
@@ -1275,7 +1309,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setNewRequestToast(null)}
-                  className="text-white/40 hover:text-white text-xs p-1 cursor-pointer"
+                  className="min-w-11 min-h-11 -mr-2 -mt-2 flex items-center justify-center text-white/60 hover:text-white text-xs cursor-pointer rounded-lg"
                   aria-label="Dismiss toast"
                 >
                   ✕
@@ -1293,7 +1327,7 @@ export default function App() {
                   setNewRequestToast(null);
                   handleSelectTab('requests');
                 }}
-                className="mt-2.5 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="mt-2.5 min-h-11 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <span>Review Request</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1326,7 +1360,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setInitialPendingToastCount(null)}
-                  className="text-white/40 hover:text-white text-xs p-1 cursor-pointer"
+                  className="min-w-11 min-h-11 -mr-2 -mt-2 flex items-center justify-center text-white/60 hover:text-white text-xs cursor-pointer rounded-lg"
                   aria-label="Dismiss toast"
                 >
                   ✕
@@ -1341,7 +1375,7 @@ export default function App() {
                   setInitialPendingToastCount(null);
                   handleSelectTab('requests');
                 }}
-                className="mt-2.5 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
+                className="mt-2.5 min-h-11 px-3 py-1.5 rounded-lg bg-[#b5ff00] text-black font-mono font-bold text-xs hover:bg-[#c2ff26] transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <span>View Requests</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1364,14 +1398,28 @@ export default function App() {
             <div
               role="status"
               aria-live="polite"
-              className="py-20 text-center font-mono text-zinc-400 text-xs flex items-center justify-center gap-2"
+              className="py-10 space-y-4"
             >
-              <span className="w-2 h-2 rounded-full bg-[#b5ff00] animate-pulse" />
-              <span>Loading view...</span>
+              <div className="h-28 rounded-3xl glass-panel animate-pulse" />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="h-24 rounded-2xl glass-panel animate-pulse" />
+                <div className="h-24 rounded-2xl glass-panel animate-pulse" />
+                <div className="h-24 rounded-2xl glass-panel animate-pulse" />
+              </div>
+              <p className="text-center font-mono text-zinc-400 text-xs">Loading section...</p>
             </div>
           }
         >
           <AnimatePresence mode="popLayout" initial={false}>
+            {routeNotFound ? (
+              <m.div key="not-found" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
+                <NotFoundView
+                  invalidRoute={routeNotFound}
+                  onReturnHome={() => handleSelectTab('home')}
+                />
+              </m.div>
+            ) : (
+            <>
             {activeTab === 'home' && (
               <m.div key="home" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full min-w-0">
                 <MemberHomeView
@@ -1589,6 +1637,8 @@ export default function App() {
                   </div>
                 )}
               </m.div>
+            )}
+            </>
             )}
           </AnimatePresence>
         </Suspense>

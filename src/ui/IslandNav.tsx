@@ -173,7 +173,7 @@ export const IslandNav: React.FC<IslandNavProps> = ({
           ========================================================================= */}
       <nav
         aria-label="Mobile Island Navigation"
-        className={`lg:hidden fixed left-3 right-3 bottom-[calc(env(safe-area-inset-bottom)+8px)] z-40 max-w-[380px] mx-auto island-nav rounded-full px-2 py-1 shadow-2xl transition-all duration-200 ${
+        className={`lg:hidden fixed left-2 right-2 bottom-[calc(env(safe-area-inset-bottom)+8px)] z-40 max-w-[min(380px,calc(100vw-16px))] mx-auto island-nav rounded-full px-1.5 py-1 shadow-2xl transition-all duration-200 ${
           isModalOpen ? 'opacity-30 pointer-events-none scale-95' : 'opacity-100 scale-100'
         }`}
       >
@@ -189,7 +189,7 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                   type="button"
                   onClick={onOpenQuickScan}
                   aria-label="Open Camera QR Scanner"
-                  className="relative -top-1 flex flex-col items-center justify-center p-0.5 rounded-full cursor-pointer transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
+                  className="relative -top-1 flex flex-col items-center justify-center min-w-[44px] min-h-[44px] p-0.5 rounded-full cursor-pointer transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
                 >
                   <span className="w-10 h-10 rounded-full orb-accent flex items-center justify-center shadow-[0_0_14px_rgba(181,255,0,0.4)]">
                     <Scan className="w-4 h-4 text-black" />
@@ -211,7 +211,7 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                   type="button"
                   onClick={onOpenMore}
                   aria-label="Open More Menu and Settings"
-                  className="relative flex flex-col items-center justify-center py-1 px-2.5 rounded-full text-zinc-400 hover:text-white transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
+                  className="relative flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-1.5 rounded-full text-zinc-400 hover:text-white transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
                 >
                   <div className="relative">
                     <Menu className="w-4 h-4" />
@@ -234,8 +234,9 @@ export const IslandNav: React.FC<IslandNavProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => onSelectTab(item.id as NavigationTab)}
+                aria-label={item.label}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative flex flex-col items-center justify-center py-1 px-2.5 rounded-full transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] ${
+                className={`relative flex flex-col items-center justify-center min-w-[44px] min-h-[44px] py-1 px-1.5 rounded-full transition-all cursor-pointer active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] ${
                   isActive
                     ? 'text-black font-extrabold'
                     : 'text-zinc-400 hover:text-white'

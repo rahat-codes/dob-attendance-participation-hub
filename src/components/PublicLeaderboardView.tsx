@@ -8,6 +8,8 @@ import { HallOfFame } from './leaderboard/HallOfFame';
 import { MemberProfileModal } from './leaderboard/MemberProfileModal';
 import { ShareCardModal } from './leaderboard/ShareCardModal';
 import { getSeoulMonthKey } from '../config/tierConfig';
+import { BACKFILL_COOLDOWN_MS, checkBackfillCooldown, getLatestLeaderboardUpdate } from '../utils/stats';
+import { formatInClubTz, formatTimeInClubTz } from '../utils/sessionWindow';
 import {
   Trophy,
   Crown,
@@ -78,18 +80,39 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
   const [shareCardRank, setShareCardRank] = useState<number | undefined>(undefined);
   const [isShareCardOpen, setIsShareCardOpen] = useState(false);
 
-  // Admin backfill status
+  // Admin backfill status & 60s client rate cap
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  const lastBackfillAtRef = React.useRef<number | null>(null);
+  const [cooldownRemainingSec, setCooldownRemainingSec] = useState(0);
+
+  useEffect(() => {
+    if (cooldownRemainingSec <= 0) return;
+    const timer = setInterval(() => {
+      const check = checkBackfillCooldown(lastBackfillAtRef.current, Date.now(), BACKFILL_COOLDOWN_MS);
+      setCooldownRemainingSec(check.remainingSeconds);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownRemainingSec]);
+
+  const latestSyncedIso = useMemo(() => getLatestLeaderboardUpdate(activeItems), [activeItems]);
 
   const handleAdminBackfill = async () => {
-    if (!isAdmin) return;
+    if (!isAdmin || backfilling) return;
+    const cooldown = checkBackfillCooldown(lastBackfillAtRef.current, Date.now(), BACKFILL_COOLDOWN_MS);
+    if (!cooldown.allowed) {
+      setCooldownRemainingSec(cooldown.remainingSeconds);
+      setBackfillMessage(`Please wait ${cooldown.remainingSeconds}s before syncing again.`);
+      return;
+    }
     setBackfilling(true);
     setBackfillMessage(null);
     try {
       const res = await backfillPublicLeaderboard();
-      setBackfillMessage(`Synced ${res.totalBackfilled} builders!`);
-      setTimeout(() => setBackfillMessage(null), 4000);
+      lastBackfillAtRef.current = Date.now();
+      setCooldownRemainingSec(Math.ceil(BACKFILL_COOLDOWN_MS / 1000));
+      setBackfillMessage(`Synced ${res.totalBackfilled} builders (${res.totalRemoved} pruned)!`);
+      setTimeout(() => setBackfillMessage(null), 5000);
     } catch (err: any) {
       setBackfillMessage('Backfill error: ' + (err?.message || 'Check permissions'));
     } finally {
@@ -229,17 +252,25 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
                 <Crown className="w-3.5 h-3.5 text-[#FF7A1A]" />
                 Public Hall of Builders
               </span>
-              <span className="text-zinc-600 font-mono">·</span>
-              <span className="text-zinc-400 text-xs font-rajdhani font-semibold tracking-wide">
+              <span className="text-zinc-500 font-mono" aria-hidden="true">·</span>
+              <span className="text-zinc-300 text-xs font-rajdhani font-semibold tracking-wide">
                 Live Builder &amp; Workshop Rankings · Seoul Timezone (KST)
               </span>
+              {latestSyncedIso && (
+                <>
+                  <span className="text-zinc-500 font-mono" aria-hidden="true">·</span>
+                  <span className="text-zinc-300 text-xs font-mono" data-testid="leaderboard-last-updated">
+                    Updated {formatInClubTz(latestSyncedIso)} {formatTimeInClubTz(latestSyncedIso)} KST
+                  </span>
+                </>
+              )}
             </div>
 
             <h1 className="text-2xl sm:text-4xl font-black font-orbitron text-white/92 uppercase tracking-tight">
               Guild Attendance &amp; Participation
             </h1>
 
-            <p className="text-xs sm:text-sm font-sans font-normal text-white/60 max-w-2xl leading-relaxed">
+            <p className="text-xs sm:text-sm font-sans font-normal text-white/70 max-w-2xl leading-relaxed">
               Official public telemetry recognizing builder consistency, sprint hack streaks, and workshop achievements.
               {!user && ' Sign in with your Google account to log verified check-ins and rank on the leaderboard.'}
             </p>
@@ -285,17 +316,23 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               </button>
             ) : null}
 
-            {/* Admin Backfill Button */}
+            {/* Admin Backfill Button (60s cooldown rate cap) */}
             {isAdmin && (
               <button
                 type="button"
                 onClick={handleAdminBackfill}
-                disabled={backfilling}
-                title="Synchronize and backfill the publicLeaderboard collection from active roster"
+                disabled={backfilling || cooldownRemainingSec > 0}
+                title="Synchronize and backfill the publicLeaderboard collection from active roster (60s cooldown)"
                 className="px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/15 text-xs font-orbitron font-bold text-zinc-200 transition-all flex items-center gap-2 cursor-pointer min-h-11 disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-[#00F0FF] ${backfilling ? 'animate-spin' : ''}`} />
-                <span>{backfilling ? 'Syncing...' : 'Sync Leaderboard'}</span>
+                <span>
+                  {backfilling
+                    ? 'Syncing...'
+                    : cooldownRemainingSec > 0
+                    ? `Wait ${cooldownRemainingSec}s`
+                    : 'Sync Leaderboard'}
+                </span>
               </button>
             )}
           </div>
@@ -398,8 +435,8 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedPeriod('all_time')}
-                className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
-                  selectedPeriod === 'all_time' ? 'text-black' : 'text-white/58 hover:text-white'
+                className={`relative px-4 py-2 min-h-11 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer flex-1 sm:flex-initial ${
+                  selectedPeriod === 'all_time' ? 'text-black' : 'text-white/70 hover:text-white'
                 }`}
               >
                 {selectedPeriod === 'all_time' && (
@@ -416,8 +453,8 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedPeriod('this_month')}
-                className={`relative px-4 py-2 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer ${
-                  selectedPeriod === 'this_month' ? 'text-black' : 'text-white/58 hover:text-white'
+                className={`relative px-4 py-2 min-h-11 rounded-xl font-orbitron text-xs font-bold uppercase tracking-wider transition-colors z-10 cursor-pointer flex-1 sm:flex-initial ${
+                  selectedPeriod === 'this_month' ? 'text-black' : 'text-white/70 hover:text-white'
                 }`}
               >
                 {selectedPeriod === 'this_month' && (
@@ -433,15 +470,16 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
             </div>
 
             {/* Search & Track Filter */}
-            <div className="flex items-center gap-2 flex-1 md:max-w-md">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/38" />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1 md:max-w-md min-w-0">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search builder or handle..."
-                  className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/92 placeholder-white/38 focus:outline-none focus:border-white/20 transition-colors min-h-10"
+                  aria-label="Search builders by name or handle"
+                  className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/92 placeholder-white/50 focus:outline-none focus:border-white/20 transition-colors min-h-11"
                 />
               </div>
 
@@ -449,13 +487,13 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
                 value={selectedTrack}
                 onChange={(e) => setSelectedTrack(e.target.value)}
                 aria-label="Filter tracks"
-                className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/70 focus:outline-none min-h-10 cursor-pointer"
+                className="px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.08] text-xs font-rajdhani font-semibold text-white/80 focus:outline-none min-h-11 cursor-pointer"
               >
-                <option value="all">All Tracks</option>
-                <option value="Hardware & Robotics">Hardware &amp; Robotics</option>
-                <option value="Software & Systems">Software &amp; Systems</option>
-                <option value="AI & Embedded">AI &amp; Embedded</option>
-                <option value="Open Hack & Demo">Open Hack &amp; Demo</option>
+                <option value="all" className="bg-zinc-950 text-zinc-200">All Tracks</option>
+                <option value="Hardware & Robotics" className="bg-zinc-950 text-zinc-200">Hardware &amp; Robotics</option>
+                <option value="Software & Systems" className="bg-zinc-950 text-zinc-200">Software &amp; Systems</option>
+                <option value="AI & Embedded" className="bg-zinc-950 text-zinc-200">AI &amp; Embedded</option>
+                <option value="Open Hack & Demo" className="bg-zinc-950 text-zinc-200">Open Hack &amp; Demo</option>
               </select>
             </div>
           </div>

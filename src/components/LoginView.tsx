@@ -81,7 +81,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0b0e] tech-grid text-zinc-100 flex flex-col justify-center items-center px-4 py-12 selection:bg-[#b5ff00]/25 selection:text-[#b5ff00] relative overflow-hidden">
+    <div className="min-h-screen bg-[var(--bg-app)] tech-grid text-[var(--text-main)] flex flex-col justify-center items-center px-3 sm:px-4 py-10 sm:py-12 selection:bg-[#b5ff00]/25 selection:text-[#b5ff00] relative overflow-hidden">
       {/* Spatial ambient glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-[#b5ff00]/5 rounded-full blur-[100px] pointer-events-none" />
       <div className="absolute bottom-10 right-10 w-[350px] h-[350px] bg-orange-500/4 rounded-full blur-[90px] pointer-events-none" />
@@ -123,9 +123,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     <p className="text-[11.5px] text-red-300/90 mt-1 leading-relaxed">{authError}</p>
                   </div>
                   <button
+                    type="button"
                     onClick={clearAuthError}
-                    className="text-red-400 hover:text-red-200 text-xs p-1"
+                    className="min-w-11 min-h-11 -mr-2 -mt-2 flex items-center justify-center text-red-300 hover:text-white text-xs rounded-lg cursor-pointer shrink-0"
                     title="Dismiss notification"
+                    aria-label="Dismiss error"
                   >
                     ✕
                   </button>
@@ -158,7 +160,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               type="button"
               onClick={handleSignIn}
               disabled={signingIn || loading}
-              className="btn-glossy-primary w-full py-3.5 px-6 rounded-full font-bold text-sm tracking-wide flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-glossy-primary w-full min-h-11 py-3.5 px-6 rounded-full font-bold text-sm tracking-wide flex items-center justify-center gap-3 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {signingIn ? (
                 <>
@@ -167,7 +169,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                 </>
               ) : (
                 <>
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                     <path
                       fill="currentColor"
                       d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -190,53 +192,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               )}
             </button>
 
-            {/* Reference 2: Continue With Divider & Circular Provider Button */}
-            <div className="space-y-4 pt-1">
-              <div className="relative flex items-center justify-center">
-                <div className="w-full border-t border-white/10" />
-                <span className="absolute px-3 bg-[#0d0f17] text-[10px] uppercase font-mono font-bold tracking-widest text-zinc-500 rounded-full">
-                  or continue with
-                </span>
-              </div>
-
-              <div className="flex items-center justify-center">
-                <button
-                  type="button"
-                  onClick={handleSignIn}
-                  disabled={signingIn || loading}
-                  aria-label="Sign in using Google Provider"
-                  className="w-14 h-14 rounded-full orb-pearl flex items-center justify-center shadow-lg transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00] cursor-pointer"
-                >
-                  <svg className="w-6 h-6" viewBox="0 0 24 24">
-                    <path
-                      fill="#EA4335"
-                      d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.7 1 4 3.5 2.2 7.1l3.7 2.8C6.7 7.3 9.1 5 12 5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M22.6 12.3c0-.8-.1-1.5-.2-2.3H12v4.3h6c-.3 1.4-1.1 2.5-2.2 3.3l3.6 2.8c2.1-1.9 3.2-4.8 3.2-8.1z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.9 14.1c-.2-.7-.3-1.4-.3-2.1s.1-1.4.3-2.1V7.1H2.2C1.4 8.6 1 10.2 1 12s.43 3.45 1.2 4.9l3.7-2.8z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c3 0 5.5-1 7.3-2.7l-3.6-2.8c-1 .7-2.3 1.1-3.7 1.1-2.9 0-5.3-2.3-6.1-4.9L2.2 16.5C4 20.1 7.7 23 12 23z"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
             {onContinueAsGuest && (
               <button
                 type="button"
                 onClick={onContinueAsGuest}
-                className="btn-glossy-secondary w-full py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 cursor-pointer font-mono"
+                className="btn-glossy-secondary w-full min-h-11 py-3 px-4 rounded-full font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2.5 cursor-pointer font-mono"
               >
-                <Trophy className="h-4 w-4 text-[#b5ff00]" />
-                <span>Explore Public Hub (Leaderboard &amp; Meetings)</span>
+                <Trophy className="h-4 w-4 text-[#b5ff00] shrink-0" aria-hidden="true" />
+                <span>Explore Public Hub</span>
               </button>
             )}
 

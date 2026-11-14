@@ -35,6 +35,8 @@ import { RoleManagementModal } from './RoleManagementModal';
 import { downloadCSV, generateMembersRosterCSV } from '../utils/storage';
 import { computeMemberStats } from '../utils/stats';
 import { toJsDate } from '../utils/sessionWindow';
+import { getAllMemberPrivateMap } from '../firebase/firestoreService';
+import { ModalSheet } from './ModalSheet';
 import { m } from 'motion/react';
 import { fadeUp, stagger } from '../motion/presets';
 import { SecureAvatar } from './common/SecureAvatar';
@@ -77,6 +79,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
   const [trackFilter, setTrackFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'attendance' | 'streak' | 'name' | 'newest'>('attendance');
   const [roleModalMember, setRoleModalMember] = useState<Member | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [includePIIInExport, setIncludePIIInExport] = useState(false);
+  const [isExportingRoster, setIsExportingRoster] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const roleCounts = useMemo(() => {
     const counts: Record<string, number> = {
@@ -143,10 +149,25 @@ export const MembersView: React.FC<MembersViewProps> = ({
       : Array.from(memberStatsMap.values()).reduce((acc, s) => acc + s.total, 0);
   }, [checkIns, memberStatsMap]);
 
-  const handleExportRosterCSV = () => {
-    const csvContent = generateMembersRosterCSV(members, sessions, checkIns);
-    const dateStamp = new Date().toISOString().split('T')[0];
-    downloadCSV(`den-of-builders-roster-${dateStamp}.csv`, csvContent);
+  const handleConfirmExportRosterCSV = async () => {
+    setExportError(null);
+    setIsExportingRoster(true);
+    try {
+      let privateDataMap: Map<string, any> | undefined;
+      if (includePIIInExport) {
+        privateDataMap = await getAllMemberPrivateMap('Admin explicitly opted in to export Roster CSV with member PII');
+      }
+      const csvContent = generateMembersRosterCSV(members, sessions, checkIns, privateDataMap);
+      const dateStamp = new Date().toISOString().split('T')[0];
+      const suffix = includePIIInExport ? '-with-pii' : '-public';
+      downloadCSV(`den-of-builders-roster-${dateStamp}${suffix}.csv`, csvContent);
+      setIsExportModalOpen(false);
+      setIncludePIIInExport(false);
+    } catch (err: any) {
+      setExportError(err?.message || 'Failed to export roster CSV.');
+    } finally {
+      setIsExportingRoster(false);
+    }
   };
 
   const filteredMembers = useMemo(() => {
@@ -198,8 +219,13 @@ export const MembersView: React.FC<MembersViewProps> = ({
           {isAdmin ? (
             <>
               <button
-                onClick={handleExportRosterCSV}
-                className="btn-glossy-secondary flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-300 rounded-full transition-all whitespace-nowrap cursor-pointer font-mono"
+                type="button"
+                onClick={() => {
+                  setIncludePIIInExport(false);
+                  setExportError(null);
+                  setIsExportModalOpen(true);
+                }}
+                className="btn-glossy-secondary flex items-center gap-1.5 px-4 py-2.5 min-h-11 text-xs font-bold uppercase tracking-wider text-zinc-300 rounded-full transition-all whitespace-nowrap cursor-pointer font-mono"
                 title="Export complete roster to CSV for external database management"
               >
                 <Download className="h-3.5 w-3.5 text-zinc-400 group-hover:text-[#b5ff00]" />
@@ -699,47 +725,48 @@ export const MembersView: React.FC<MembersViewProps> = ({
         {/* Active Filters Summary Strip */}
         {(searchQuery || roleFilter !== 'all' || trackFilter !== 'all') && (
           <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] font-mono">
-            <span className="text-zinc-500">Active filters:</span>
+            <span className="text-zinc-400">Active filters:</span>
             {searchQuery && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-300">
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label={`Clear search filter ${searchQuery}`}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-11 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 hover:text-white cursor-pointer"
+              >
                 <span>&ldquo;{searchQuery}&rdquo;</span>
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="hover:text-white cursor-pointer"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
             )}
             {roleFilter !== 'all' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00]">
+              <button
+                type="button"
+                onClick={() => setRoleFilter('all')}
+                aria-label={`Clear role filter ${roleFilter}`}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-11 rounded-lg bg-[#b5ff00]/10 border border-[#b5ff00]/30 text-[#b5ff00] hover:bg-[#b5ff00]/20 cursor-pointer"
+              >
                 <span>Role: {roleFilter}</span>
-                <button
-                  onClick={() => setRoleFilter('all')}
-                  className="hover:text-white cursor-pointer"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
             )}
             {trackFilter !== 'all' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+              <button
+                type="button"
+                onClick={() => setTrackFilter('all')}
+                aria-label={`Clear track filter ${trackFilter}`}
+                className="inline-flex items-center gap-1.5 px-3 py-2 min-h-11 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/20 cursor-pointer"
+              >
                 <span>Track: {trackFilter}</span>
-                <button
-                  onClick={() => setTrackFilter('all')}
-                  className="hover:text-white cursor-pointer"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
             )}
             <button
+              type="button"
               onClick={() => {
                 setSearchQuery('');
                 setRoleFilter('all');
                 setTrackFilter('all');
               }}
-              className="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 ml-1 cursor-pointer"
+              className="min-h-11 px-2 text-zinc-300 hover:text-white underline underline-offset-2 ml-1 cursor-pointer"
             >
               Reset all
             </button>
@@ -883,24 +910,28 @@ export const MembersView: React.FC<MembersViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 flex-wrap">
                   {isAdmin && (
                     <button
+                      type="button"
                       onClick={() => setRoleModalMember(member)}
-                      className="p-1.5 text-zinc-400 hover:text-[#b5ff00] hover:bg-zinc-900 rounded-full transition-colors cursor-pointer"
+                      className="min-w-11 min-h-11 flex items-center justify-center text-zinc-400 hover:text-[#b5ff00] hover:bg-zinc-900 rounded-full transition-colors cursor-pointer"
                       title="Manage club role and admin permissions"
+                      aria-label={`Manage club role for ${member.name}`}
                     >
-                      <ShieldCheck className="h-3.5 w-3.5 text-[#b5ff00]" />
+                      <ShieldCheck className="h-4 w-4 text-[#b5ff00]" />
                     </button>
                   )}
 
                   {isAdmin && onEditMember && (
                     <button
+                      type="button"
                       onClick={() => onEditMember(member)}
-                      className="p-1.5 text-zinc-400 hover:text-[#b5ff00] hover:bg-zinc-900 rounded-full transition-colors cursor-pointer"
+                      className="min-w-11 min-h-11 flex items-center justify-center text-zinc-400 hover:text-[#b5ff00] hover:bg-zinc-900 rounded-full transition-colors cursor-pointer"
                       title="Edit builder profile"
+                      aria-label={`Edit builder ${member.name}`}
                     >
-                      <Edit3 className="h-3.5 w-3.5" />
+                      <Edit3 className="h-4 w-4" />
                     </button>
                   )}
 
@@ -911,10 +942,10 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         e.stopPropagation();
                         onReactivateMember(member);
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-mono font-bold uppercase text-[#b5ff00] bg-[#b5ff00]/10 hover:bg-[#b5ff00]/20 border border-[#b5ff00]/40 rounded-full transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 px-3 py-2 min-h-11 text-[11px] font-mono font-bold uppercase text-[#b5ff00] bg-[#b5ff00]/10 hover:bg-[#b5ff00]/20 border border-[#b5ff00]/40 rounded-full transition-colors cursor-pointer"
                       title="Reactivate builder and route linked account through approval"
                     >
-                      <UserCheck className="h-3 w-3" />
+                      <UserCheck className="h-3.5 w-3.5" />
                       <span>Reactivate</span>
                     </button>
                   )}
@@ -926,17 +957,18 @@ export const MembersView: React.FC<MembersViewProps> = ({
                         e.stopPropagation();
                         onDeleteMember(member);
                       }}
-                      className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/15 border border-transparent hover:border-red-500/30 rounded-full transition-all cursor-pointer"
+                      className="min-w-11 min-h-11 flex items-center justify-center text-zinc-400 hover:text-red-400 hover:bg-red-500/15 border border-transparent hover:border-red-500/30 rounded-full transition-all cursor-pointer"
                       title="Delete builder"
                       aria-label={`Delete builder ${member.name}`}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   )}
 
                   <button
+                    type="button"
                     onClick={() => onViewMemberPass(member)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-[#b5ff00]/60 hover:text-[#b5ff00] rounded-full transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-11 text-xs font-bold uppercase tracking-wider text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-[#b5ff00]/60 hover:text-[#b5ff00] rounded-full transition-all cursor-pointer"
                   >
                     <QrCode className="h-3.5 w-3.5 text-[#b5ff00]" />
                     <span>Pass</span>
@@ -962,6 +994,82 @@ export const MembersView: React.FC<MembersViewProps> = ({
           }}
         />
       )}
+
+      {/* Roster CSV Export Modal with explicit PII opt-in */}
+      <ModalSheet
+        isOpen={isExportModalOpen}
+        onClose={() => {
+          if (!isExportingRoster) setIsExportModalOpen(false);
+        }}
+        title="Export Builder Roster (CSV)"
+        subtitle="Email, phone, and student ID are excluded unless explicitly selected."
+        icon={<Download className="h-5 w-5" />}
+        maxWidth="md"
+        footer={
+          <div className="flex items-center justify-end gap-2.5">
+            <button
+              type="button"
+              disabled={isExportingRoster}
+              onClick={() => setIsExportModalOpen(false)}
+              className="px-4 py-2.5 min-h-11 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-xs font-mono font-bold text-zinc-300 cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isExportingRoster}
+              onClick={handleConfirmExportRosterCSV}
+              className={`px-5 py-2.5 min-h-11 rounded-xl text-xs font-mono font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50 ${
+                includePIIInExport
+                  ? 'bg-amber-400 hover:bg-amber-300 text-black'
+                  : 'bg-[#b5ff00] hover:bg-[#c4ff26] text-black'
+              }`}
+            >
+              {isExportingRoster
+                ? 'Exporting...'
+                : includePIIInExport
+                ? 'Confirm & Export with PII'
+                : 'Download Public Roster CSV'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-zinc-300 leading-relaxed">
+            By default, the Roster CSV contains only public guild details (name, handle, role, tracks, status, joined date, and live attendance stats).
+          </p>
+
+          <label className="flex items-start gap-3 p-3.5 rounded-2xl bg-zinc-900/70 border border-white/10 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={includePIIInExport}
+              onChange={(e) => setIncludePIIInExport(e.target.checked)}
+              className="mt-0.5 h-5 w-5 rounded border-zinc-600 accent-amber-400 shrink-0 cursor-pointer"
+            />
+            <span className="text-xs text-zinc-200 leading-relaxed">
+              <strong className="block text-amber-300 font-semibold">
+                Include confidential personal data (Email, Phone, Student ID)
+              </strong>
+              Loads protected <code className="font-mono text-[11px] text-zinc-300">memberPrivate</code> fields for admins and records an audit log entry.
+            </span>
+          </label>
+
+          {includePIIInExport && (
+            <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-500/40 text-xs text-amber-200 flex items-start gap-2">
+              <ShieldAlert className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <span>
+                Warning: Personal Data (PII) Export selected. Only store or share this file on encrypted, authorized admin devices.
+              </span>
+            </div>
+          )}
+
+          {exportError && (
+            <div role="alert" className="p-3 rounded-xl bg-red-950/60 border border-red-500/40 text-xs text-red-200">
+              {exportError}
+            </div>
+          )}
+        </div>
+      </ModalSheet>
     </div>
   );
 };

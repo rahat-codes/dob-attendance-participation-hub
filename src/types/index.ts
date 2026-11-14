@@ -350,7 +350,8 @@ export type AuditAction =
   | 'complete_session'
   | 'reopen_session'
   | 'check_in_manual'
-  | 'delete_check_in';
+  | 'delete_check_in'
+  | 'export_roster_pii';
 
 export interface AuditLogEntry {
   id: string;

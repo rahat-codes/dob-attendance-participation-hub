@@ -1,3 +1,6 @@
+import { getMonthKeyInClubTz } from '../utils/sessionWindow';
+import { DEFAULT_CLUB_TIMEZONE } from './constants';
+
 export type TierLevel = 'ROOKIE' | 'BUILDER' | 'ELITE' | 'LEGEND';
 
 export interface TierDefinition {
@@ -189,31 +192,45 @@ export function getNextTierProgress(points: number): {
 }
 
 /**
- * Helper to get current Date in Asia/Seoul (UTC+9)
+ * Helper to get calendar parts in Asia/Seoul without browser timezone interference.
  */
-export function getSeoulNow(date = new Date()): Date {
-  const utc = date.getTime() + date.getTimezoneOffset() * 60000;
-  return new Date(utc + 9 * 3600000);
+function getSeoulCalendarParts(date = new Date()): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: DEFAULT_CLUB_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  return {
+    year: parseInt(parts.find((p) => p.type === 'year')?.value || '2026', 10),
+    month: parseInt(parts.find((p) => p.type === 'month')?.value || '1', 10),
+    day: parseInt(parts.find((p) => p.type === 'day')?.value || '1', 10),
+  };
 }
 
 /**
- * Returns month key in Asia/Seoul (e.g. "2026-10")
+ * Helper to get current Date shifted cleanly for display/year/month reads in Asia/Seoul.
+ */
+export function getSeoulNow(date = new Date()): Date {
+  const { year, month, day } = getSeoulCalendarParts(date);
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
+/**
+ * Returns month key in Asia/Seoul (e.g. "2026-10") using Intl.DateTimeFormat (club timezone).
  */
 export function getSeoulMonthKey(date = new Date()): string {
-  const seoul = getSeoulNow(date);
-  const y = seoul.getFullYear();
-  const m = String(seoul.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+  return getMonthKeyInClubTz(date, DEFAULT_CLUB_TIMEZONE);
 }
 
 /**
  * Returns the previous completed month key in Asia/Seoul (e.g. "2026-09" when current is "2026-10")
  */
 export function getSeoulPreviousMonthKey(date = new Date()): string {
-  const seoul = getSeoulNow(date);
-  const prev = new Date(seoul.getFullYear(), seoul.getMonth() - 1, 1);
-  const y = prev.getFullYear();
-  const m = String(prev.getMonth() + 1).padStart(2, '0');
+  const { year, month } = getSeoulCalendarParts(date);
+  const prev = new Date(Date.UTC(year, month - 2, 15, 12, 0, 0));
+  const y = prev.getUTCFullYear();
+  const m = String(prev.getUTCMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
 }
 
@@ -234,9 +251,7 @@ export interface SemesterInfo {
  * Outside these ranges: Off-Season (Jan, Feb, Jul, Aug fall under All Time only)
  */
 export function getSeoulSemesterInfo(date = new Date()): SemesterInfo {
-  const seoul = getSeoulNow(date);
-  const year = seoul.getFullYear();
-  const month = seoul.getMonth() + 1; // 1-12
+  const { year, month } = getSeoulCalendarParts(date); // 1-12
 
   if (month >= 3 && month <= 6) {
     return {

@@ -1,5 +1,6 @@
 import { Member, Session, CheckInRecord, MemberPrivate } from '../types';
 import { toJsDate, formatInClubTz, formatTimeInClubTz, todayInClubTz } from './sessionWindow';
+import { DEFAULT_CLUB_TIMEZONE } from '../config/constants';
 import { computeMemberStats } from './stats';
 
 export {
@@ -21,6 +22,9 @@ export function calculateMonthlyStats(
   checkIns: CheckInRecord[],
   now: Date = new Date()
 ) {
+  const memberMap = new Map<string, Member>();
+  members.forEach((m) => memberMap.set(m.id, m));
+
   const sessionMap = new Map<string, Session>();
   sessions.forEach((s) => sessionMap.set(s.id, s));
 
@@ -28,10 +32,11 @@ export function calculateMonthlyStats(
     (s) => s.status !== 'cancelled' && !s.deletedAt && s.date && s.date.startsWith(monthKey)
   );
   const monthCheckIns = checkIns.filter((c) => {
+    if (!memberMap.has(c.memberId)) return false;
     const sess = sessionMap.get(c.sessionId);
-    if (sess && (sess.status === 'cancelled' || sess.deletedAt)) return false;
+    if (!sess || sess.status === 'cancelled' || sess.deletedAt) return false;
     if (c.monthKey) return c.monthKey === monthKey;
-    if (sess?.date) return sess.date.startsWith(monthKey);
+    if (sess.date) return sess.date.startsWith(monthKey);
     if (c.date) return c.date.startsWith(monthKey);
     return false;
   });
@@ -128,8 +133,13 @@ export function formatMonthLabel(monthKey: string): string {
   const [yearStr, monthStr] = monthKey.split('-');
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10) - 1;
-  const d = new Date(year, month, 1);
-  return formatInClubTz(d, undefined, { month: 'long', year: 'numeric' });
+  if (Number.isNaN(year) || Number.isNaN(month)) return monthKey;
+  const d = new Date(Date.UTC(year, month, 15, 12, 0, 0));
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: DEFAULT_CLUB_TIMEZONE,
+    month: 'long',
+    year: 'numeric',
+  }).format(d);
 }
 
 // Memory-only fallback / UI navigation state (No localStorage for roster/user data)

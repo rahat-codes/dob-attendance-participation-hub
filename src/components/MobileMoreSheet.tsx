@@ -16,12 +16,15 @@ import {
   Home,
   Bell,
   ExternalLink,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { ModalSheet } from './ModalSheet';
 import { NavigationTab } from './Navbar';
 import { useAuth } from '../firebase/AuthContext';
 import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { SecureAvatar } from './common/SecureAvatar';
+import { ThemeMode, getInitialTheme, applyTheme, toggleTheme } from '../utils/theme';
 
 interface MobileMoreSheetProps {
   isOpen: boolean;
@@ -49,6 +52,13 @@ export const MobileMoreSheet: React.FC<MobileMoreSheetProps> = ({
   unreadNotificationsCount = 0,
 }) => {
   const { user, profile, linkedMember, isAdmin, signOutUser } = useAuth();
+  const [theme, setTheme] = React.useState<ThemeMode>(() => getInitialTheme());
+
+  const handleToggleTheme = () => {
+    const next = toggleTheme(theme);
+    applyTheme(next);
+    setTheme(next);
+  };
 
   return (
     <ModalSheet
@@ -316,6 +326,30 @@ export const MobileMoreSheet: React.FC<MobileMoreSheetProps> = ({
                 </div>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={handleToggleTheme}
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+              className="w-full min-h-12 flex items-center justify-between gap-3 p-3 rounded-xl bg-zinc-900/50 hover:bg-zinc-800/80 border border-white/5 text-left transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#b5ff00] focus-visible:outline-none"
+            >
+              <div className="flex items-center gap-3">
+                {theme === 'dark' ? (
+                  <Sun className="w-5 h-5 text-amber-400 shrink-0" />
+                ) : (
+                  <Moon className="w-5 h-5 text-cyan-400 shrink-0" />
+                )}
+                <div>
+                  <div className="font-bold text-sm text-zinc-200">
+                    Appearance: {theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
+                  </div>
+                  <div className="text-xs text-zinc-400">Switch between high-contrast dark &amp; light surfaces</div>
+                </div>
+              </div>
+              <span className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-[10px] font-mono font-bold uppercase text-[#b5ff00]">
+                {theme === 'dark' ? 'Light' : 'Dark'}
+              </span>
+            </button>
 
             <button
               type="button"

@@ -1,7 +1,9 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));
 
 @layer base {
-  :root {
+  :root,
+  [data-theme='dark'] {
     --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
     --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', monospace;
@@ -11,6 +13,12 @@
     --color-brand-orange: #ff7700;
     --color-bg-deep: #0a0b0e;
     --color-charcoal-surface: #12141a;
+    --bg-app: #0a0b0e;
+    --bg-surface: rgba(18, 20, 26, 0.72);
+    --bg-elevated: rgba(14, 16, 23, 0.88);
+    --text-main: #f4f4f5;
+    --text-muted-aa: #a1a1aa;
+    --border-hairline: rgba(255, 255, 255, 0.12);
 
     /* Neumorphic Shadows */
     --shadow-neu-raised: 6px 6px 14px rgba(0, 0, 0, 0.7), -4px -4px 10px rgba(255, 255, 255, 0.03);
@@ -25,8 +33,8 @@
     /* Sophisticated Leaderboard Color Tokens */
     --leaderboard-bg: #07080C;
     --text-primary: rgba(255, 255, 255, 0.92);
-    --text-secondary: rgba(255, 255, 255, 0.58);
-    --text-muted: rgba(255, 255, 255, 0.38);
+    --text-secondary: rgba(255, 255, 255, 0.72);
+    --text-muted: rgba(255, 255, 255, 0.56);
 
     /* Gradients */
     --grad-brand-ember: linear-gradient(135deg, #FFB36B 0%, #FF7A1A 50%, #FF4D2E 100%);
@@ -64,6 +72,24 @@
     --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
 
+  [data-theme='light'] {
+    --color-bg-deep: #f4f6f9;
+    --color-charcoal-surface: #ffffff;
+    --bg-app: #f4f6f9;
+    --bg-surface: rgba(255, 255, 255, 0.92);
+    --bg-elevated: rgba(255, 255, 255, 0.96);
+    --text-main: #0f172a;
+    --text-muted-aa: #475569;
+    --border-hairline: rgba(15, 23, 42, 0.14);
+    --leaderboard-bg: #f1f5f9;
+    --text-primary: #0f172a;
+    --text-secondary: #334155;
+    --text-muted: #475569;
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-hairline: rgba(15, 23, 42, 0.12);
+    --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+
   html,
   body,
   #root {
@@ -76,12 +102,18 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: var(--color-bg-deep);
-    color: #f4f4f5;
+    background-color: var(--bg-app);
+    color: var(--text-main);
     background-image: 
       radial-gradient(circle at 50% 0%, rgba(181, 255, 0, 0.04) 0%, transparent 60%),
       radial-gradient(circle at 100% 30%, rgba(255, 119, 0, 0.03) 0%, transparent 45%);
     background-attachment: fixed;
+  }
+
+  [data-theme='light'] body {
+    background-image:
+      radial-gradient(circle at 50% 0%, rgba(101, 163, 13, 0.06) 0%, transparent 60%),
+      radial-gradient(circle at 100% 30%, rgba(234, 88, 12, 0.04) 0%, transparent 45%);
   }
 
   h1, h2, h3, .font-display {
@@ -94,21 +126,52 @@
   font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
 }
 
-/* Subtle tech grid with deep spatial background */
+/* Subtle tech grid with theme-aware background */
 .tech-grid {
-  background-color: #0a0b0e;
+  background-color: var(--bg-app);
   background-image: linear-gradient(90deg, rgba(181, 255, 0, 0.025) 1px, transparent 1px),
                     linear-gradient(rgba(181, 255, 0, 0.025) 1px, transparent 1px);
   background-size: 32px 32px;
 }
 
+[data-theme='light'] .tech-grid {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  background-image: linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+                    linear-gradient(rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+}
+
 /* Glassmorphism Classes */
 .glass-panel {
-  background: rgba(18, 20, 26, 0.72);
+  background: var(--bg-surface);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border-hairline);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.55), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='light'] .glass-panel,
+[data-theme='light'] .glass-panel-interactive {
+  box-shadow: 0 10px 28px -8px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme='light'] .island-nav {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow: 0 16px 32px -10px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.08);
+}
+
+[data-theme='light'] .island-nav .text-white,
+[data-theme='light'] .glass-panel .text-white,
+[data-theme='light'] .glass-panel .text-zinc-100,
+[data-theme='light'] .glass-panel .text-zinc-200 {
+  color: #0f172a;
+}
+
+[data-theme='light'] .island-nav .text-zinc-400,
+[data-theme='light'] .glass-panel .text-zinc-400,
+[data-theme='light'] .glass-panel .text-zinc-500 {
+  color: #475569;
 }
 
 .glass-panel-interactive {
@@ -514,13 +577,21 @@ input, select, textarea {
 }
 
 input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 2px solid #b5ff00 !important;
-  outline-offset: 1px;
+  outline: 2px solid var(--color-brand-neon) !important;
+  outline-offset: 2px;
 }
 
-/* Interactive touch targets */
+/* Interactive touch targets & universal accessible keyboard focus outline */
 button, a {
   touch-action: manipulation;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-brand-neon);
+  outline-offset: 2px;
 }
 
 /* Scroll snap utilities for filter tabs */

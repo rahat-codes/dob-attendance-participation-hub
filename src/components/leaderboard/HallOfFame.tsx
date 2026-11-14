@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { PublicLeaderboardItem } from '../../types';
 import { getSeoulMonthKey } from '../../config/tierConfig';
+import { formatMonthLabel } from '../../utils/storage';
 import { Crown } from 'lucide-react';
 import { SecureAvatar } from '../common/SecureAvatar';
 
@@ -36,12 +37,7 @@ export const HallOfFame: React.FC<HallOfFameProps> = ({ items, onSelectMember })
       .slice(0, 6); // show up to last 6 months
 
     return pastMonths.map((mKey) => {
-      const [yearStr, monthStr] = mKey.split('-');
-      const dateObj = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1);
-      const monthTitle = dateObj.toLocaleDateString('en-US', {
-        month: 'long',
-        year: 'numeric',
-      });
+      const monthTitle = formatMonthLabel(mKey);
 
       const getMonthPts = (item: PublicLeaderboardItem) =>
         item.monthlyPoints?.[mKey] ??
@@ -98,10 +94,11 @@ export const HallOfFame: React.FC<HallOfFameProps> = ({ items, onSelectMember })
             .toUpperCase();
 
           return (
-            <div
+            <button
               key={monthKey}
+              type="button"
               onClick={() => onSelectMember(champ)}
-              className="p-4 rounded-2xl bg-white/[0.025] hover:bg-white/[0.05] border border-white/[0.06] hover:border-[#F5C56B]/30 hover:shadow-[0_0_20px_rgba(245,197,107,0.12)] transition-all cursor-pointer flex items-center gap-3.5 group hover:-translate-y-0.5"
+              className="w-full text-left p-4 rounded-2xl bg-white/[0.025] hover:bg-white/[0.05] border border-white/[0.06] hover:border-[#F5C56B]/30 hover:shadow-[0_0_20px_rgba(245,197,107,0.12)] transition-all cursor-pointer flex items-center gap-3.5 group hover:-translate-y-0.5 min-h-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b5ff00]"
             >
               <div className="relative shrink-0">
                 <SecureAvatar
@@ -124,13 +121,13 @@ export const HallOfFame: React.FC<HallOfFameProps> = ({ items, onSelectMember })
                 </span>
                 <span className="block font-orbitron font-black text-sm text-white/92 truncate mt-0.5">
                   {displayName}
-                  {isTied && <span className="text-white/40 text-xs font-normal"> +{champions.length - 1}</span>}
+                  {isTied && <span className="text-white/60 text-xs font-normal"> +{champions.length - 1}</span>}
                 </span>
-                <span className="block font-rajdhani text-xs text-white/58 font-semibold mt-0.5">
+                <span className="block font-rajdhani text-xs text-white/65 font-semibold mt-0.5">
                   {pointsEarned} pts recorded
                 </span>
               </div>
-            </div>
+            </button>
           );
         })}
       </div>

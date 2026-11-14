@@ -8,11 +8,13 @@
  * - csv.ts (sanitizeCSVCell formula injection defense, generateAttendanceCSV joins, generateMembersRosterCSV live stats & PII boundary, generateMonthlyReportCSV)
  */
 
-import { toJsDate } from '../src/utils/sessionWindow';
+import { toJsDate, getMonthKeyInClubTz } from '../src/utils/sessionWindow';
 import {
   computeMemberStats,
   buildPublicLeaderboardItems,
   buildLeaderboardRecomputeOpsPlan,
+  checkBackfillCooldown,
+  getLatestLeaderboardUpdate,
 } from '../src/utils/stats';
 import {
   sanitizeCSVCell,
@@ -20,7 +22,8 @@ import {
   generateMembersRosterCSV,
   generateMonthlyReportCSV,
 } from '../src/utils/csv';
-import { calculateMonthlyStats } from '../src/utils/storage';
+import { calculateMonthlyStats, formatMonthLabel } from '../src/utils/storage';
+import { getSeoulMonthKey, getSeoulPreviousMonthKey } from '../src/config/tierConfig';
 import type { Member, Session, CheckInRecord, MemberPrivate } from '../src/types';
 
 let passed = 0;
@@ -304,6 +307,150 @@ function runPhase5Tests() {
   assert(reportCsv.includes(`"'=EVIL_MONTH"`), 'generateMonthlyReportCSV sanitizes monthLabel against formula injection');
   assert(reportCsv.includes('"Monthly Points"'), 'generateMonthlyReportCSV includes Monthly Points column');
   assert(reportCsv.includes('"Alice Kim"'), 'generateMonthlyReportCSV includes ranked builder rows');
+
+  // 7. Backfill Cooldown & Latest Leaderboard Sync Display
+  console.log('\n7. Backfill Cooldown & Last Updated Helpers');
+  const cdFirstRun = checkBackfillCooldown(null, 100_000, 60_000);
+  assertEq(cdFirstRun.allowed, true, 'Allows first backfill immediately when lastSyncedAtMs is null');
+  const cdBlocked = checkBackfillCooldown(100_000, 125_000, 60_000);
+  assertEq(cdBlocked.allowed, false, 'Blocks backfill within 60s cooldown window');
+  assertEq(cdBlocked.remainingSeconds, 35, 'Reports exact remaining cooldown seconds (35s)');
+  const cdExpired = checkBackfillCooldown(100_000, 160_000, 60_000);
+  assertEq(cdExpired.allowed, true, 'Allows backfill again once 60s cooldown expires');
+  assertEq(
+    getLatestLeaderboardUpdate([
+      { ...pubItems[0], lastUpdated: '2026-10-10T09:00:00.000Z' },
+      { ...pubItems[1], lastUpdated: '2026-10-12T15:30:00.000Z' },
+    ]),
+    '2026-10-12T15:30:00.000Z',
+    'getLatestLeaderboardUpdate picks newest ISO timestamp across projection items'
+  );
+
+  // 8. UTC-vs-Asia/Seoul Month Boundary
+  console.log('\n8. UTC-vs-Asia/Seoul Month Boundary Consistency');
+  const seoulBoundaryUtc = new Date('2026-10-31T15:30:00.000Z'); // 2026-11-01 00:30:00 KST
+  assertEq(
+    getMonthKeyInClubTz(seoulBoundaryUtc),
+    '2026-11',
+    'getMonthKeyInClubTz shifts 2026-10-31T15:30Z to 2026-11 in Asia/Seoul'
+  );
+  assertEq(
+    getSeoulMonthKey(seoulBoundaryUtc),
+    '2026-11',
+    'getSeoulMonthKey agrees with Asia/Seoul month boundary at 2026-10-31T15:30Z'
+  );
+  assertEq(
+    getSeoulPreviousMonthKey(seoulBoundaryUtc),
+    '2026-10',
+    'getSeoulPreviousMonthKey returns 2026-10 when KST is 2026-11-01 00:30'
+  );
+  assertEq(
+    formatMonthLabel('2026-11'),
+    'November 2026',
+    'formatMonthLabel formats 2026-11 cleanly without UTC day-shift'
+  );
+
+  // 9. Orphan Check-Ins Exclusion (Deleted Member & Deleted Session)
+  console.log('\n9. Orphan Check-In Exclusion Across Stats, Leaderboard & CSV');
+  const orphanCheckIns: CheckInRecord[] = [
+    ...minimalPhase4CheckIns,
+    // Deleted member check-in referencing valid session s1
+    {
+      id: 's1_mem_deleted_999',
+      sessionId: 's1',
+      memberId: 'mem_deleted_999',
+      method: 'camera_scan',
+      status: 'present',
+      monthKey: '2026-10',
+    },
+    // Permanently deleted session check-in referencing active member alice
+    {
+      id: 'sess_deleted_999_mem_alice',
+      sessionId: 'sess_deleted_999',
+      memberId: 'mem_alice',
+      method: 'camera_scan',
+      status: 'present',
+      monthKey: '2026-10',
+    },
+  ];
+  const orphanMemberStats = computeMemberStats(alice, monthSessionsOnly, orphanCheckIns, now);
+  assertEq(orphanMemberStats.total, 2, 'computeMemberStats excludes check-in referencing permanently deleted session');
+
+  const orphanPub = buildPublicLeaderboardItems([alice], monthSessionsOnly, orphanCheckIns, now);
+  assertEq(orphanPub.length, 1, 'buildPublicLeaderboardItems ignores deleted member mem_deleted_999');
+  assertEq(orphanPub[0].totalCheckIns, 2, 'buildPublicLeaderboardItems excludes deleted session check-ins from totals');
+
+  const orphanMonthly = calculateMonthlyStats('2026-10', [alice], monthSessionsOnly, orphanCheckIns, now);
+  assertEq(orphanMonthly.totalCheckIns, 2, 'calculateMonthlyStats excludes orphan member and orphan session check-ins');
+
+  const orphanAttCsv = generateAttendanceCSV(orphanCheckIns, [alice], monthSessionsOnly);
+  assert(
+    !orphanAttCsv.includes('mem_deleted_999') && !orphanAttCsv.includes('sess_deleted_999'),
+    'generateAttendanceCSV excludes orphan member and deleted session rows'
+  );
+
+  // 10. Public Projection Canonical Links Gated by showLinksPublicly
+  console.log('\n10. Public Projection Canonical Links Gating & Safety');
+  const linkedPublicMember = makeMember({
+    id: 'mem_linked_pub',
+    name: 'Hannah Park',
+    handle: '@hannah',
+    email: 'hannah-private@example.com',
+    phone: '010-9999-8888',
+    studentId: '20269999',
+    authUid: 'uid_hannah',
+    showLinksPublicly: true,
+    githubUrl: '@hannah-dev',
+    linkedinUrl: 'in/hannah-park',
+    portfolioUrl: 'hannah.dev',
+  });
+  const hiddenLinksMember = makeMember({
+    id: 'mem_hidden_links',
+    name: 'Ian Cho',
+    handle: '@ian',
+    showLinksPublicly: false,
+    githubUrl: 'https://github.com/ian',
+    linkedinUrl: 'https://www.linkedin.com/in/ian',
+    portfolioUrl: 'https://ian.dev',
+  });
+  const invalidLinksMember = makeMember({
+    id: 'mem_bad_links',
+    name: 'Jae Kim',
+    handle: '@jae',
+    showLinksPublicly: true,
+    githubUrl: 'javascript:alert(1)',
+    linkedinUrl: 'http://evil.com/in/jae',
+    portfolioUrl: 'http://insecure.example.com',
+  });
+
+  const linksPub = buildPublicLeaderboardItems(
+    [linkedPublicMember, hiddenLinksMember, invalidLinksMember],
+    sessions,
+    [],
+    now
+  );
+  const pubHannah = linksPub.find((i) => i.id === 'mem_linked_pub')!;
+  const pubIan = linksPub.find((i) => i.id === 'mem_hidden_links')!;
+  const pubJae = linksPub.find((i) => i.id === 'mem_bad_links')!;
+
+  assertEq(pubHannah.githubUrl, 'https://github.com/hannah-dev', 'Normalizes valid GitHub handle when showLinksPublicly is true');
+  assertEq(pubHannah.linkedinUrl, 'https://www.linkedin.com/in/hannah-park', 'Normalizes valid LinkedIn path when showLinksPublicly is true');
+  assertEq(pubHannah.portfolioUrl, 'https://hannah.dev/', 'Normalizes valid Portfolio URL when showLinksPublicly is true');
+  assert(
+    !Object.prototype.hasOwnProperty.call(pubHannah, 'email') &&
+      !Object.prototype.hasOwnProperty.call(pubHannah, 'phone') &&
+      !Object.prototype.hasOwnProperty.call(pubHannah, 'studentId') &&
+      !Object.prototype.hasOwnProperty.call(pubHannah, 'authUid'),
+    'Canonical-link member still strips 100% of PII keys on public projection'
+  );
+  assert(
+    !pubIan.githubUrl && !pubIan.linkedinUrl && !pubIan.portfolioUrl,
+    'Omits all links when showLinksPublicly is false'
+  );
+  assert(
+    !pubJae.githubUrl && !pubJae.linkedinUrl && !pubJae.portfolioUrl,
+    'Omits invalid/non-HTTPS links even when showLinksPublicly is true'
+  );
 
   console.log('\n========================================');
   console.log(`PHASE 5 TEST SUITE: Passed: ${passed} | Failed: ${failed}`);
