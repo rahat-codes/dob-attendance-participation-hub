@@ -56,9 +56,14 @@ interface MembersViewProps {
   onEditMember?: (member: Member) => void;
   onDeleteMember?: (member: Member) => void;
   onReactivateMember?: (member: Member) => void;
+  isHistoryBounded?: boolean;
+  isLoadingHistory?: boolean;
+  hasLoadedAllHistory?: boolean;
+  historyStartMonthKey?: string;
+  onLoadAllHistory?: () => void;
 }
 
-export const MembersView: React.FC<MembersViewProps> = ({
+export const MembersView: React.FC<MembersViewProps> = React.memo(({
   members,
   checkIns = [],
   sessions = [],
@@ -73,6 +78,11 @@ export const MembersView: React.FC<MembersViewProps> = ({
   onEditMember,
   onDeleteMember,
   onReactivateMember,
+  isHistoryBounded = false,
+  isLoadingHistory = false,
+  hasLoadedAllHistory = false,
+  historyStartMonthKey,
+  onLoadAllHistory,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -254,6 +264,22 @@ export const MembersView: React.FC<MembersViewProps> = ({
           )}
         </div>
       </div>
+
+      {isAdmin && isHistoryBounded && !hasLoadedAllHistory && onLoadAllHistory && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-zinc-900/70 border border-white/10 text-xs font-mono text-zinc-300">
+          <span>
+            Showing attendance &amp; streaks since {historyStartMonthKey || 'recent months'} for faster startup.
+          </span>
+          <button
+            type="button"
+            onClick={onLoadAllHistory}
+            disabled={isLoadingHistory}
+            className="min-h-11 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-white/15 text-[#b5ff00] font-bold cursor-pointer disabled:opacity-50"
+          >
+            {isLoadingHistory ? 'Loading history...' : 'Load all history'}
+          </button>
+        </div>
+      )}
 
       {/* Pending Membership Link Requests (Admin Only) */}
       {isAdmin && pendingRequests.length > 0 && (
@@ -1039,6 +1065,20 @@ export const MembersView: React.FC<MembersViewProps> = ({
             By default, the Roster CSV contains only public guild details (name, handle, role, tracks, status, joined date, and live attendance stats).
           </p>
 
+          {isAdmin && isHistoryBounded && !hasLoadedAllHistory && onLoadAllHistory && (
+            <div className="p-3 rounded-xl bg-zinc-900/80 border border-white/10 text-xs text-zinc-300 flex flex-wrap items-center justify-between gap-2">
+              <span>All-time stats currently reflect history since {historyStartMonthKey || 'recent months'}.</span>
+              <button
+                type="button"
+                onClick={onLoadAllHistory}
+                disabled={isLoadingHistory}
+                className="min-h-10 px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[#b5ff00] font-mono font-bold cursor-pointer disabled:opacity-50"
+              >
+                {isLoadingHistory ? 'Loading...' : 'Load all history'}
+              </button>
+            </div>
+          )}
+
           <label className="flex items-start gap-3 p-3.5 rounded-2xl bg-zinc-900/70 border border-white/10 cursor-pointer">
             <input
               type="checkbox"
@@ -1072,5 +1112,5 @@ export const MembersView: React.FC<MembersViewProps> = ({
       </ModalSheet>
     </div>
   );
-};
+});
 

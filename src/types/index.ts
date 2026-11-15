@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 
 export type BuilderRole =
   | 'Member'
@@ -234,6 +234,7 @@ export interface ClubNotification {
   message: string;
   type?: ClubNotificationType;
   read?: boolean;
+  dismissed?: boolean;
   createdAt: string;
   sessionId?: string;
   sessionDate?: string;

@@ -28,121 +28,40 @@ import {
   saveNavigationTab,
 } from './utils/storage';
 import {
-  subscribeToMembers,
-  subscribeToSessions,
-  subscribeToAllCheckIns,
-  subscribeToMemberCheckIns,
-  subscribeToUsers,
-  subscribeToPublicLeaderboard,
-  subscribeToUserNotifications,
-  checkIsAdmin,
-  checkAndSend30MinuteReminders,
-  approveUserMembershipLink,
-  approveExistingMember,
-  createMemberAndApprove,
-  rejectUserMembershipLink,
-  addMemberToFirestore,
-  updateMemberInFirestore,
-  createSessionInFirestore,
-  updateSessionInFirestore,
-  setSessionCheckInMode,
-  completeSession,
-  reopenSession,
-  cancelSession,
-  recordCheckInAtomic,
-  adminDeleteMember,
-  reactivateMember,
-  adminDeleteSession,
-  adminDeleteCheckIn,
-  initializeFirestoreWithDefaults,
-  backfillPublicLeaderboard,
-} from './firebase/firestoreService';
-import { getSubscriptionPlan } from './utils/listenerScope';
+  getSubscriptionPlan,
+  getBoundedCheckInStartMonthKey,
+  getBoundedSessionStartDate,
+  mergeBoundedWithHistory,
+  resolveLeaderboardRecomputeSource,
+} from './utils/listenerScope';
+import { loadFirestoreService } from './firebase/lazyFirestore';
 import { ensureFreshServerTimeOffset } from './utils/serverTime';
-import { isSessionRescheduled } from './utils/sessionValidation';
-import { SUPER_ADMIN_EMAIL } from './config/constants';
+import { isSessionRescheduled } from './utils/sessionTiming';
+import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE } from './config/constants';
 import { decodeApplication, isApplicationSubmitted } from './utils/application';
-import { Navbar, NavigationTab } from './components/Navbar';
-import { Sidebar } from './components/Sidebar';
-import { IslandNav } from './ui/IslandNav';
 import { m, AnimatePresence } from 'motion/react';
 import { fadeUp, fade, spring } from './motion/presets';
 import { useMotionSafe } from './motion/useMotionSafe';
 import { navChromeReducer, getNavChromeState } from './utils/navChrome';
-import { BottomTabBar } from './components/BottomTabBar';
-import { MobileMoreSheet } from './components/MobileMoreSheet';
 import { LoginView } from './components/LoginView';
-import { MemberHomeView } from './components/MemberHomeView';
-import { PublicLeaderboardView } from './components/PublicLeaderboardView';
-import { PendingRequests } from './components/PendingRequests';
 import type { DeleteRecordTarget } from './components/RecordDeleteModal';
 import type { AttendanceConfirmationData } from './components/AttendanceConfirmationModal';
 import { useAuth } from './firebase/AuthContext';
 import { todayInClubTz } from './utils/sessionWindow';
-import { DEFAULT_CLUB_TIMEZONE } from './config/constants';
+import {
+  AUTO_RECOMPUTE_DEBOUNCE_MS,
+  computeBackfillPreviewSummary,
+  shouldTriggerDebouncedRecompute,
+} from './utils/stats';
+import { isTabVisible } from './utils/reminders';
+import { NavigationTab, resolveAppRoute } from './utils/routing';
 import {
   PendingRequestDetector,
   triggerBrowserNotification,
   requestNotificationPermission,
 } from './utils/pendingAlerts';
-
-// Code-split heavy views and modals for sub-500KB bundle
-const MonthlyParticipationView = lazy(() =>
-  import('./components/MonthlyParticipationView').then((m) => ({ default: m.MonthlyParticipationView }))
-);
-const QRKioskView = lazy(() =>
-  import('./components/QRKioskView').then((m) => ({ default: m.QRKioskView }))
-);
-const QRScannerModal = lazy(() =>
-  import('./components/QRScannerModal').then((m) => ({ default: m.QRScannerModal }))
-);
-const MembersView = lazy(() =>
-  import('./components/MembersView').then((m) => ({ default: m.MembersView }))
-);
-const SessionsView = lazy(() =>
-  import('./components/SessionsView').then((m) => ({ default: m.SessionsView }))
-);
-const AuditLogsModal = lazy(() =>
-  import('./components/AuditLogsModal').then((m) => ({ default: m.AuditLogsModal }))
-);
-const MemberPassModal = lazy(() =>
-  import('./components/MemberPassModal').then((m) => ({ default: m.MemberPassModal }))
-);
-const NewSessionModal = lazy(() =>
-  import('./components/NewSessionModal').then((m) => ({ default: m.NewSessionModal }))
-);
-const AddMemberModal = lazy(() =>
-  import('./components/AddMemberModal').then((m) => ({ default: m.AddMemberModal }))
-);
-const EditProfileModal = lazy(() =>
-  import('./components/EditProfileModal').then((m) => ({ default: m.EditProfileModal }))
-);
-const GuideModal = lazy(() =>
-  import('./components/GuideModal').then((m) => ({ default: m.GuideModal }))
-);
-const AdminLoginModal = lazy(() =>
-  import('./components/AdminLoginModal').then((m) => ({ default: m.AdminLoginModal }))
-);
-const AdminBackupModal = lazy(() =>
-  import('./components/AdminBackupModal').then((m) => ({ default: m.AdminBackupModal }))
-);
-const RecordDeleteModal = lazy(() =>
-  import('./components/RecordDeleteModal').then((m) => ({ default: m.RecordDeleteModal }))
-);
-const NotificationsModal = lazy(() =>
-  import('./components/NotificationsModal').then((m) => ({ default: m.NotificationsModal }))
-);
-const AttendanceConfirmationModal = lazy(() =>
-  import('./components/AttendanceConfirmationModal').then((m) => ({ default: m.AttendanceConfirmationModal }))
-);
-import { NotFoundView } from './components/common/NotFoundView';
-import { resolveAppRoute } from './utils/routing';
 import {
-  RotateCcw,
   Sparkles,
-  HelpCircle,
-  BookOpen,
-  ShieldCheck,
   Lock,
   LogOut,
   ShieldAlert,
@@ -153,13 +72,76 @@ import {
   Calendar,
   UserCheck,
   ArrowRight,
+  Info,
 } from 'lucide-react';
 
-function getTabFromHash(): NavigationTab | null {
-  if (typeof window === 'undefined') return null;
-  const resolved = resolveAppRoute(window.location);
-  return resolved.tab;
-}
+// Code-split views, navigation chrome, and modals for lean initial load
+const IslandNav = lazy(() =>
+  import('./ui/IslandNav').then((mod) => ({ default: mod.IslandNav }))
+);
+const Sidebar = lazy(() =>
+  import('./components/Sidebar').then((mod) => ({ default: mod.Sidebar }))
+);
+const MemberHomeView = lazy(() =>
+  import('./components/MemberHomeView').then((mod) => ({ default: mod.MemberHomeView }))
+);
+const PublicLeaderboardView = lazy(() =>
+  import('./components/PublicLeaderboardView').then((mod) => ({ default: mod.PublicLeaderboardView }))
+);
+const PendingRequests = lazy(() =>
+  import('./components/PendingRequests').then((mod) => ({ default: mod.PendingRequests }))
+);
+const NotFoundView = lazy(() =>
+  import('./components/common/NotFoundView').then((mod) => ({ default: mod.NotFoundView }))
+);
+const MonthlyParticipationView = lazy(() =>
+  import('./components/MonthlyParticipationView').then((mod) => ({ default: mod.MonthlyParticipationView }))
+);
+const QRKioskView = lazy(() =>
+  import('./components/QRKioskView').then((mod) => ({ default: mod.QRKioskView }))
+);
+const QRScannerModal = lazy(() =>
+  import('./components/QRScannerModal').then((mod) => ({ default: mod.QRScannerModal }))
+);
+const MembersView = lazy(() =>
+  import('./components/MembersView').then((mod) => ({ default: mod.MembersView }))
+);
+const SessionsView = lazy(() =>
+  import('./components/SessionsView').then((mod) => ({ default: mod.SessionsView }))
+);
+const AuditLogsModal = lazy(() =>
+  import('./components/AuditLogsModal').then((mod) => ({ default: mod.AuditLogsModal }))
+);
+const MemberPassModal = lazy(() =>
+  import('./components/MemberPassModal').then((mod) => ({ default: mod.MemberPassModal }))
+);
+const NewSessionModal = lazy(() =>
+  import('./components/NewSessionModal').then((mod) => ({ default: mod.NewSessionModal }))
+);
+const AddMemberModal = lazy(() =>
+  import('./components/AddMemberModal').then((mod) => ({ default: mod.AddMemberModal }))
+);
+const EditProfileModal = lazy(() =>
+  import('./components/EditProfileModal').then((mod) => ({ default: mod.EditProfileModal }))
+);
+const GuideModal = lazy(() =>
+  import('./components/GuideModal').then((mod) => ({ default: mod.GuideModal }))
+);
+const AdminLoginModal = lazy(() =>
+  import('./components/AdminLoginModal').then((mod) => ({ default: mod.AdminLoginModal }))
+);
+const AdminBackupModal = lazy(() =>
+  import('./components/AdminBackupModal').then((mod) => ({ default: mod.AdminBackupModal }))
+);
+const RecordDeleteModal = lazy(() =>
+  import('./components/RecordDeleteModal').then((mod) => ({ default: mod.RecordDeleteModal }))
+);
+const NotificationsModal = lazy(() =>
+  import('./components/NotificationsModal').then((mod) => ({ default: mod.NotificationsModal }))
+);
+const AttendanceConfirmationModal = lazy(() =>
+  import('./components/AttendanceConfirmationModal').then((mod) => ({ default: mod.AttendanceConfirmationModal }))
+);
 
 export default function App() {
   const {
@@ -188,6 +170,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>(() => getStoredSessions());
   const [checkIns, setCheckIns] = useState<CheckInRecord[]>(() => getStoredCheckIns());
   const [publicLeaderboard, setPublicLeaderboard] = useState<PublicLeaderboardItem[]>([]);
+  const [hasPublicLeaderboardLoaded, setHasPublicLeaderboardLoaded] = useState(false);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
   const [newRequestToast, setNewRequestToast] = useState<UserProfile | null>(null);
@@ -195,9 +178,30 @@ export default function App() {
   const hasCheckedInitialPendingRef = useRef(false);
   const pendingDetectorRef = useRef<PendingRequestDetector>(new PendingRequestDetector());
 
+  // Bounded admin listener state + on-demand full-history refs
+  const adminMinMonthKey = useMemo(() => getBoundedCheckInStartMonthKey(), []);
+  const adminMinSessionDate = useMemo(() => getBoundedSessionStartDate(), []);
+  const historicalSessionsRef = useRef<Session[]>([]);
+  const historicalCheckInsRef = useRef<CheckInRecord[]>([]);
+  const [hasLoadedAllHistory, setHasLoadedAllHistory] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // First-run backfill confirmation + 5m open-tab recompute debounce state
+  const [firstRunBackfillDismissed, setFirstRunBackfillDismissed] = useState(false);
+  const [backfillPromptBusy, setBackfillPromptBusy] = useState(false);
+  const [backfillPromptStatus, setBackfillPromptStatus] = useState<string | null>(null);
+  const initialAdminLoadSettledRef = useRef(false);
+  const initialMembersSettledRef = useRef(false);
+  const initialSessionsSettledRef = useRef(false);
+  const initialCheckInsSettledRef = useRef(false);
+  const lastAutoRecomputeAtRef = useRef<number | null>(null);
+
   // Guest view toggle & active guest navigation tab
   const [showGuestLeaderboard, setShowGuestLeaderboard] = useState(false);
   const [guestTab, setGuestTab] = useState<'leaderboard' | 'sessions' | 'guide'>('leaderboard');
+  const [guestLeaderboardStatus, setGuestLeaderboardStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [guestLeaderboardError, setGuestLeaderboardError] = useState<string | null>(null);
+  const [guestLeaderboardRetryTick, setGuestLeaderboardRetryTick] = useState(0);
 
   // Navigation tab & 404 state synchronized with History API & URL hash
   const [routeNotFound, setRouteNotFound] = useState<string | null>(() => {
@@ -448,20 +452,55 @@ export default function App() {
     prevUserRef.current = user ? user.uid : null;
   }, [user, isAdmin, handleSelectTab]);
 
-  // Real-time Public Leaderboard Sync (Available without login, 0 private information exposed)
+  // Real-time Public Leaderboard Sync (Deferred until guest hub is opened or user is signed in)
   useEffect(() => {
-    const unsub = subscribeToPublicLeaderboard(
-      (items) => {
-        setPublicLeaderboard(items);
-      },
-      (err) => {
-        console.warn('Public leaderboard listener notice:', err);
-      }
-    );
-    return () => unsub();
-  }, []);
+    if (!showGuestLeaderboard && !user) {
+      setHasPublicLeaderboardLoaded(false);
+      setGuestLeaderboardStatus('idle');
+      setGuestLeaderboardError(null);
+      return;
+    }
 
-  // Real-time Firestore sync (F11: strictly scoped by role and active approval status)
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
+    setGuestLeaderboardStatus('loading');
+    setGuestLeaderboardError(null);
+
+    loadFirestoreService()
+      .then(({ subscribeToPublicLeaderboard }) => {
+        if (cancelled) return;
+        unsub = subscribeToPublicLeaderboard(
+          (items) => {
+            setPublicLeaderboard(items);
+            setHasPublicLeaderboardLoaded(true);
+            setGuestLeaderboardStatus('ready');
+            setGuestLeaderboardError(null);
+          },
+          (err) => {
+            console.warn('Public leaderboard listener notice:', err);
+            setGuestLeaderboardStatus('error');
+            setGuestLeaderboardError(
+              err?.message || 'Unable to sync public rankings. Please check your connection and retry.'
+            );
+          }
+        );
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        console.warn('Failed to load leaderboard listener:', err);
+        setGuestLeaderboardStatus('error');
+        setGuestLeaderboardError(
+          err?.message || 'Failed to load public leaderboard module. Please check your connection and retry.'
+        );
+      });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [showGuestLeaderboard, user, guestLeaderboardRetryTick]);
+
+  // Real-time Firestore sync (F11: strictly scoped by role and active approval status; admin collections bounded by default)
   useEffect(() => {
     const plan = getSubscriptionPlan({
       hasUser: Boolean(user),
@@ -473,6 +512,13 @@ export default function App() {
     if (!plan.members && !plan.sessions && plan.checkInsMode === 'none' && !plan.usersDirectory) {
       pendingDetectorRef.current.reset();
       hasCheckedInitialPendingRef.current = false;
+      initialAdminLoadSettledRef.current = false;
+      initialMembersSettledRef.current = false;
+      initialSessionsSettledRef.current = false;
+      initialCheckInsSettledRef.current = false;
+      historicalSessionsRef.current = [];
+      historicalCheckInsRef.current = [];
+      setHasLoadedAllHistory(false);
       if (!user) {
         setMembers([]);
         setSessions([]);
@@ -482,97 +528,161 @@ export default function App() {
       return;
     }
 
-    const unsubMembers = plan.members
-      ? subscribeToMembers(
-          (remoteMembers) => {
-            setMembers(remoteMembers);
-            saveStoredMembers(remoteMembers);
-            setFirestoreError(null);
-          },
-          (err) => {
-            setFirestoreError('Could not sync members directory: ' + err.message);
-          }
-        )
-      : undefined;
-
-    const unsubSessions = plan.sessions
-      ? subscribeToSessions(
-          (remoteSessions) => {
-            setSessions(remoteSessions);
-            saveStoredSessions(remoteSessions);
-            setFirestoreError(null);
-          },
-          (err) => {
-            setFirestoreError('Could not sync sessions: ' + err.message);
-          }
-        )
-      : undefined;
-
+    let cancelled = false;
+    let unsubMembers: (() => void) | undefined;
+    let unsubSessions: (() => void) | undefined;
     let unsubCheckIns: (() => void) | undefined;
-    if (plan.checkInsMode === 'all') {
-      unsubCheckIns = subscribeToAllCheckIns(
-        (remoteCheckIns) => {
-          setCheckIns(remoteCheckIns);
-          saveStoredCheckIns(remoteCheckIns);
-          setFirestoreError(null);
-        },
-        (err) => {
-          setFirestoreError('Could not sync attendance records: ' + err.message);
-        }
-      );
-    } else if (plan.checkInsMode === 'self' && linkedMember?.id) {
-      unsubCheckIns = subscribeToMemberCheckIns(
-        linkedMember.id,
-        (remoteCheckIns) => {
-          setCheckIns(remoteCheckIns);
-          saveStoredCheckIns(remoteCheckIns);
-          setFirestoreError(null);
-        },
-        (err) => {
-          setFirestoreError('Could not sync attendance records: ' + err.message);
-        }
-      );
-    }
-
     let unsubUsers: (() => void) | undefined;
-    if (plan.usersDirectory) {
-      unsubUsers = subscribeToUsers(
-        (remoteUsers) => {
-          setAllUsers(remoteUsers);
-          if (!hasCheckedInitialPendingRef.current) {
-            hasCheckedInitialPendingRef.current = true;
-            const initialCount = remoteUsers.filter((u) => u.status === 'pending' && isApplicationSubmitted(u)).length;
-            if (initialCount > 0) {
-              setInitialPendingToastCount(initialCount);
+
+    const updateSettledFlag = () => {
+      if (
+        initialMembersSettledRef.current &&
+        initialSessionsSettledRef.current &&
+        initialCheckInsSettledRef.current
+      ) {
+        initialAdminLoadSettledRef.current = true;
+      }
+    };
+
+    loadFirestoreService()
+      .then((svc) => {
+        if (cancelled) return;
+
+        if (plan.members) {
+          unsubMembers = svc.subscribeToMembers(
+            (remoteMembers) => {
+              setMembers(remoteMembers);
+              saveStoredMembers(remoteMembers);
+              setFirestoreError(null);
+              initialMembersSettledRef.current = true;
+              updateSettledFlag();
+            },
+            (err) => {
+              setFirestoreError('Could not sync members directory: ' + err.message);
             }
-          }
-          const newAlerts = pendingDetectorRef.current.processUsers(remoteUsers);
-          if (newAlerts.length > 0) {
-            const latest = newAlerts[newAlerts.length - 1];
-            setNewRequestToast(latest);
-            newAlerts.forEach((u) => {
-              triggerBrowserNotification(u);
-            });
-          }
-        },
-        (err: any) => {
-          const code = err?.code ? `[${err.code}] ` : '';
-          console.error('Failed to sync users directory:', err);
-          setFirestoreError(`User directory sync failed: ${code}${err?.message || 'Access denied'}`);
+          );
         }
-      );
-    } else {
-      pendingDetectorRef.current.reset();
-      hasCheckedInitialPendingRef.current = false;
-    }
+
+        if (plan.sessions) {
+          unsubSessions = svc.subscribeToSessions(
+            (remoteSessions) => {
+              const merged = isAdmin
+                ? mergeBoundedWithHistory(historicalSessionsRef.current, remoteSessions)
+                : remoteSessions;
+              setSessions(merged);
+              saveStoredSessions(merged);
+              setFirestoreError(null);
+              initialSessionsSettledRef.current = true;
+              updateSettledFlag();
+            },
+            (err) => {
+              setFirestoreError('Could not sync sessions: ' + err.message);
+            },
+            isAdmin ? { minDate: adminMinSessionDate } : undefined
+          );
+        }
+
+        if (plan.checkInsMode === 'all') {
+          unsubCheckIns = svc.subscribeToAllCheckIns(
+            (remoteCheckIns) => {
+              const merged = mergeBoundedWithHistory(historicalCheckInsRef.current, remoteCheckIns);
+              setCheckIns(merged);
+              saveStoredCheckIns(merged);
+              setFirestoreError(null);
+              initialCheckInsSettledRef.current = true;
+              updateSettledFlag();
+            },
+            (err) => {
+              setFirestoreError('Could not sync attendance records: ' + err.message);
+            },
+            { minMonthKey: adminMinMonthKey }
+          );
+        } else if (plan.checkInsMode === 'self' && linkedMember?.id) {
+          unsubCheckIns = svc.subscribeToMemberCheckIns(
+            linkedMember.id,
+            (remoteCheckIns) => {
+              setCheckIns(remoteCheckIns);
+              saveStoredCheckIns(remoteCheckIns);
+              setFirestoreError(null);
+              initialCheckInsSettledRef.current = true;
+              updateSettledFlag();
+            },
+            (err) => {
+              setFirestoreError('Could not sync attendance records: ' + err.message);
+            }
+          );
+        }
+
+        if (plan.usersDirectory) {
+          unsubUsers = svc.subscribeToUsers(
+            (remoteUsers) => {
+              setAllUsers(remoteUsers);
+              if (!hasCheckedInitialPendingRef.current) {
+                hasCheckedInitialPendingRef.current = true;
+                const initialCount = remoteUsers.filter((u) => u.status === 'pending' && isApplicationSubmitted(u)).length;
+                if (initialCount > 0) {
+                  setInitialPendingToastCount(initialCount);
+                }
+              }
+              const newAlerts = pendingDetectorRef.current.processUsers(remoteUsers);
+              if (newAlerts.length > 0) {
+                const latest = newAlerts[newAlerts.length - 1];
+                setNewRequestToast(latest);
+                newAlerts.forEach((u) => {
+                  triggerBrowserNotification(u);
+                });
+              }
+            },
+            (err: any) => {
+              const code = err?.code ? `[${err.code}] ` : '';
+              console.error('Failed to sync users directory:', err);
+              setFirestoreError(`User directory sync failed: ${code}${err?.message || 'Access denied'}`);
+            }
+          );
+        } else {
+          pendingDetectorRef.current.reset();
+          hasCheckedInitialPendingRef.current = false;
+        }
+      })
+      .catch((err: any) => {
+        console.warn('Failed to initialize Firestore listeners:', err);
+        if (!cancelled) {
+          setFirestoreError(
+            'Could not connect to club database: ' + (err?.message || 'Please check your connection and retry.')
+          );
+        }
+      });
 
     return () => {
-      if (unsubMembers) unsubMembers();
-      if (unsubSessions) unsubSessions();
-      if (unsubCheckIns) unsubCheckIns();
-      if (unsubUsers) unsubUsers();
+      cancelled = true;
+      unsubMembers?.();
+      unsubSessions?.();
+      unsubCheckIns?.();
+      unsubUsers?.();
     };
-  }, [user, isAdmin, isApprovedMember, linkedMember?.id]);
+  }, [user, isAdmin, isApprovedMember, linkedMember?.id, adminMinMonthKey, adminMinSessionDate]);
+
+  // On-demand full history fetch for bounded admin views
+  const handleLoadAllHistory = useCallback(async () => {
+    if (!isAdmin || isLoadingHistory || hasLoadedAllHistory) return;
+    setIsLoadingHistory(true);
+    try {
+      const { fetchAllSessionsHistory, fetchAllCheckInsHistory } = await loadFirestoreService();
+      const [allSessions, allCheckIns] = await Promise.all([
+        fetchAllSessionsHistory(),
+        fetchAllCheckInsHistory(),
+      ]);
+      historicalSessionsRef.current = allSessions;
+      historicalCheckInsRef.current = allCheckIns;
+      setSessions((prev) => mergeBoundedWithHistory(allSessions, prev));
+      setCheckIns((prev) => mergeBoundedWithHistory(allCheckIns, prev));
+      setHasLoadedAllHistory(true);
+    } catch (err: any) {
+      setFirestoreError('Failed to load historical records: ' + (err?.message || 'Try again.'));
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [isAdmin, isLoadingHistory, hasLoadedAllHistory]);
 
   // Request browser notification permission when an admin logs in
   useEffect(() => {
@@ -606,36 +716,63 @@ export default function App() {
       return;
     }
 
-    const unsub = subscribeToUserNotifications(
-      user.uid,
-      (items) => {
-        setNotifications(items);
-      },
-      (err) => {
-        console.warn('Notifications subscription notice:', err);
-      }
-    );
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
 
-    return () => unsub();
+    loadFirestoreService()
+      .then(({ subscribeToUserNotifications }) => {
+        if (cancelled) return;
+        unsub = subscribeToUserNotifications(
+          user.uid,
+          (items) => {
+            setNotifications(items);
+          },
+          (err) => {
+            console.warn('Notifications subscription notice:', err);
+          }
+        );
+      })
+      .catch((err) => {
+        console.warn('Notifications listener load notice:', err);
+      });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [user]);
 
-  // Automated 30-Minute Meeting Reminders Scheduled Background Sweep (Admin-only)
+  // Automated 30-Minute Meeting Reminders Scheduled Sweep (Admin-only, visible tab only, single-batch)
   useEffect(() => {
     if (!user || !isAdmin) return;
 
-    // Run sweep once immediately upon login/session refresh
-    checkAndSend30MinuteReminders().catch((err) => {
-      console.warn('Initial 30-minute reminder sweep:', err);
-    });
+    const runSweep = () => {
+      if (!isTabVisible()) return;
+      loadFirestoreService()
+        .then(({ checkAndSend30MinuteReminders }) => checkAndSend30MinuteReminders())
+        .catch((err) => {
+          console.warn('30-minute reminder sweep notice:', err);
+        });
+    };
 
-    // Run periodic sweep every 60 seconds while app is in active session
-    const interval = setInterval(() => {
-      checkAndSend30MinuteReminders().catch((err) => {
-        console.warn('Scheduled 30-minute reminder check:', err);
-      });
-    }, 60000);
+    runSweep();
 
-    return () => clearInterval(interval);
+    const interval = setInterval(runSweep, 60000);
+    const onVisibilityChange = () => {
+      if (isTabVisible()) {
+        runSweep();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+      }
+    };
   }, [user, isAdmin]);
 
   // Handle URL query parameters or captured deep link state for instant scan opening
@@ -669,14 +806,14 @@ export default function App() {
       method: CheckInMethod,
       notesOrOptions?: string | { token?: string; notes?: string }
     ): Promise<{ success: boolean; message: string; record?: CheckInRecord; isDuplicate?: boolean }> => {
+      const { recordCheckInAtomic } = await loadFirestoreService();
       // Only explicit door-staff manual_entry passes operatorUid; admin self-scans stay recordSelfCheckIn
       const operatorUid = isAdmin && method === 'manual_entry' ? user?.uid : undefined;
       const options =
         typeof notesOrOptions === 'object' && notesOrOptions !== null
           ? { ...notesOrOptions, operatorUid }
           : { notes: notesOrOptions, operatorUid };
-      const res = await recordCheckInAtomic(sessionId, memberId, method, options);
-      return res;
+      return recordCheckInAtomic(sessionId, memberId, method, options);
     },
     [isAdmin, user]
   );
@@ -692,6 +829,7 @@ export default function App() {
     }
 
     try {
+      const { adminDeleteSession, adminDeleteMember, adminDeleteCheckIn } = await loadFirestoreService();
       if (target.type === 'session') {
         await adminDeleteSession(target.id, target.session?.title, permanent);
       } else if (target.type === 'member') {
@@ -716,6 +854,7 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can schedule or edit sessions.');
     }
     try {
+      const { updateSessionInFirestore, createSessionInFirestore } = await loadFirestoreService();
       if (editingSession) {
         const isRescheduled = isSessionRescheduled(editingSession, sessionPayload);
         await updateSessionInFirestore(sessionPayload, undefined, isRescheduled);
@@ -738,6 +877,13 @@ export default function App() {
   const handleUpdateSessionStatus = async (sessionId: string, status: SessionStatus, mode?: CheckInMode) => {
     if (!isAdmin) return;
     try {
+      const {
+        completeSession,
+        cancelSession,
+        reopenSession,
+        setSessionCheckInMode,
+        updateSessionInFirestore,
+      } = await loadFirestoreService();
       const target = sessions.find((s) => s.id === sessionId);
       if (status === 'completed') {
         await completeSession(sessionId);
@@ -770,6 +916,7 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can register builders.');
     }
     try {
+      const { createMemberAndApprove, addMemberToFirestore } = await loadFirestoreService();
       if (newMember.authUid) {
         // Atomic create and approve in a single writeBatch (R6, R7, R15)
         await createMemberAndApprove(
@@ -820,6 +967,7 @@ export default function App() {
     if (!isAdmin) return;
     try {
       if (matchedMemberId) {
+        const { approveExistingMember } = await loadFirestoreService();
         await approveExistingMember(req.id, matchedMemberId);
         setFirestoreError(null);
       } else {
@@ -850,6 +998,7 @@ export default function App() {
   const handleRejectMembershipRequest = async (userId: string) => {
     if (!isAdmin) return;
     try {
+      const { rejectUserMembershipLink } = await loadFirestoreService();
       await rejectUserMembershipLink(userId);
       setFirestoreError(null);
     } catch (err: any) {
@@ -864,6 +1013,7 @@ export default function App() {
       throw new Error('Unauthorized: Only administrators can update builder profiles.');
     }
     try {
+      const { updateMemberInFirestore } = await loadFirestoreService();
       await updateMemberInFirestore(updated);
       setEditingMember(null);
     } catch (err: any) {
@@ -872,60 +1022,82 @@ export default function App() {
     }
   };
 
-  // Seed initial club template if admin requests and database is empty
-  const handleSeedClubTemplate = async () => {
-    if (!isAdmin || !user) return;
-    const todayStr = todayInClubTz();
-    const initialFounder: Member = {
-      id: 'mem_1',
-      name: user.displayName || 'Club Founder',
-      handle: '@founder',
-      email: user.email || '',
-      authUid: user.uid,
-      role: 'President',
-      tracks: ['Hardware & Robotics', 'AI & Embedded'],
-      university: 'Tongmyong University',
-      joinedDate: todayStr,
-      totalCheckIns: 0,
-      currentStreak: 0,
-      bestStreak: 0,
-      status: 'Active',
-      bio: 'Club President and Lead Organizer.',
-    };
-
-    const initialSession: Session = {
-      id: `sess_${todayStr.replace(/-/g, '_')}`,
-      title: 'Weekly Builder Sprint: AI Hardware & Systems',
-      track: 'Hardware & Robotics',
-      date: todayStr,
-      startTime: '18:30',
-      endTime: '21:30',
-      location: 'Innovation Lab · Room 302',
-      description: 'Hands-on hardware hacking, robotics firmware, and collaborative build session.',
-      sessionCode: `DOB-SPRINT-${todayStr.replace(/-/g, '').substring(2)}`,
-      points: 10,
-      status: 'scheduled',
-      checkInMode: 'auto',
-      timezone: DEFAULT_CLUB_TIMEZONE,
-      host: user.displayName || 'Guild Lead',
-    };
-
-    await initializeFirestoreWithDefaults(initialFounder, initialSession);
-  };
-
   // Strict Privacy: Public leaderboard reads exclusively from publicLeaderboard collection
   const safePublicLeaderboardItems: PublicLeaderboardItem[] = publicLeaderboard;
 
-  // Auto-backfill publicLeaderboard once when admin is logged in if collection is empty
-  const hasBackfilledRef = useRef(false);
-  useEffect(() => {
-    if (isAdmin && !hasBackfilledRef.current && publicLeaderboard.length === 0 && members.length > 0) {
-      hasBackfilledRef.current = true;
-      backfillPublicLeaderboard().catch((err) => {
-        console.warn('Auto backfill notice:', err);
-      });
+  // First-run backfill confirmation banner visibility (no automatic write on initial load)
+  const shouldPromptFirstRunBackfill = Boolean(
+    isAdmin &&
+    hasPublicLeaderboardLoaded &&
+    publicLeaderboard.length === 0 &&
+    members.length > 0 &&
+    !firstRunBackfillDismissed
+  );
+
+  const backfillPreviewSummary = useMemo(
+    () => (shouldPromptFirstRunBackfill ? computeBackfillPreviewSummary(members) : null),
+    [shouldPromptFirstRunBackfill, members]
+  );
+
+  const handleConfirmFirstRunBackfill = async () => {
+    if (!isAdmin || backfillPromptBusy) return;
+    setBackfillPromptBusy(true);
+    setBackfillPromptStatus(null);
+    try {
+      const { backfillPublicLeaderboard } = await loadFirestoreService();
+      const res = await backfillPublicLeaderboard();
+      lastAutoRecomputeAtRef.current = Date.now();
+      setBackfillPromptStatus(
+        `Public leaderboard initialized (${res.totalBackfilled} published, ${res.totalRemoved} pruned).`
+      );
+      setFirstRunBackfillDismissed(true);
+    } catch (err: any) {
+      setBackfillPromptStatus('Backfill failed: ' + (err?.message || 'Check admin permissions.'));
+    } finally {
+      setBackfillPromptBusy(false);
     }
-  }, [isAdmin, publicLeaderboard.length, members.length]);
+  };
+
+  // Debounced open-tab auto-recompute (every 5 minutes max while admin stays online; never on initial load)
+  useEffect(() => {
+    if (
+      !shouldTriggerDebouncedRecompute({
+        isAdmin,
+        hasSettledInitialLoad: initialAdminLoadSettledRef.current,
+        isTabVisible: isTabVisible(),
+        hasExistingProjection: hasPublicLeaderboardLoaded && publicLeaderboard.length > 0,
+        lastAutoRecomputeAtMs: lastAutoRecomputeAtRef.current,
+      })
+    ) {
+      return;
+    }
+
+    const recomputeSource = resolveLeaderboardRecomputeSource({
+      hasLoadedAllHistory,
+      hasLiveData: members.length > 0,
+    });
+    if (recomputeSource === 'skip') return;
+
+    const timer = setTimeout(() => {
+      if (!isTabVisible()) return;
+      loadFirestoreService()
+        .then(async ({ backfillPublicLeaderboard, recomputeAndSaveLeaderboard }) => {
+          if (recomputeSource === 'live_full') {
+            await recomputeAndSaveLeaderboard(members, sessions, checkIns);
+          } else {
+            await backfillPublicLeaderboard();
+          }
+        })
+        .then(() => {
+          lastAutoRecomputeAtRef.current = Date.now();
+        })
+        .catch((err) => {
+          console.warn('Debounced leaderboard recompute notice:', err);
+        });
+    }, AUTO_RECOMPUTE_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [isAdmin, hasLoadedAllHistory, hasPublicLeaderboardLoaded, publicLeaderboard.length, members, sessions, checkIns]);
 
   // 1. Unauthenticated or Unapproved View
   if (!user || (!isApprovedMember && !isAdmin)) {
@@ -1065,31 +1237,59 @@ export default function App() {
           </header>
 
           <main id="main" tabIndex={-1} className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 pb-24 sm:pb-8 focus:outline-none">
-            <AnimatePresence mode="popLayout" initial={false}>
-              {guestTab === 'leaderboard' && (
-                <m.div key="guest-leaderboard" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
-                  <PublicLeaderboardView
-                    items={safePublicLeaderboardItems}
-                    onOpenLogin={() => setShowGuestLeaderboard(false)}
-                  />
-                </m.div>
-              )}
+            {guestLeaderboardStatus === 'error' && guestLeaderboardError && (
+              <div
+                role="alert"
+                className="mb-4 p-4 rounded-2xl bg-red-950/70 border border-red-500/40 text-red-100 text-xs flex flex-wrap items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                  <span>{guestLeaderboardError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGuestLeaderboardRetryTick((n) => n + 1)}
+                  className="min-h-11 px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/35 border border-red-500/50 text-red-100 font-bold font-mono uppercase tracking-wider cursor-pointer flex items-center gap-1.5"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Retry</span>
+                </button>
+              </div>
+            )}
 
-              {guestTab === 'sessions' && (
-                <m.div key="guest-sessions" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
-                  <SessionsView
-                    sessions={sessions}
-                    members={members}
-                    checkIns={checkIns}
-                    isAdmin={false}
-                    onOpenAdminLogin={() => setShowGuestLeaderboard(false)}
-                    onOpenNewSession={() => {}}
-                    onLaunchKioskForSession={() => {}}
-                    onCheckInToSession={() => {}}
-                    onRemoveCheckIn={() => {}}
-                  />
-                </m.div>
-              )}
+            {guestLeaderboardStatus === 'loading' && publicLeaderboard.length === 0 && guestTab === 'leaderboard' && (
+              <div className="mb-4 p-4 rounded-2xl bg-zinc-900/70 border border-white/10 text-zinc-300 text-xs font-mono flex items-center gap-2.5">
+                <RefreshCw className="h-4 w-4 text-[#b5ff00] animate-spin shrink-0" />
+                <span>Loading live leaderboard rankings...</span>
+              </div>
+            )}
+
+            <Suspense fallback={<p className="py-10 text-center font-mono text-zinc-400 text-xs">Loading Public Hub...</p>}>
+              <AnimatePresence mode="popLayout" initial={false}>
+                {guestTab === 'leaderboard' && (
+                  <m.div key="guest-leaderboard" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+                    <PublicLeaderboardView
+                      items={safePublicLeaderboardItems}
+                      onOpenLogin={() => setShowGuestLeaderboard(false)}
+                    />
+                  </m.div>
+                )}
+
+                {guestTab === 'sessions' && (
+                  <m.div key="guest-sessions" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
+                    <SessionsView
+                      sessions={sessions}
+                      members={members}
+                      checkIns={checkIns}
+                      isAdmin={false}
+                      onOpenAdminLogin={() => setShowGuestLeaderboard(false)}
+                      onOpenNewSession={() => {}}
+                      onLaunchKioskForSession={() => {}}
+                      onCheckInToSession={() => {}}
+                      onRemoveCheckIn={() => {}}
+                    />
+                  </m.div>
+                )}
 
               {guestTab === 'guide' && (
                 <m.div key="guest-guide" variants={fadeUp} initial="hidden" animate="show" exit="exit" className="w-full">
@@ -1149,6 +1349,7 @@ export default function App() {
                 </m.div>
               )}
             </AnimatePresence>
+            </Suspense>
           </main>
 
           <footer className="mt-auto border-t border-white/10 bg-black/80 py-6 text-center text-xs text-zinc-400">
@@ -1161,16 +1362,18 @@ export default function App() {
     if (routeNotFound) {
       return (
         <div className="min-h-dvh tech-grid flex flex-col justify-center font-sans">
-          <NotFoundView
-            invalidRoute={routeNotFound}
-            actionLabel="Return to Sign In"
-            onReturnHome={() => {
-              setRouteNotFound(null);
-              if (typeof window !== 'undefined') {
-                window.history.replaceState({}, '', '/#/home');
-              }
-            }}
-          />
+          <Suspense fallback={null}>
+            <NotFoundView
+              invalidRoute={routeNotFound}
+              actionLabel="Return to Sign In"
+              onReturnHome={() => {
+                setRouteNotFound(null);
+                if (typeof window !== 'undefined') {
+                  window.history.replaceState({}, '', '/#/home');
+                }
+              }}
+            />
+          </Suspense>
         </div>
       );
     }
@@ -1187,7 +1390,7 @@ export default function App() {
   const pendingRequestsCount = allUsers.filter(
     (u) => (u.status === 'pending' || u.status === 'approved_waiting_response') && isApplicationSubmitted(u)
   ).length;
-  const unreadNotificationsCount = notifications.filter((n) => !n.read).length;
+  const unreadNotificationsCount = notifications.filter((n) => !n.read && !n.dismissed).length;
 
   const isAnyModalOpen =
     isScannerOpen ||
@@ -1216,32 +1419,34 @@ export default function App() {
       </a>
 
       {/* Floating Island Navigation (Desktop top center, Mobile bottom) */}
-      <IslandNav
-        activeTab={activeTab}
-        onSelectTab={handleSelectTab}
-        onOpenQuickScan={() => setIsScannerOpen(true)}
-        onOpenNewSession={() => {
-          setEditingSession(null);
-          setIsNewSessionOpen(true);
-        }}
-        onOpenGuide={() => setIsGuideOpen(true)}
-        onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
-        pendingRequestsCount={pendingRequestsCount}
-        unreadNotificationsCount={unreadNotificationsCount}
-        onOpenNotifications={() => setIsNotificationsOpen(true)}
-        onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
-        onOpenBackup={() => setIsBackupOpen(true)}
-        onOpenMore={() => setIsMoreOpen(true)}
-        onOpenEditProfile={() => setIsEditProfileOpen(true)}
-        onViewPass={() => {
-          if (linkedMember) setSelectedPassMember(linkedMember);
-        }}
-        isModalOpen={isAnyModalOpen}
-        onToggleSidebar={() => dispatchChrome({ type: 'toggleFromLogo' })}
-        isSidebarOpen={chromeState.isSidebarOpen}
-        isDesktopTopBarVisible={navChrome.topBarVisible}
-        logoButtonRef={desktopLogoButtonRef}
-      />
+      <Suspense fallback={null}>
+        <IslandNav
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+          onOpenQuickScan={() => setIsScannerOpen(true)}
+          onOpenNewSession={() => {
+            setEditingSession(null);
+            setIsNewSessionOpen(true);
+          }}
+          onOpenGuide={() => setIsGuideOpen(true)}
+          onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
+          pendingRequestsCount={pendingRequestsCount}
+          unreadNotificationsCount={unreadNotificationsCount}
+          onOpenNotifications={() => setIsNotificationsOpen(true)}
+          onOpenAuditLogs={() => setIsAuditLogsOpen(true)}
+          onOpenBackup={() => setIsBackupOpen(true)}
+          onOpenMore={() => setIsMoreOpen(true)}
+          onOpenEditProfile={() => setIsEditProfileOpen(true)}
+          onViewPass={() => {
+            if (linkedMember) setSelectedPassMember(linkedMember);
+          }}
+          isModalOpen={isAnyModalOpen}
+          onToggleSidebar={() => dispatchChrome({ type: 'toggleFromLogo' })}
+          isSidebarOpen={chromeState.isSidebarOpen}
+          isDesktopTopBarVisible={navChrome.topBarVisible}
+          logoButtonRef={desktopLogoButtonRef}
+        />
+      </Suspense>
 
 
 
@@ -1385,6 +1590,68 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* First-Run Public Leaderboard Backfill Confirmation Prompt (Admin Only) */}
+      {(shouldPromptFirstRunBackfill || backfillPromptStatus) && isAdmin && (
+        <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 pt-4 lg:pt-20">
+          {shouldPromptFirstRunBackfill && backfillPreviewSummary ? (
+            <div
+              role="region"
+              aria-label="Initialize public leaderboard"
+              className="rounded-2xl border border-[#00F0FF]/40 bg-[#0c0e14]/90 p-4 text-xs space-y-2.5 shadow-lg"
+            >
+              <div className="flex items-start gap-2.5">
+                <Info className="w-4 h-4 text-[#00F0FF] shrink-0 mt-0.5" aria-hidden="true" />
+                <div className="space-y-1 flex-1">
+                  <p className="font-bold text-white font-display uppercase tracking-wide">
+                    Initialize Empty Public Leaderboard Projection?
+                  </p>
+                  <p className="text-zinc-300 leading-relaxed">
+                    Ready to publish{' '}
+                    <strong className="text-[#b5ff00]">{backfillPreviewSummary.eligibleCount}</strong> active builders
+                    (excluding {backfillPreviewSummary.excludedInactiveCount} inactive and{' '}
+                    {backfillPreviewSummary.excludedOptOutCount} opted-out) to{' '}
+                    <code className="font-mono">publicLeaderboard</code>. Writes derived non-PII fields:{' '}
+                    <span className="font-mono text-zinc-200">{backfillPreviewSummary.fieldsWritten.join(', ')}</span>.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                <button
+                  type="button"
+                  onClick={handleConfirmFirstRunBackfill}
+                  disabled={backfillPromptBusy}
+                  className="min-h-11 px-4 py-2 rounded-xl bg-[#00F0FF] hover:bg-[#3bf4ff] text-black font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50"
+                >
+                  {backfillPromptBusy ? 'Writing...' : 'Confirm & Backfill'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFirstRunBackfillDismissed(true)}
+                  className="min-h-11 px-4 py-2 rounded-xl bg-zinc-900 border border-white/15 text-zinc-200 font-bold uppercase tracking-wider cursor-pointer"
+                >
+                  Not Now
+                </button>
+              </div>
+            </div>
+          ) : backfillPromptStatus ? (
+            <div
+              role="status"
+              className="rounded-2xl border border-[#b5ff00]/30 bg-[#0c0e14]/90 px-4 py-2.5 text-xs text-[#b5ff00] flex items-center justify-between gap-2"
+            >
+              <span>{backfillPromptStatus}</span>
+              <button
+                type="button"
+                onClick={() => setBackfillPromptStatus(null)}
+                aria-label="Dismiss status"
+                className="min-w-11 min-h-11 flex items-center justify-center text-zinc-300 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* Workspace Content Shell: Full Width Main Viewport (Sidebar opens as an overlay drawer) */}
       <div className="flex-1 flex w-full max-w-7xl mx-auto items-stretch">
         {/* Main Viewport Content */}
@@ -1504,6 +1771,11 @@ export default function App() {
                     });
                   }}
                   onUpdateSessionStatus={handleUpdateSessionStatus}
+                  isHistoryBounded={isAdmin}
+                  isLoadingHistory={isLoadingHistory}
+                  hasLoadedAllHistory={hasLoadedAllHistory}
+                  historyStartDate={adminMinSessionDate}
+                  onLoadAllHistory={handleLoadAllHistory}
                   onDeleteSession={(session) => {
                     if (!isAdmin) return;
                     setDeleteTarget({
@@ -1527,6 +1799,11 @@ export default function App() {
                   onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
                   onOpenScanner={() => setIsScannerOpen(true)}
                   onViewMemberPass={(m) => setSelectedPassMember(m)}
+                  isHistoryBounded={isAdmin}
+                  isLoadingHistory={isLoadingHistory}
+                  hasLoadedAllHistory={hasLoadedAllHistory}
+                  historyStartMonthKey={adminMinMonthKey}
+                  onLoadAllHistory={handleLoadAllHistory}
                 />
               </m.div>
             )}
@@ -1542,6 +1819,11 @@ export default function App() {
                   )}
                   allUsers={allUsers}
                   isAdmin={isAdmin}
+                  isHistoryBounded={isAdmin}
+                  isLoadingHistory={isLoadingHistory}
+                  hasLoadedAllHistory={hasLoadedAllHistory}
+                  historyStartMonthKey={adminMinMonthKey}
+                  onLoadAllHistory={handleLoadAllHistory}
                   onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
                   onOpenAddMember={() => {
                     setEditingMember(null);
@@ -1566,6 +1848,7 @@ export default function App() {
                     let isTargetDelegatedAdmin = false;
                     const targetUid = member.authUid || linkedUser?.id;
                     if (!isTargetSuperAdmin && targetUid) {
+                      const { checkIsAdmin } = await loadFirestoreService();
                       isTargetDelegatedAdmin = await checkIsAdmin(targetUid).catch(() => false);
                     }
                     setDeleteTarget({
@@ -1579,6 +1862,7 @@ export default function App() {
                   onReactivateMember={async (member) => {
                     if (!isAdmin) return;
                     try {
+                      const { reactivateMember } = await loadFirestoreService();
                       await reactivateMember(member.id);
                     } catch (err: any) {
                       console.error('Failed to reactivate member:', err);
@@ -1731,53 +2015,55 @@ export default function App() {
               transition={reducedMotion ? { duration: 0 } : spring.sheet}
               className="relative w-80 max-w-[85vw] h-full flex flex-col z-10 shadow-2xl bg-[#0c0e14]"
             >
-              <Sidebar
-                activeTab={activeTab}
-                onSelectTab={(tab) => {
-                  handleSelectTab(tab);
-                  if (navChrome.sidebarVisible) {
-                    dispatchChrome({ type: 'selectDestination' });
-                  }
-                  if (isMoreOpen) {
-                    setIsMoreOpen(false);
-                  }
-                }}
-                pendingRequestsCount={pendingRequestsCount}
-                onOpenGuide={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                  setIsGuideOpen(true);
-                }}
-                onOpenAuditLogs={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                  setIsAuditLogsOpen(true);
-                }}
-                onOpenBackup={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                  setIsBackupOpen(true);
-                }}
-                onViewPass={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                  if (linkedMember) setSelectedPassMember(linkedMember);
-                }}
-                onOpenEditProfile={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                  setIsEditProfileOpen(true);
-                }}
-                isDrawer={true}
-                isMobileDrawer={isMoreOpen}
-                onClose={() => {
-                  if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
-                  if (isMoreOpen) setIsMoreOpen(false);
-                }}
-                onCloseMobileDrawer={() => setIsMoreOpen(false)}
-                closeButtonRef={desktopSidebarCloseRef}
-                className="h-full w-full border-r border-white/10"
-              />
+              <Suspense fallback={null}>
+                <Sidebar
+                  activeTab={activeTab}
+                  onSelectTab={(tab) => {
+                    handleSelectTab(tab);
+                    if (navChrome.sidebarVisible) {
+                      dispatchChrome({ type: 'selectDestination' });
+                    }
+                    if (isMoreOpen) {
+                      setIsMoreOpen(false);
+                    }
+                  }}
+                  pendingRequestsCount={pendingRequestsCount}
+                  onOpenGuide={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                    setIsGuideOpen(true);
+                  }}
+                  onOpenAuditLogs={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                    setIsAuditLogsOpen(true);
+                  }}
+                  onOpenBackup={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                    setIsBackupOpen(true);
+                  }}
+                  onViewPass={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                    if (linkedMember) setSelectedPassMember(linkedMember);
+                  }}
+                  onOpenEditProfile={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                    setIsEditProfileOpen(true);
+                  }}
+                  isDrawer={true}
+                  isMobileDrawer={isMoreOpen}
+                  onClose={() => {
+                    if (navChrome.sidebarVisible) dispatchChrome({ type: 'close' });
+                    if (isMoreOpen) setIsMoreOpen(false);
+                  }}
+                  onCloseMobileDrawer={() => setIsMoreOpen(false)}
+                  closeButtonRef={desktopSidebarCloseRef}
+                  className="h-full w-full border-r border-white/10"
+                />
+              </Suspense>
             </m.div>
           </div>
         )}

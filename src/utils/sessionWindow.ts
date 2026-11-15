@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Timestamp } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
 import { Session, SessionState, SessionPhase } from '../types';
 import { DEFAULT_CLUB_TIMEZONE } from '../config/constants';
 import { getCorrectedNow } from './serverTime';

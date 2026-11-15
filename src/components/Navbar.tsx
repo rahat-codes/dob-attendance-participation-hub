@@ -22,16 +22,8 @@ import { SUPER_ADMIN_EMAIL } from '../config/constants';
 import { scaleIn, spring } from '../motion/presets';
 import { SecureAvatar } from './common/SecureAvatar';
 
-export type NavigationTab =
-  | 'home'
-  | 'leaderboard'
-  | 'kiosk'
-  | 'scanner'
-  | 'participation'
-  | 'sessions'
-  | 'members'
-  | 'requests'
-  | 'verify';
+import type { NavigationTab } from '../utils/routing';
+export type { NavigationTab };
 
 interface NavbarProps {
   activeTab: NavigationTab;

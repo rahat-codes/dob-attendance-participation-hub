@@ -31,7 +31,7 @@ interface RankingListProps {
   showControls?: boolean;
 }
 
-export const RankingList: React.FC<RankingListProps> = ({
+export const RankingList: React.FC<RankingListProps> = React.memo(({
   items,
   selectedPeriod,
   onPeriodChange,
@@ -410,4 +410,4 @@ export const RankingList: React.FC<RankingListProps> = ({
       </div>
     </div>
   );
-};
+});

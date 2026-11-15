@@ -11,10 +11,85 @@ interface ErrorBoundaryProps {
   onResetToHome?: () => void;
 }
 
+export const CHUNK_RELOAD_STORAGE_KEY = 'dob_chunk_reload_attempted';
+
+const CHUNK_ERROR_PATTERNS = [
+  'chunkloaderror',
+  'loading chunk',
+  'failed to fetch dynamically imported module',
+  'error loading dynamically imported module',
+  'importing a module script failed',
+  'unable to preload css',
+];
+
+export function redactSensitiveText(input: string): string {
+  return input
+    // Redact query parameters in URLs that may carry session/kiosk tokens
+    .replace(/\?[^\s"'`)]+/g, '?[REDACTED]')
+    // Redact email addresses
+    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
+    // Redact bearer/JWT/Firebase-like long tokens (24+ base64url chars)
+    .replace(/\b[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_.-]{10,}\b/g, '[REDACTED_TOKEN]')
+    .replace(/\b(?:uid|userId|token|authUid)[=:\s"']+[A-Za-z0-9_-]{6,}\b/gi, '[REDACTED_CRED]');
+}
+
+export function isChunkLoadError(error: unknown): boolean {
+  if (!error) return false;
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error);
+  const combined = `${name} ${message}`.toLowerCase();
+  return CHUNK_ERROR_PATTERNS.some((pattern) => combined.includes(pattern));
+}
+
+export function formatSafeBoundaryLog(error: unknown): { name: string; message: string } {
+  const rawName = error instanceof Error && error.name ? error.name : 'RuntimeError';
+  const rawMessage =
+    error instanceof Error && error.message
+      ? error.message
+      : typeof error === 'string'
+      ? error
+      : 'Unexpected UI exception';
+  return {
+    name: rawName.slice(0, 64),
+    message: redactSensitiveText(rawMessage).trim().slice(0, 180),
+  };
+}
+
+export function tryGuardedChunkReload(
+  error: unknown,
+  storage?: Pick<Storage, 'getItem' | 'setItem'> | null,
+  reloadFn?: () => void
+): boolean {
+  if (!isChunkLoadError(error)) return false;
+
+  const targetStorage =
+    storage !== undefined
+      ? storage
+      : typeof window !== 'undefined'
+      ? window.sessionStorage
+      : null;
+
+  if (!targetStorage) return false;
+
+  try {
+    if (targetStorage.getItem(CHUNK_RELOAD_STORAGE_KEY) === '1') {
+      return false;
+    }
+    targetStorage.setItem(CHUNK_RELOAD_STORAGE_KEY, '1');
+  } catch {
+    return false;
+  }
+
+  const doReload =
+    reloadFn ||
+    (typeof window !== 'undefined' ? () => window.location.reload() : undefined);
+  doReload?.();
+  return true;
+}
+
 export function sanitizeRuntimeErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) {
-    // Strip overly verbose stacks or accidental URLs/tokens while keeping useful diagnostics
-    return error.message.trim().slice(0, 180);
+    return redactSensitiveText(error.message.trim()).slice(0, 180);
   }
   return 'An unexpected interface error occurred.';
 }
@@ -36,9 +111,12 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   }
 
   componentDidCatch(error: unknown) {
-    // Keep console error silent in production unless needed during local dev
+    const safeLog = formatSafeBoundaryLog(error);
+    if (tryGuardedChunkReload(error)) {
+      return;
+    }
     if (import.meta.env.DEV) {
-      console.error('Root ErrorBoundary caught:', error);
+      console.error('Root ErrorBoundary caught:', safeLog);
     }
   }
 

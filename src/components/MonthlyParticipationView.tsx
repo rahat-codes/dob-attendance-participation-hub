@@ -42,9 +42,14 @@ interface MonthlyParticipationViewProps {
   onOpenAdminLogin?: () => void;
   onOpenScanner: () => void;
   onViewMemberPass: (member: Member) => void;
+  isHistoryBounded?: boolean;
+  isLoadingHistory?: boolean;
+  hasLoadedAllHistory?: boolean;
+  historyStartMonthKey?: string;
+  onLoadAllHistory?: () => void;
 }
 
-export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> = ({
+export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> = React.memo(({
   members,
   sessions,
   checkIns,
@@ -52,6 +57,11 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
   onOpenAdminLogin,
   onOpenScanner,
   onViewMemberPass,
+  isHistoryBounded = false,
+  isLoadingHistory = false,
+  hasLoadedAllHistory = false,
+  historyStartMonthKey,
+  onLoadAllHistory,
 }) => {
   const availableMonths = useMemo(
     () => getAvailableMonthKeys(sessions, checkIns),
@@ -277,6 +287,22 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
           </div>
         </div>
       </div>
+
+      {isAdmin && isHistoryBounded && !hasLoadedAllHistory && onLoadAllHistory && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-zinc-900/70 border border-white/10 text-xs font-mono text-zinc-300">
+          <span>
+            Live sync shows check-ins since {historyStartMonthKey || 'recent months'} (current + prior 2 months).
+          </span>
+          <button
+            type="button"
+            onClick={onLoadAllHistory}
+            disabled={isLoadingHistory}
+            className="min-h-11 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-white/15 text-[#b5ff00] font-bold cursor-pointer disabled:opacity-50"
+          >
+            {isLoadingHistory ? 'Loading full archive...' : 'Load all history'}
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards Grid (4 columns, single elevation) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1051,4 +1077,4 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
       </div>
     </div>
   );
-};
+});

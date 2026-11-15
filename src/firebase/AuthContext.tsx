@@ -7,24 +7,14 @@ import {
   signOut,
   onAuthStateChanged,
 } from 'firebase/auth';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db, googleProvider } from './config';
-import { Member, MemberPrivate, UserProfile, UserStatus } from '../types';
-import {
-  ensureUserProfile,
-  checkIsAdmin,
-  SUPER_ADMIN_EMAIL,
-  reRequestMembership,
-  updateUserSelfProfile,
-  submitApplication,
-  acceptMembershipInvitation as acceptOffer,
-  declineMembershipInvitation as declineOffer,
-  requestMembershipLink as requestLink,
-} from './firestoreService';
+import { auth, googleProvider } from './authClient';
+import { SUPER_ADMIN_EMAIL } from '../config/constants';
+import type { Member, MemberPrivate, UserProfile } from '../types';
 import { captureAndStoreDeepLink } from '../utils/deepLink';
 import { singleFlight } from '../utils/singleFlight';
 import { ApplicationInput, isApplicationSubmitted } from '../utils/application';
 import { getUserState } from '../utils/userStateMachine';
+import { resolveAuthFirestoreLoadFailure } from './lazyFirestore';
 
 export type MembershipPhase =
   | 'loading'
@@ -112,6 +102,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const memberUnsubRef = useRef<(() => void) | null>(null);
   const privateUnsubRef = useRef<(() => void) | null>(null);
 
+  const memberLoadSeqRef = useRef(0);
+
   // Capture any incoming deep link params (?s=...&t=...) immediately on load
   useEffect(() => {
     captureAndStoreDeepLink();
@@ -121,8 +113,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthError(null);
   }, []);
 
-  // Loads linked member profile and private data in real time
-  const loadMemberData = useCallback((memberId: string) => {
+  // Loads linked member profile and private data in real time (lazy-loading Firestore SDK on demand)
+  const loadMemberData = useCallback(async (memberId: string) => {
+    const seq = ++memberLoadSeqRef.current;
     if (memberUnsubRef.current) {
       memberUnsubRef.current();
       memberUnsubRef.current = null;
@@ -131,6 +124,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       privateUnsubRef.current();
       privateUnsubRef.current = null;
     }
+
+    let firestoreModule: typeof import('firebase/firestore');
+    let configModule: typeof import('./config');
+    try {
+      [firestoreModule, configModule] = await Promise.all([
+        import('firebase/firestore'),
+        import('./config'),
+      ]);
+    } catch (err) {
+      if (seq !== memberLoadSeqRef.current) return;
+      const failure = resolveAuthFirestoreLoadFailure(err);
+      setAuthError(failure.authError);
+      return;
+    }
+    if (seq !== memberLoadSeqRef.current) return;
+    const { doc, onSnapshot } = firestoreModule;
+    const { db } = configModule;
 
     const memberRef = doc(db, 'members', memberId);
     memberUnsubRef.current = onSnapshot(
@@ -195,6 +205,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (currentUser: User) => {
       return singleFlight(currentUser.uid, async () => {
         try {
+          const [{ doc, onSnapshot }, { db }, { checkIsAdmin, ensureUserProfile }] = await Promise.all([
+            import('firebase/firestore'),
+            import('./config'),
+            import('./firestoreService'),
+          ]);
+
           const adminStatus = await checkIsAdmin(currentUser.uid, currentUser.email);
           if (auth.currentUser?.uid !== currentUser.uid) return;
           setIsAdmin(adminStatus);
@@ -223,7 +239,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           if (initProfile.memberId) {
-            loadMemberData(initProfile.memberId);
+            void loadMemberData(initProfile.memberId);
           }
 
           // Real-time listener for user profile
@@ -246,8 +262,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setIsAdmin(freshAdmin);
 
                 if (updatedProfile.memberId) {
-                  loadMemberData(updatedProfile.memberId);
+                  void loadMemberData(updatedProfile.memberId);
                 } else {
+                  memberLoadSeqRef.current += 1;
                   if (memberUnsubRef.current) {
                     memberUnsubRef.current();
                     memberUnsubRef.current = null;
@@ -276,7 +293,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (err: any) {
           if (auth.currentUser?.uid !== currentUser.uid) return;
           console.error('Failed to attach user profile:', err);
-          setAuthError(err?.message || 'Failed to initialize account.');
+          const failure = resolveAuthFirestoreLoadFailure(err);
+          setRegistrationError(failure.registrationError);
+          setAuthError(failure.authError);
           setLoading(false);
         }
       });
@@ -440,6 +459,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const submitApplicantNotes = async (notes: string) => {
     if (!user) return;
     try {
+      const { updateUserSelfProfile } = await import('./firestoreService');
       await updateUserSelfProfile(user.uid, { requestedNotes: notes });
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to update notes.');
@@ -450,6 +470,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const submitApplicationForm = async (application: ApplicationInput) => {
     if (!user) return;
     try {
+      const { submitApplication } = await import('./firestoreService');
       await submitApplication(user.uid, application);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to submit application.');
@@ -460,6 +481,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const reRequestAccess = async (appOrNotes?: ApplicationInput | string) => {
     if (!user) return;
     try {
+      const { reRequestMembership } = await import('./firestoreService');
       await reRequestMembership(user.uid, appOrNotes);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to re-submit membership request.');
@@ -470,6 +492,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const requestMembershipLink = async (notes?: string, displayName?: string) => {
     if (!user) return;
     try {
+      const { requestMembershipLink: requestLink } = await import('./firestoreService');
       await requestLink(user.uid, notes, displayName);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to submit membership request.');
@@ -480,6 +503,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const acceptMembershipInvitation = async () => {
     if (!user) return;
     try {
+      const { acceptMembershipInvitation: acceptOffer } = await import('./firestoreService');
       await acceptOffer(user.uid);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to accept membership invitation.');
@@ -490,6 +514,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const declineMembershipInvitation = async () => {
     if (!user) return;
     try {
+      const { declineMembershipInvitation: declineOffer } = await import('./firestoreService');
       await declineOffer(user.uid);
     } catch (err: any) {
       setAuthError(err?.message || 'Failed to decline membership invitation.');

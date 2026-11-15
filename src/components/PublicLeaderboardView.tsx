@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PublicLeaderboardItem } from '../types';
 import { useAuth } from '../firebase/AuthContext';
-import { backfillPublicLeaderboard } from '../firebase/firestoreService';
 import { Podium } from './leaderboard/Podium';
 import { RankingList, LeaderboardPeriod } from './leaderboard/RankingList';
 import { HallOfFame } from './leaderboard/HallOfFame';
@@ -36,7 +35,7 @@ interface PublicLeaderboardViewProps {
   hasActiveSession?: boolean;
 }
 
-export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
+export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = React.memo(({
   items,
   onOpenLogin,
   onRefreshLeaderboard,
@@ -80,9 +79,10 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
   const [shareCardRank, setShareCardRank] = useState<number | undefined>(undefined);
   const [isShareCardOpen, setIsShareCardOpen] = useState(false);
 
-  // Admin backfill status & 60s client rate cap
+  // Admin backfill status & 60s client rate cap + explicit confirmation step
   const [backfilling, setBackfilling] = useState(false);
   const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+  const [isConfirmingBackfill, setIsConfirmingBackfill] = useState(false);
   const lastBackfillAtRef = React.useRef<number | null>(null);
   const [cooldownRemainingSec, setCooldownRemainingSec] = useState(0);
 
@@ -97,7 +97,7 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
 
   const latestSyncedIso = useMemo(() => getLatestLeaderboardUpdate(activeItems), [activeItems]);
 
-  const handleAdminBackfill = async () => {
+  const executeAdminBackfill = async () => {
     if (!isAdmin || backfilling) return;
     const cooldown = checkBackfillCooldown(lastBackfillAtRef.current, Date.now(), BACKFILL_COOLDOWN_MS);
     if (!cooldown.allowed) {
@@ -105,9 +105,11 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
       setBackfillMessage(`Please wait ${cooldown.remainingSeconds}s before syncing again.`);
       return;
     }
+    setIsConfirmingBackfill(false);
     setBackfilling(true);
     setBackfillMessage(null);
     try {
+      const { backfillPublicLeaderboard } = await import('../firebase/firestoreService');
       const res = await backfillPublicLeaderboard();
       lastBackfillAtRef.current = Date.now();
       setCooldownRemainingSec(Math.ceil(BACKFILL_COOLDOWN_MS / 1000));
@@ -118,6 +120,11 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
     } finally {
       setBackfilling(false);
     }
+  };
+
+  const handleAdminBackfill = () => {
+    if (!isAdmin || backfilling) return;
+    setIsConfirmingBackfill(true);
   };
 
   const handleSelectMember = (item: PublicLeaderboardItem, rank?: number) => {
@@ -338,6 +345,35 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
           </div>
         </div>
 
+        {isConfirmingBackfill && isAdmin && (
+          <div
+            role="region"
+            aria-label="Confirm public leaderboard backfill"
+            className="mt-4 p-4 rounded-2xl bg-[#00F0FF]/10 border border-[#00F0FF]/40 text-xs space-y-3"
+          >
+            <p className="text-zinc-100 leading-relaxed">
+              <strong className="text-[#00F0FF]">Confirm Public Leaderboard Sync:</strong> This writes derived public metrics (<code className="font-mono">displayName, handle, role, tracks, avatar, points, streaks, monthlyTotals</code>, plus social links only for members with <code className="font-mono">showLinksPublicly: true</code>) to <code className="font-mono">publicLeaderboard</code> and prunes inactive or opted-out entries. No emails, phone numbers, student IDs, or UIDs are written.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={executeAdminBackfill}
+                disabled={backfilling}
+                className="min-h-11 px-4 py-2 rounded-xl bg-[#00F0FF] hover:bg-[#2bf3ff] text-black font-orbitron font-bold uppercase tracking-wider cursor-pointer disabled:opacity-50"
+              >
+                {backfilling ? 'Syncing...' : 'Confirm & Write Projection'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsConfirmingBackfill(false)}
+                className="min-h-11 px-4 py-2 rounded-xl bg-zinc-900 border border-white/15 text-zinc-200 font-bold uppercase tracking-wider cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {backfillMessage && (
           <div className="mt-3 p-2.5 rounded-xl bg-[#00F0FF]/15 border border-[#00F0FF]/40 text-[#00F0FF] text-xs font-rajdhani font-bold flex items-center gap-2">
             <Info className="w-4 h-4" />
@@ -545,4 +581,4 @@ export const PublicLeaderboardView: React.FC<PublicLeaderboardViewProps> = ({
       />
     </div>
   );
-};
+});

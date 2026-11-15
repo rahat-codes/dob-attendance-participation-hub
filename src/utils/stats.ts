@@ -7,6 +7,78 @@ import {
 } from './profileLinks';
 
 export const BACKFILL_COOLDOWN_MS = 60_000;
+export const AUTO_RECOMPUTE_DEBOUNCE_MS = 300_000; // 5 minutes between open-tab admin recomputes
+
+export interface BackfillPreviewSummary {
+  eligibleCount: number;
+  excludedOptOutCount: number;
+  excludedInactiveCount: number;
+  fieldsWritten: readonly string[];
+}
+
+export function computeBackfillPreviewSummary(members: Member[]): BackfillPreviewSummary {
+  let eligibleCount = 0;
+  let excludedOptOutCount = 0;
+  let excludedInactiveCount = 0;
+
+  for (const m of members) {
+    if (m.status === 'Inactive') {
+      excludedInactiveCount += 1;
+    } else if (m.leaderboardOptOut) {
+      excludedOptOutCount += 1;
+    } else {
+      eligibleCount += 1;
+    }
+  }
+
+  return {
+    eligibleCount,
+    excludedOptOutCount,
+    excludedInactiveCount,
+    fieldsWritten: [
+      'id',
+      'name/displayName',
+      'handle',
+      'role',
+      'tracks',
+      'avatarUrl',
+      'totalCheckIns',
+      'points',
+      'streaks',
+      'monthlyCheckIns',
+      'monthlyPoints',
+      'publicLinks (only when opted in)',
+    ],
+  };
+}
+
+export function shouldTriggerDebouncedRecompute(params: {
+  isAdmin: boolean;
+  hasSettledInitialLoad: boolean;
+  isTabVisible: boolean;
+  hasExistingProjection: boolean;
+  nowMs?: number;
+  lastAutoRecomputeAtMs: number | null;
+  minIntervalMs?: number;
+}): boolean {
+  const {
+    isAdmin,
+    hasSettledInitialLoad,
+    isTabVisible,
+    hasExistingProjection,
+    nowMs = Date.now(),
+    lastAutoRecomputeAtMs,
+    minIntervalMs = AUTO_RECOMPUTE_DEBOUNCE_MS,
+  } = params;
+
+  if (!isAdmin || !hasSettledInitialLoad || !isTabVisible || !hasExistingProjection) {
+    return false;
+  }
+  if (lastAutoRecomputeAtMs === null || lastAutoRecomputeAtMs <= 0) {
+    return true;
+  }
+  return nowMs - lastAutoRecomputeAtMs >= minIntervalMs;
+}
 
 export function checkBackfillCooldown(
   lastSyncedAtMs: number | null,

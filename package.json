@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/attendance-hub.test.ts && tsx tests/pending-alert.test.ts && tsx tests/listener-error.test.ts && tsx tests/request-pipeline.test.ts && tsx tests/login-wiring.test.ts && tsx tests/reuse-and-id-lifecycle.test.ts && tsx tests/single-flight.test.ts && tsx tests/state-machine-and-validation.test.ts && tsx tests/repair-tools.test.ts && tsx tests/nav-chrome.test.ts && tsx tests/session-model.test.ts && tsx tests/phase4-attendance.test.ts && tsx tests/phase5-stats-leaderboard-csv.test.ts && tsx tests/phase6-ui-routing-a11y.test.ts && tsx tests/motion.test.ts",
+    "test": "tsx tests/attendance-hub.test.ts && tsx tests/pending-alert.test.ts && tsx tests/listener-error.test.ts && tsx tests/request-pipeline.test.ts && tsx tests/login-wiring.test.ts && tsx tests/reuse-and-id-lifecycle.test.ts && tsx tests/single-flight.test.ts && tsx tests/state-machine-and-validation.test.ts && tsx tests/repair-tools.test.ts && tsx tests/nav-chrome.test.ts && tsx tests/session-model.test.ts && tsx tests/phase4-attendance.test.ts && tsx tests/phase5-stats-leaderboard-csv.test.ts && tsx tests/phase6-ui-routing-a11y.test.ts && tsx tests/phase7-performance.test.ts && tsx tests/phase8-regression.test.ts && tsx tests/motion.test.ts",
     "test:alerts": "tsx tests/pending-alert.test.ts",
     "test:listener": "tsx tests/listener-error.test.ts",
     "test:motion": "tsx tests/motion.test.ts",

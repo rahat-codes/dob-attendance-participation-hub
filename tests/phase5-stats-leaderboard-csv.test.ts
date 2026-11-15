@@ -15,6 +15,9 @@ import {
   buildLeaderboardRecomputeOpsPlan,
   checkBackfillCooldown,
   getLatestLeaderboardUpdate,
+  computeBackfillPreviewSummary,
+  shouldTriggerDebouncedRecompute,
+  AUTO_RECOMPUTE_DEBOUNCE_MS,
 } from '../src/utils/stats';
 import {
   sanitizeCSVCell,
@@ -450,6 +453,79 @@ function runPhase5Tests() {
   assert(
     !pubJae.githubUrl && !pubJae.linkedinUrl && !pubJae.portfolioUrl,
     'Omits invalid/non-HTTPS links even when showLinksPublicly is true'
+  );
+
+  // 11. First-Run Backfill Preview & 5-Minute Open-Tab Recompute Debounce
+  console.log('\n11. Backfill Confirmation Summary & 5-Minute Auto-Recompute Debounce');
+  const preview = computeBackfillPreviewSummary([alice, bob, charlieOptOut, daveInactive]);
+  assertEq(preview.eligibleCount, 2, 'Counts eligible Active opted-in builders for backfill preview');
+  assertEq(preview.excludedOptOutCount, 1, 'Counts opted-out builders excluded from backfill');
+  assertEq(preview.excludedInactiveCount, 1, 'Counts Inactive builders excluded from backfill');
+  assert(
+    preview.fieldsWritten.includes('displayName') || preview.fieldsWritten.includes('name/displayName'),
+    'Lists public fields written in confirmation prompt'
+  );
+
+  assertEq(AUTO_RECOMPUTE_DEBOUNCE_MS, 300_000, 'Auto-recompute debounce constant equals 5 minutes (300,000 ms)');
+  assertEq(
+    shouldTriggerDebouncedRecompute({
+      isAdmin: true,
+      hasSettledInitialLoad: false,
+      isTabVisible: true,
+      hasExistingProjection: true,
+      nowMs: 500_000,
+      lastAutoRecomputeAtMs: null,
+    }),
+    false,
+    'Never auto-recomputes before initial admin app load settles'
+  );
+  assertEq(
+    shouldTriggerDebouncedRecompute({
+      isAdmin: true,
+      hasSettledInitialLoad: true,
+      isTabVisible: true,
+      hasExistingProjection: false,
+      nowMs: 500_000,
+      lastAutoRecomputeAtMs: null,
+    }),
+    false,
+    'Does not auto-write when publicLeaderboard is empty (requires admin confirmation prompt)'
+  );
+  assertEq(
+    shouldTriggerDebouncedRecompute({
+      isAdmin: true,
+      hasSettledInitialLoad: true,
+      isTabVisible: false,
+      hasExistingProjection: true,
+      nowMs: 500_000,
+      lastAutoRecomputeAtMs: null,
+    }),
+    false,
+    'Skips auto-recompute while browser tab is hidden'
+  );
+  assertEq(
+    shouldTriggerDebouncedRecompute({
+      isAdmin: true,
+      hasSettledInitialLoad: true,
+      isTabVisible: true,
+      hasExistingProjection: true,
+      nowMs: 500_000,
+      lastAutoRecomputeAtMs: 300_000,
+    }),
+    false,
+    'Blocks automatic recompute inside 5-minute debounce window (200s elapsed < 300s)'
+  );
+  assertEq(
+    shouldTriggerDebouncedRecompute({
+      isAdmin: true,
+      hasSettledInitialLoad: true,
+      isTabVisible: true,
+      hasExistingProjection: true,
+      nowMs: 600_000,
+      lastAutoRecomputeAtMs: 300_000,
+    }),
+    true,
+    'Permits automatic recompute after 5-minute debounce expires on subsequent open-tab changes'
   );
 
   console.log('\n========================================');

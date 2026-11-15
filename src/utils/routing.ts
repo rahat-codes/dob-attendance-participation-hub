@@ -1,4 +1,13 @@
-import type { NavigationTab } from '../components/Navbar';
+export type NavigationTab =
+  | 'home'
+  | 'leaderboard'
+  | 'kiosk'
+  | 'scanner'
+  | 'participation'
+  | 'sessions'
+  | 'members'
+  | 'requests'
+  | 'verify';
 
 export const VALID_ROUTES: readonly NavigationTab[] = [
   'home',

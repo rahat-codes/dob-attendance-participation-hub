@@ -3,9 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(() => {
   return {
-    mode: 'production',
     plugins: [
       react(),
       tailwindcss(),
@@ -33,6 +32,26 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks(id) {
+            if (
+              id.includes('node_modules/@firebase/firestore') ||
+              id.includes('node_modules/re2js') ||
+              id.includes('node_modules/@firebase/webchannel-wrapper') ||
+              id.includes('node_modules/idb') ||
+              id.includes('node_modules/firebase/firestore')
+            ) {
+              return 'firebase-firestore';
+            }
+            if (
+              id.includes('node_modules/@firebase/auth') ||
+              id.includes('node_modules/@firebase/app') ||
+              id.includes('node_modules/@firebase/component') ||
+              id.includes('node_modules/@firebase/util') ||
+              id.includes('node_modules/@firebase/logger') ||
+              id.includes('node_modules/firebase/auth') ||
+              id.includes('node_modules/firebase/app')
+            ) {
+              return 'firebase-auth';
+            }
             if (id.includes('node_modules/firebase')) {
               return 'firebase-vendor';
             }

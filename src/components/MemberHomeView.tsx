@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Member,
   Session,
@@ -35,7 +35,7 @@ interface MemberHomeViewProps {
   onOpenNotifications?: () => void;
 }
 
-export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
+export const MemberHomeView: React.FC<MemberHomeViewProps> = React.memo(({
   member,
   sessions,
   checkIns,
@@ -55,20 +55,39 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
   }, []);
 
   // Compute live unforgeable stats from authoritative records
-  const stats = computeMemberStats(member, sessions, checkIns, currentTime);
+  const stats = useMemo(
+    () => computeMemberStats(member, sessions, checkIns, currentTime),
+    [member, sessions, checkIns, currentTime]
+  );
 
   // Determine target session using exact time-based logic (Open Now > Upcoming > Recent)
-  const targetSession = getTargetSession(sessions, currentTime) || sessions[0];
-  const temporalInfo = targetSession ? getSessionTemporalInfo(targetSession, currentTime) : null;
+  const targetSession = useMemo(
+    () => getTargetSession(sessions, currentTime) || sessions[0],
+    [sessions, currentTime]
+  );
+  const temporalInfo = useMemo(
+    () => (targetSession ? getSessionTemporalInfo(targetSession, currentTime) : null),
+    [targetSession, currentTime]
+  );
 
   // Member's personal check-ins
-  const memberCheckIns = checkIns.filter((c) => c.memberId === member.id);
+  const memberCheckIns = useMemo(
+    () => checkIns.filter((c) => c.memberId === member.id),
+    [checkIns, member.id]
+  );
   const latestCheckIn = memberCheckIns[0];
 
+  const sessionMap = useMemo(() => {
+    const map = new Map<string, Session>();
+    for (const s of sessions) map.set(s.id, s);
+    return map;
+  }, [sessions]);
+
   // Has member already checked into the target session?
-  const isCheckedInToTarget = targetSession
-    ? memberCheckIns.some((c) => c.sessionId === targetSession.id)
-    : false;
+  const isCheckedInToTarget = useMemo(
+    () => (targetSession ? memberCheckIns.some((c) => c.sessionId === targetSession.id) : false),
+    [targetSession, memberCheckIns]
+  );
 
   return (
     <div className="space-y-6">
@@ -378,7 +397,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
         ) : (
           <div className="space-y-2.5">
             {memberCheckIns.slice(0, 10).map((record) => {
-              const sess = sessions.find((s) => s.id === record.sessionId);
+              const sess = sessionMap.get(record.sessionId);
               const sessionTitle = sess?.title || record.sessionTitle || 'Workshop Session';
               const sessionDate = sess?.date || record.date || '';
               const recordTime = record.checkedInAt
@@ -420,4 +439,4 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = ({
       </div>
     </div>
   );
-};
+});

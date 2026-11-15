@@ -1,21 +1,9 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { firebaseApp, auth, googleProvider } from './authClient';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
-try {
-  auth.useDeviceLanguage();
-} catch {
-  // Gracefully fallback if navigator.language is inaccessible
-}
-
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: 'select_account',
-});
+export { auth, googleProvider };
+export const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
 
 export enum OperationType {
   CREATE = 'create',

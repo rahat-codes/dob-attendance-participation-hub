@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Calendar,
   Clock,
@@ -37,9 +37,14 @@ interface SessionsViewProps {
   onRemoveCheckIn: (checkIn: CheckInRecord) => void;
   onUpdateSessionStatus?: (sessionId: string, status: SessionStatus, mode?: CheckInMode) => void;
   onDeleteSession?: (session: Session) => void;
+  isHistoryBounded?: boolean;
+  isLoadingHistory?: boolean;
+  hasLoadedAllHistory?: boolean;
+  historyStartDate?: string;
+  onLoadAllHistory?: () => void;
 }
 
-export const SessionsView: React.FC<SessionsViewProps> = ({
+export const SessionsView: React.FC<SessionsViewProps> = React.memo(({
   sessions,
   members,
   checkIns,
@@ -52,6 +57,11 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
   onRemoveCheckIn,
   onUpdateSessionStatus,
   onDeleteSession,
+  isHistoryBounded = false,
+  isLoadingHistory = false,
+  hasLoadedAllHistory = false,
+  historyStartDate,
+  onLoadAllHistory,
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'open' | 'upcoming' | 'completed'>('all');
   const [trackFilter, setTrackFilter] = useState<string>('all');
@@ -81,47 +91,73 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
     }
   };
 
-  const filteredSessions = sessions
-    .filter((s) => {
-      if (!showArchived && s.deletedAt) return false;
-      if (statusFilter !== 'all') {
-        const temporal = getSessionTemporalInfo(s);
-        if (statusFilter === 'open' && !temporal.isOpenNow) return false;
-        if (statusFilter === 'upcoming' && !temporal.isUpcoming) return false;
-        if (statusFilter === 'completed' && !temporal.isClosed) return false;
-      }
-      if (trackFilter !== 'all' && s.track !== trackFilter) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        return (
-          s.title.toLowerCase().includes(q) ||
-          (s.sessionCode && s.sessionCode.toLowerCase().includes(q)) ||
-          s.location.toLowerCase().includes(q)
-        );
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      const aDate = a.date || '';
-      const bDate = b.date || '';
-      const dateCmp = bDate.localeCompare(aDate);
-      if (dateCmp !== 0) return dateCmp;
-      return (b.startTime || '').localeCompare(a.startTime || '');
-    });
+  const filteredSessions = useMemo(() => {
+    return sessions
+      .filter((s) => {
+        if (!showArchived && s.deletedAt) return false;
+        if (statusFilter !== 'all') {
+          const temporal = getSessionTemporalInfo(s);
+          if (statusFilter === 'open' && !temporal.isOpenNow) return false;
+          if (statusFilter === 'upcoming' && !temporal.isUpcoming) return false;
+          if (statusFilter === 'completed' && !temporal.isClosed) return false;
+        }
+        if (trackFilter !== 'all' && s.track !== trackFilter) return false;
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          return (
+            s.title.toLowerCase().includes(q) ||
+            (s.sessionCode && s.sessionCode.toLowerCase().includes(q)) ||
+            s.location.toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aDate = a.date || '';
+        const bDate = b.date || '';
+        const dateCmp = bDate.localeCompare(aDate);
+        if (dateCmp !== 0) return dateCmp;
+        return (b.startTime || '').localeCompare(a.startTime || '');
+      });
+  }, [sessions, showArchived, statusFilter, trackFilter, searchQuery]);
 
-  const activeRosterSession = sessions.find((s) => s.id === selectedSessionForRoster) || sessions[0] || null;
-  const rosterCheckIns = checkIns.filter((c) => c.sessionId === selectedSessionForRoster);
-  const rosterMemberIds = new Set(rosterCheckIns.map((c) => c.memberId));
-  const availableMembersToAdd = members.filter((m) => !rosterMemberIds.has(m.id));
-  const filteredAvailableMembers = availableMembersToAdd.filter((m) => {
-    if (!memberSearchQuery.trim()) return true;
+  const memberMap = useMemo(() => {
+    const map = new Map<string, Member>();
+    for (const m of members) map.set(m.id, m);
+    return map;
+  }, [members]);
+
+  const checkInCountBySession = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of checkIns) {
+      counts.set(c.sessionId, (counts.get(c.sessionId) || 0) + 1);
+    }
+    return counts;
+  }, [checkIns]);
+
+  const activeRosterSession = useMemo(
+    () => sessions.find((s) => s.id === selectedSessionForRoster) || sessions[0] || null,
+    [sessions, selectedSessionForRoster]
+  );
+  const rosterCheckIns = useMemo(
+    () => checkIns.filter((c) => c.sessionId === selectedSessionForRoster),
+    [checkIns, selectedSessionForRoster]
+  );
+  const availableMembersToAdd = useMemo(() => {
+    const rosterMemberIds = new Set(rosterCheckIns.map((c) => c.memberId));
+    return members.filter((m) => !rosterMemberIds.has(m.id) && m.status !== 'Inactive');
+  }, [members, rosterCheckIns]);
+
+  const filteredAvailableMembers = useMemo(() => {
+    if (!memberSearchQuery.trim()) return availableMembersToAdd;
     const q = memberSearchQuery.toLowerCase();
-    return (
-      m.name.toLowerCase().includes(q) ||
-      m.handle.toLowerCase().includes(q) ||
-      (m.role && m.role.toLowerCase().includes(q))
+    return availableMembersToAdd.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.handle.toLowerCase().includes(q) ||
+        (m.role && m.role.toLowerCase().includes(q))
     );
-  });
+  }, [availableMembersToAdd, memberSearchQuery]);
 
   const handleExportSessionCSV = (session: Session) => {
     const records = checkIns.filter((c) => c.sessionId === session.id);
@@ -227,6 +263,22 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
         </div>
       </div>
 
+      {isAdmin && isHistoryBounded && !hasLoadedAllHistory && onLoadAllHistory && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-2xl bg-zinc-900/70 border border-white/10 text-xs font-mono text-zinc-300">
+          <span>
+            Showing sessions since {historyStartDate || 'recent 12 months'} and recent attendance for faster startup.
+          </span>
+          <button
+            type="button"
+            onClick={onLoadAllHistory}
+            disabled={isLoadingHistory}
+            className="min-h-11 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 border border-white/15 text-[#b5ff00] font-bold cursor-pointer disabled:opacity-50"
+          >
+            {isLoadingHistory ? 'Loading history...' : 'Load all history'}
+          </button>
+        </div>
+      )}
+
       {/* Sessions Full Width List */}
       <m.div variants={stagger()} initial="hidden" animate="show" className="w-full space-y-3">
         {filteredSessions.length === 0 ? (
@@ -235,7 +287,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
           </div>
         ) : (
           filteredSessions.map((session, index) => {
-            const checkedCount = checkIns.filter((c) => c.sessionId === session.id).length;
+            const checkedCount = checkInCountBySession.get(session.id) || 0;
             const isSelected = selectedSessionForRoster === session.id;
             const isAnimated = index < 12;
 
@@ -648,7 +700,7 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
                       </div>
                     ) : (
                       rosterCheckIns.map((item) => {
-                        const mem = members.find((m) => m.id === item.memberId);
+                        const mem = memberMap.get(item.memberId);
                         const displayName = mem?.name || item.memberName || 'Builder';
                         const displayHandle = mem?.handle || item.memberHandle || '';
                         const displayTime = item.checkedInAt
@@ -691,4 +743,4 @@ export const SessionsView: React.FC<SessionsViewProps> = ({
       </AnimatePresence>
     </div>
   );
-};
+});

@@ -43,6 +43,7 @@ import {
   getSessionTemporalInfo,
   formatDateInClubTz,
   formatTimeInClubTz,
+  todayInClubTz,
 } from '../utils/sessionWindow';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { isHandleTaken, isStudentIdTaken, archiveHandle } from '../utils/reuseHelpers';
@@ -66,6 +67,12 @@ import {
 } from '../utils/checkInFlow';
 import { ensureFreshServerTimeOffset, getCorrectedNowMs } from '../utils/serverTime';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
+import {
+  isTabVisible,
+  filterUpcomingReminderSessions,
+  buildReminderSweepPlan,
+} from '../utils/reminders';
+import { chunkIds } from '../utils/listenerScope';
 
 export { SUPER_ADMIN_EMAIL, type SessionBatchPlan, buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan };
 
@@ -1662,10 +1669,16 @@ export async function permanentDeleteMember(
 
 export function subscribeToSessions(
   onUpdate: (sessions: Session[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  options?: { minDate?: string }
 ): () => void {
+  const colRef = collection(db, SESSIONS_COLLECTION);
+  const source = options?.minDate
+    ? query(colRef, where('date', '>=', options.minDate))
+    : colRef;
+
   return onSnapshot(
-    collection(db, SESSIONS_COLLECTION),
+    source,
     (snap) => {
       const list = snap.docs.map((d) => d.data() as Session);
       onUpdate(list);
@@ -1674,6 +1687,11 @@ export function subscribeToSessions(
       notifyListenerError(err, OperationType.LIST, SESSIONS_COLLECTION, onError);
     }
   );
+}
+
+export async function fetchAllSessionsHistory(): Promise<Session[]> {
+  const snap = await getDocs(collection(db, SESSIONS_COLLECTION));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as Session);
 }
 
 export async function createSessionInFirestore(
@@ -2068,10 +2086,16 @@ export function subscribeToMemberCheckIns(
 
 export function subscribeToAllCheckIns(
   onUpdate: (records: CheckInRecord[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  options?: { minMonthKey?: string }
 ): () => void {
+  const colRef = collection(db, CHECKINS_COLLECTION);
+  const source = options?.minMonthKey
+    ? query(colRef, where('monthKey', '>=', options.minMonthKey))
+    : colRef;
+
   return onSnapshot(
-    collection(db, CHECKINS_COLLECTION),
+    source,
     (snap) => {
       const records = snap.docs.map((d) => d.data() as CheckInRecord);
       onUpdate(records);
@@ -2080,6 +2104,11 @@ export function subscribeToAllCheckIns(
       notifyListenerError(err, OperationType.LIST, CHECKINS_COLLECTION, onError);
     }
   );
+}
+
+export async function fetchAllCheckInsHistory(): Promise<CheckInRecord[]> {
+  const snap = await getDocs(collection(db, CHECKINS_COLLECTION));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }) as CheckInRecord);
 }
 
 function createFirestoreCheckInStore(): CheckInStoreAdapter {
@@ -2617,10 +2646,12 @@ export function subscribeToUserNotifications(
   return onSnapshot(
     q,
     (snap) => {
-      const notifs = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-      })) as ClubNotification[];
+      const notifs = snap.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }) as ClubNotification)
+        .filter((n) => n.dismissed !== true);
       notifs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       onData(notifs);
     },
@@ -2660,7 +2691,8 @@ export async function markAllNotificationsAsRead(userId: string, _notifs?: ClubN
 export async function dismissNotification(notificationId: string): Promise<void> {
   try {
     const notifRef = doc(db, 'notifications', notificationId);
-    await deleteDoc(notifRef);
+    // Keep dismissed doc in place so deterministic 30m reminder sweeps never re-create it
+    await updateDoc(notifRef, { dismissed: true, read: true });
   } catch (err) {
     console.warn('Failed to dismiss notification:', err);
   }
@@ -2674,19 +2706,22 @@ export async function requestBrowserNotificationPermission(): Promise<Notificati
 }
 
 export async function checkAndSend30MinuteReminders(): Promise<void> {
+  if (!isTabVisible()) {
+    return;
+  }
+
   try {
-    const sessionsSnap = await getDocs(collection(db, SESSIONS_COLLECTION));
+    const todayStr = todayInClubTz();
+    const sessionsSnap = await getDocs(
+      query(collection(db, SESSIONS_COLLECTION), where('date', '>=', todayStr))
+    );
     const now = new Date();
 
-    const upcomingSessions: Session[] = [];
-    sessionsSnap.forEach((d) => {
-      const s = { id: d.id, ...(d.data() as any) } as Session;
-      if (s.status === 'cancelled' || s.status === 'completed') return;
-      const temporal = getSessionTemporalInfo(s, now);
-      if (temporal.isUpcoming && temporal.diffMinutes > 0 && temporal.diffMinutes <= 35) {
-        upcomingSessions.push(s);
-      }
-    });
+    const candidateSessions: Session[] = sessionsSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as any),
+    })) as Session[];
+    const upcomingSessions = filterUpcomingReminderSessions(candidateSessions, now);
 
     if (upcomingSessions.length === 0) return;
 
@@ -2702,28 +2737,38 @@ export async function checkAndSend30MinuteReminders(): Promise<void> {
       }
     });
 
-    for (const session of upcomingSessions) {
-      for (const u of eligibleUsers) {
-        const notifId = `reminder_30m_${session.id}_${u.id}`;
-        const notifRef = doc(db, 'notifications', notifId);
-        const existing = await getDoc(notifRef);
-        if (!existing.exists()) {
-          const temporal = getSessionTemporalInfo(session, now);
-          await setDoc(notifRef, {
-            id: notifId,
-            userId: u.id,
-            title: `⏰ Meeting Starting Soon: ${session.title}`,
-            message: `Starting in ~${temporal.diffMinutes}m at ${session.location || 'Den of Builders'}. Get ready to hack!`,
-            type: 'meeting_reminder_30m',
-            sessionId: session.id,
-            sessionDate: session.date,
-            sessionTime: session.startTime,
-            sessionLocation: session.location,
-            read: false,
-            createdAt: new Date().toISOString(),
-          });
-        }
+    if (eligibleUsers.length === 0) return;
+
+    // Fetch existing reminder docs (any read/dismissed state) in chunks of up to 10 sessionIds (well below Firestore's 30-item `in` limit)
+    const existingNotificationIds = new Set<string>();
+    const sessionIdChunks = chunkIds(
+      upcomingSessions.map((item) => item.session.id),
+      10
+    );
+    for (const chunkIdsGroup of sessionIdChunks) {
+      const existingSnap = await getDocs(
+        query(collection(db, 'notifications'), where('sessionId', 'in', chunkIdsGroup))
+      );
+      existingSnap.forEach((d) => {
+        existingNotificationIds.add(d.id);
+      });
+    }
+
+    const plan = buildReminderSweepPlan({
+      upcomingSessions,
+      eligibleUsers,
+      existingNotificationIds,
+      now,
+      chunkLimit: 400,
+    });
+
+    for (const batchOps of plan.batches) {
+      const batch = writeBatch(db);
+      for (const op of batchOps) {
+        const notifRef = doc(db, 'notifications', op.notificationId);
+        batch.set(notifRef, removeUndefinedFields(op.payload));
       }
+      await batch.commit();
     }
   } catch (err) {
     console.warn('Failed in checkAndSend30MinuteReminders:', err);

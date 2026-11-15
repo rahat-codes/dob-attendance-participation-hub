@@ -66,9 +66,10 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
     }
   }, [profile]);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const activeNotifications = notifications.filter((n) => !n.dismissed);
+  const unreadCount = activeNotifications.filter((n) => !n.read).length;
 
-  const filteredNotifications = notifications.filter((n) => {
+  const filteredNotifications = activeNotifications.filter((n) => {
     if (filter === 'unread') return !n.read;
     if (filter === 'reminders') return n.type === 'meeting_reminder_30m';
     return true;
@@ -275,10 +276,14 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
           </div>
         )}
 
+        <p className="text-[11px] font-mono text-zinc-400 px-1 leading-relaxed">
+          Note: Automated 30-minute reminders are dispatched while an organizer tab is online and active. Guaranteed offline delivery requires a scheduled Cloud Function.
+        </p>
+
         {/* Filter Strip */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar p-1 bg-black/60 rounded-2xl border border-white/5 neu-inset">
           {[
-            { key: 'all', label: `All (${notifications.length})` },
+            { key: 'all', label: `All (${activeNotifications.length})` },
             { key: 'unread', label: `Unread (${unreadCount})` },
             { key: 'reminders', label: '30-Min Alerts' },
           ].map((tab) => (

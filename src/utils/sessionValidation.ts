@@ -1,7 +1,7 @@
 import { Timestamp } from 'firebase/firestore';
 import { Session, BuilderTrack, SessionStatus, CheckInMode } from '../types';
 import { DEFAULT_CLUB_TIMEZONE } from '../config/constants';
-import { parseDateTimeInZone } from './sessionTiming';
+import { parseDateTimeInZone, isSessionRescheduled } from './sessionTiming';
 
 /**
  * Single source of truth for session configuration and defaults.
@@ -248,20 +248,7 @@ export function createSessionPayload(input: SessionPayloadInput): Session {
   return validateSessionData(payload);
 }
 
-/**
- * Determines whether editing a session changed schedule date, time window, or location.
- */
-export function isSessionRescheduled(
-  prev: Pick<Session, 'date' | 'startTime' | 'endTime' | 'location'>,
-  next: Pick<Session, 'date' | 'startTime' | 'endTime' | 'location'>
-): boolean {
-  return Boolean(
-    prev.date !== next.date ||
-    (prev.startTime || '') !== (next.startTime || '') ||
-    (prev.endTime || '') !== (next.endTime || '') ||
-    (prev.location || '').trim() !== (next.location || '').trim()
-  );
-}
+export { isSessionRescheduled };
 
 export interface DryRunMigrationResult {
   needsMigration: boolean;

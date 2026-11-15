@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { useAuth } from '../firebase/AuthContext';
 import { m } from 'motion/react';
 import { fadeUp } from '../motion/presets';
@@ -17,12 +17,12 @@ import {
   Trophy,
   UserPlus,
 } from 'lucide-react';
-import { Field } from '../ui/Field';
-import { BuilderTrack } from '../types';
-import { parseApplicantNotes } from '../utils/reuseHelpers';
-import { ApplicationForm } from './ApplicationForm';
 import { SafeExternalLink } from './common/SafeExternalLink';
 import { decodeApplication } from '../utils/application';
+
+const ApplicationForm = lazy(() =>
+  import('./ApplicationForm').then((mod) => ({ default: mod.ApplicationForm }))
+);
 
 interface LoginViewProps {
   onContinueAsGuest?: () => void;
@@ -91,9 +91,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center p-3.5 rounded-3xl glass-panel neu-raised shadow-2xl mb-4 spatial-card">
             <img
-              src="/dob_logo.png"
+              src="/dob_logo-192.png"
               alt="Den of Builders"
               className="w-14 h-14 object-contain"
+              width={56}
+              height={56}
             />
           </div>
           <h1 className="text-2xl sm:text-3xl font-black font-display tracking-tight text-white uppercase">
@@ -248,19 +250,21 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
               </div>
             )}
 
-            <ApplicationForm
-              user={profile}
-              onSubmit={async (appData) => {
-                setLinkError(null);
-                try {
-                  await submitApplicationForm(appData);
-                } catch (err: any) {
-                  setLinkError(err?.message || 'Failed to submit application.');
-                  throw err;
-                }
-              }}
-              onSignOut={signOutUser}
-            />
+            <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading application form...</p>}>
+              <ApplicationForm
+                user={profile}
+                onSubmit={async (appData) => {
+                  setLinkError(null);
+                  try {
+                    await submitApplicationForm(appData);
+                  } catch (err: any) {
+                    setLinkError(err?.message || 'Failed to submit application.');
+                    throw err;
+                  }
+                }}
+                onSignOut={signOutUser}
+              />
+            </Suspense>
 
             <div className="flex items-center justify-between pt-3 border-t border-zinc-800/80 gap-2">
               <button
@@ -353,21 +357,23 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     Cancel
                   </button>
                 </div>
-                <ApplicationForm
-                  user={profile}
-                  initialValues={decodeApplication(profile)}
-                  onSubmit={async (appData) => {
-                    setLinkError(null);
-                    try {
-                      await submitApplicationForm(appData);
-                      setIsEditingPendingHandle(false);
-                    } catch (err: any) {
-                      setLinkError(err?.message || 'Failed to update application.');
-                      throw err;
-                    }
-                  }}
-                  onSignOut={signOutUser}
-                />
+                <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading form...</p>}>
+                  <ApplicationForm
+                    user={profile}
+                    initialValues={decodeApplication(profile)}
+                    onSubmit={async (appData) => {
+                      setLinkError(null);
+                      try {
+                        await submitApplicationForm(appData);
+                        setIsEditingPendingHandle(false);
+                      } catch (err: any) {
+                        setLinkError(err?.message || 'Failed to update application.');
+                        throw err;
+                      }
+                    }}
+                    onSignOut={signOutUser}
+                  />
+                </Suspense>
               </div>
             ) : (
               <>
@@ -587,21 +593,23 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             )}
 
             <div className="pt-1 text-left">
-              <ApplicationForm
-                user={profile}
-                initialValues={decodeApplication(profile)}
-                isReapplying={true}
-                onSubmit={async (appData) => {
-                  setLinkError(null);
-                  try {
-                    await reRequestAccess(appData);
-                  } catch (err: any) {
-                    setLinkError(err?.message || 'Failed to submit re-application.');
-                    throw err;
-                  }
-                }}
-                onSignOut={signOutUser}
-              />
+              <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading form...</p>}>
+                <ApplicationForm
+                  user={profile}
+                  initialValues={decodeApplication(profile)}
+                  isReapplying={true}
+                  onSubmit={async (appData) => {
+                    setLinkError(null);
+                    try {
+                      await reRequestAccess(appData);
+                    } catch (err: any) {
+                      setLinkError(err?.message || 'Failed to submit re-application.');
+                      throw err;
+                    }
+                  }}
+                  onSignOut={signOutUser}
+                />
+              </Suspense>
             </div>
           </div>
         )}
@@ -625,21 +633,23 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             )}
 
             <div className="pt-1 text-left">
-              <ApplicationForm
-                user={profile}
-                initialValues={decodeApplication(profile)}
-                isReapplying={true}
-                onSubmit={async (appData) => {
-                  setLinkError(null);
-                  try {
-                    await reRequestAccess(appData);
-                  } catch (err: any) {
-                    setLinkError(err?.message || 'Failed to submit re-application.');
-                    throw err;
-                  }
-                }}
-                onSignOut={signOutUser}
-              />
+              <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading form...</p>}>
+                <ApplicationForm
+                  user={profile}
+                  initialValues={decodeApplication(profile)}
+                  isReapplying={true}
+                  onSubmit={async (appData) => {
+                    setLinkError(null);
+                    try {
+                      await reRequestAccess(appData);
+                    } catch (err: any) {
+                      setLinkError(err?.message || 'Failed to submit re-application.');
+                      throw err;
+                    }
+                  }}
+                  onSignOut={signOutUser}
+                />
+              </Suspense>
             </div>
           </div>
         )}
