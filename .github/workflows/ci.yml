@@ -40,4 +40,4 @@ jobs:
         run: npm run build
 
       - name: Run Firestore Security Rules Emulator Suite
-        run: npx -y firebase-tools@15.36.0 emulators:exec --only firestore "npx tsx tests/firestore-rules.test.ts"
+        run: npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore "npx tsx tests/firestore-rules.test.ts"

@@ -50,6 +50,7 @@ import { useAuth } from './firebase/AuthContext';
 import { todayInClubTz } from './utils/sessionWindow';
 import {
   AUTO_RECOMPUTE_DEBOUNCE_MS,
+  MAX_AUTO_RECOMPUTE_CHECKINS,
   computeBackfillPreviewSummary,
   computeLeaderboardDataSignature,
   pruneHourlyTimestamps,
@@ -1085,7 +1086,7 @@ export default function App() {
     }
   };
 
-  // Debounced open-tab auto-recompute (only when live data changed, >=5m debounce, <=6 runs/hour, visible tab)
+  // Debounced open-tab auto-recompute (only when live data changed, checkIns <= 1500, >=5m debounce, <=6 runs/hour, visible tab)
   useEffect(() => {
     if (
       !shouldTriggerDebouncedRecompute({
@@ -1097,6 +1098,7 @@ export default function App() {
         dataSignature: currentLeaderboardDataSignature,
         lastSyncedDataSignature: lastSyncedDataSignatureRef.current,
         recentRecomputeTimestampsMs: recentAutoRecomputeMsRef.current,
+        checkInCount: checkIns.length,
       })
     ) {
       return;
@@ -1111,6 +1113,7 @@ export default function App() {
     const scheduledSignature = currentLeaderboardDataSignature;
     const timer = setTimeout(() => {
       if (!isTabVisible()) return;
+      if (checkIns.length > MAX_AUTO_RECOMPUTE_CHECKINS) return;
       if (scheduledSignature === lastSyncedDataSignatureRef.current) return;
       loadFirestoreService()
         .then(async ({ backfillPublicLeaderboard, recomputeAndSaveLeaderboard }) => {

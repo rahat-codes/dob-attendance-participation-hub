@@ -2,7 +2,7 @@
 
 This matrix maps every Firestore operation emitted by `node scripts/list-firestore-ops.mjs` across `src/` to its Security Rule branch in `firestore.rules`, expected Member / Admin / Guest outcomes, and execution status.
 
-> **Verification Notice**: Rules emulator tests in `tests/firestore-rules.test.ts` (22 test cases across 13 suites) are **`(written, NOT RUN)`** because Java / Firestore emulator is not run inside the sandbox. All uncovered operations are strictly labeled **`READ (rule not executed)`**.
+> **Verification Notice**: Rules emulator tests in `tests/firestore-rules.test.ts` (22 test cases across 15 suites: `Suite 1`–`Suite 9` and `Suite 11`–`Suite 16`; `Suite 10` unused) are **`(written, NOT RUN)`** because Java / Firestore emulator is not run inside the sandbox. All uncovered operations are strictly labeled **`READ (rule not executed)`**.
 
 ---
 

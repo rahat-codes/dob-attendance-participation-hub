@@ -9,6 +9,7 @@ import {
 export const BACKFILL_COOLDOWN_MS = 60_000;
 export const AUTO_RECOMPUTE_DEBOUNCE_MS = 300_000; // 5 minutes between open-tab admin recomputes
 export const MAX_AUTO_RECOMPUTES_PER_HOUR = 6;
+export const MAX_AUTO_RECOMPUTE_CHECKINS = 1500;
 export const ONE_HOUR_MS = 3_600_000;
 
 export interface BackfillPreviewSummary {
@@ -140,6 +141,8 @@ export function shouldTriggerDebouncedRecompute(params: {
   lastSyncedDataSignature?: string | null;
   recentRecomputeTimestampsMs?: readonly number[];
   maxRunsPerHour?: number;
+  checkInCount?: number;
+  maxAutoRecomputeCheckIns?: number;
 }): boolean {
   const {
     isAdmin,
@@ -153,9 +156,14 @@ export function shouldTriggerDebouncedRecompute(params: {
     lastSyncedDataSignature,
     recentRecomputeTimestampsMs,
     maxRunsPerHour = MAX_AUTO_RECOMPUTES_PER_HOUR,
+    checkInCount,
+    maxAutoRecomputeCheckIns = MAX_AUTO_RECOMPUTE_CHECKINS,
   } = params;
 
   if (!isAdmin || !hasSettledInitialLoad || !isTabVisible || !hasExistingProjection) {
+    return false;
+  }
+  if (typeof checkInCount === 'number' && checkInCount > maxAutoRecomputeCheckIns) {
     return false;
   }
   if (

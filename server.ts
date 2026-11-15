@@ -177,6 +177,11 @@ app.get('/api/time', (_req, res) => {
   });
 });
 
+// Return JSON 404 for unknown /api/* endpoints instead of falling through to SPA HTML
+app.all('/api/*', (_req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
 // Single Page Application (SPA) catch-all fallback (returns 404 for unknown paths with file extensions)
 app.get('*', (req, res) => {
   if (path.extname(req.path)) {

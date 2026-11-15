@@ -93,6 +93,6 @@ Re-run all three **Dry Runs** and confirm **`0` proposed changes** remain. Also 
 
 | Layer | Rollback Action |
 | :--- | :--- |
-| **Security Rules** | Paste `firestore.rules.prev` (or `docs/rules/A1.rules` if A2/Group B rejects transitioning data) in **Firebase Console -> Firestore -> Rules -> Publish** (takes effect in < 30s). If Firebase Hosting rules history is enabled, click **Restore previous version** in Rules History. |
-| **Web / Server Build** | Re-deploy previous container revision / build tag in Cloud Run (`gcloud run services update-traffic ... --to-revisions=PREVIOUS=100`). Old clients remain compatible with `docs/rules/A1.rules`. |
+| **Security Rules** | Paste `firestore.rules.prev` (or `docs/rules/A1.rules` if A2/Group B rejects transitioning data) in **Firebase Console -> Firestore -> Rules -> Publish** (takes effect in < 30s), or restore the previous ruleset from **Firestore -> Rules -> Version history**. |
+| **Web / Server Build** | Re-deploy previous Cloud Run / AI Studio revision and route traffic back (`gcloud run services update-traffic <service> --region=asia-northeast1 --to-revisions=<PREVIOUS_REVISION>=100`). Old clients remain compatible with `docs/rules/A1.rules`. |
 | **Data Corruption / Bad Migration** | Restore affected documents from the Step 1 JSON backup (`exportFullBackupJSON`) or Managed Firestore PITR export. Audit entries in `auditLogs` remain immutable for post-incident tracing. |

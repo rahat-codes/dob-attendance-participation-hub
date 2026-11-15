@@ -23,6 +23,7 @@ import {
   computeLeaderboardDataSignature,
   computeMemberStats,
   estimateLeaderboardRecomputeReads,
+  MAX_AUTO_RECOMPUTE_CHECKINS,
   MAX_AUTO_RECOMPUTES_PER_HOUR,
   ONE_HOUR_MS,
   pruneHourlyTimestamps,
@@ -228,6 +229,7 @@ async function runTests() {
     assert(serverSrc.includes("Content-Security-Policy-Report-Only") && serverSrc.includes('report-uri /api/csp-report'), 'server sets CSP Report-Only pointing to /api/csp-report');
     assert(serverSrc.includes("'/api/csp-report'") && serverSrc.includes("limit: '8kb'") && serverSrc.includes('allowCspReportIp'), 'POST /api/csp-report is size-capped (8kb) and rate-limited per IP');
     assert(serverSrc.includes("app.get('/api/health'") && serverSrc.includes("res.json({ status: 'ok' })"), '/api/health returns only { status: "ok" }');
+    assert(serverSrc.includes("app.all('/api/*'") && serverSrc.includes("res.status(404).json({ error: 'Not found' })"), 'unknown /api/* paths return JSON 404 { error: "Not found" }');
     assert(serverSrc.includes('path.extname(req.path)') && serverSrc.includes("res.status(404).type('text/plain').send('Not found')"), 'unknown paths with file extensions return 404 instead of index.html');
     assert(serverSrc.includes('req.path.startsWith(\'/api/\')') && !serverSrc.includes('err.stack'), 'error handler omits stack traces and returns JSON for /api vs plain text');
     assert(serverSrc.includes('immutable: true'), 'server sets immutable cache only on hashed /assets bundles');
@@ -418,6 +420,41 @@ async function runTests() {
       }).estimatedReads,
       100,
       'read estimate for in_memory recompute = 100 reads (publicLeaderboard IDs only)'
+    );
+
+    // 6. Hard >1,500 check-in cutoff disables open-tab automatic recompute (manual Sync button only)
+    assertEq(MAX_AUTO_RECOMPUTE_CHECKINS, 1500, 'MAX_AUTO_RECOMPUTE_CHECKINS constant equals 1500');
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sigNewCheckIn,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: [],
+        checkInCount: 1500,
+      }),
+      true,
+      'auto-recompute remains enabled at exactly 1,500 check-ins'
+    );
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sigNewCheckIn,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: [],
+        checkInCount: 1501,
+      }),
+      false,
+      'auto-recompute disables above 1,500 check-ins (manual Sync button only)'
     );
   }
 

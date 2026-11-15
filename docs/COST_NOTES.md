@@ -1,4 +1,4 @@
-# DOB-Hub Leaderboard Recompute Cost & Quota Notes
+# DOB-Hub Cost & Quota Notes
 
 This note models Firestore read/write consumption for `publicLeaderboard` recomputes against the **Firebase Spark (Free Tier)** daily quota:
 - **Free Daily Reads**: `50,000 reads / day`
@@ -11,7 +11,7 @@ This note models Firestore read/write consumption for `publicLeaderboard` recomp
 
 Every leaderboard recompute commits a diffed `publicLeaderboard` batch (`<= 400` ops/batch) plus `1` audit log write (`auditLogs/{logId}`):
 
-- **Full Collection Backfill (`backfillPublicLeaderboard` — default when admin listeners are bounded)**:
+- **Full Collection Backfill (`backfillPublicLeaderboard` — manual admin Sync button, or bounded fallback below threshold)**:
   `Estimated Reads = members + sessions + checkIns + publicLeaderboard`
   - Reads all `members`, `sessions`, and `checkIns` collections plus existing `publicLeaderboard` doc IDs.
 - **In-Memory Full-History Recompute (`recomputeAndSaveLeaderboard` — after admin clicks *Load all history*)**:
@@ -20,29 +20,30 @@ Every leaderboard recompute commits a diffed `publicLeaderboard` batch (`<= 400`
 
 Assuming a typical guild snapshot of `~100` active members (`100` `publicLeaderboard` docs) and `~40` sessions:
 
-| Dataset Scale (`checkIns`) | Mode | Reads / Single Run | Writes / Single Run | 6 Runs / Hr (1 hr active) | 10 Hrs Open Tab (`60` max runs/day at 6/hr cap) | % of 50k Free Read Quota / 10h |
+| Dataset Scale (`checkIns`) | Mode | Reads / Single Run | Writes / Single Run | Open-Tab Auto Recompute | Manual Sync Only (10h active workshop) | % of 50k Free Read Quota / Day |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **100 check-ins** | `backfill_full` | `100 + 40 + 100 + 100 = 340` reads | `~101` writes | `2,040` reads | `20,400` reads | **40.8%** |
-| **100 check-ins** | `in_memory` | `100` reads | `~101` writes | `600` reads | `6,000` reads | **12.0%** |
-| **500 check-ins** | `backfill_full` | `100 + 40 + 500 + 100 = 740` reads | `~101` writes | `4,440` reads | `44,400` reads | **88.8%** |
-| **500 check-ins** | `in_memory` | `100` reads | `~101` writes | `600` reads | `6,000` reads | **12.0%** |
-| **3,000 check-ins** | `backfill_full` | `100 + 40 + 3,000 + 100 = 3,240` reads | `~101` writes | `19,440` reads | **194,400 reads (EXCEEDS 50k after ~15 runs)** | **388.8% (Exceeds Spark)** |
-| **3,000 check-ins** | `in_memory` | `100` reads | `~101` writes | `600` reads | `6,000` reads | **12.0%** |
+| **100 check-ins** | `backfill_full` | `100 + 40 + 100 + 100 = 340` reads | `~101` writes | Enabled (`<= 6/hr`) -> max `2,040` reads/hr | ~3–5 manual syncs = `1,020–1,700` reads | Auto max 10h: **40.8%** / Manual: **3.4%** |
+| **100 check-ins** | `in_memory` | `100` reads | `~101` writes | Enabled (`<= 6/hr`) -> max `600` reads/hr | `300–500` reads | Auto max 10h: **12.0%** / Manual: **1.0%** |
+| **500 check-ins** | `backfill_full` | `100 + 40 + 500 + 100 = 740` reads | `~101` writes | Enabled (`<= 6/hr`) -> max `4,440` reads/hr | ~3–5 manual syncs = `2,220–3,700` reads | Auto max 10h: **88.8%** / Manual: **7.4%** |
+| **500 check-ins** | `in_memory` | `100` reads | `~101` writes | Enabled (`<= 6/hr`) -> max `600` reads/hr | `300–500` reads | Auto max 10h: **12.0%** / Manual: **1.0%** |
+| **3,000 check-ins** | `backfill_full` | `100 + 40 + 3,000 + 100 = 3,240` reads | `~101` writes | **DISABLED (`checkIns > 1,500`)** -> `0` auto reads | 1 manual Sync = `3,240` reads (15 runs max/day before 50k) | Auto: **0%** / 1 manual Sync: **6.5%** |
+| **3,000 check-ins** | `in_memory` | `100` reads | `~101` writes | **DISABLED (`checkIns > 1,500`)** -> `0` auto reads | Manual Sync always reads full collections cleanly | Auto: **0%** |
 
 ---
 
 ## 2. Client Guardrails Preventing Runaway Quota Drain
 
-Without client guards, an open admin tab or rapid check-in burst during a workshop would repeatedly re-scan full collections. Four stacked gates prevent redundant runs:
+Five stacked gates prevent redundant open-tab Firestore reads/writes (`src/utils/stats.ts` & `src/App.tsx`):
 
-1. **Data-Change Fingerprint (`computeLeaderboardDataSignature`)**: Open-tab recompute skips unless at least one check-in, session, or member status/opt-out/profile field actually changed since the last settled snapshot or last completed recompute. Idle open tabs trigger **0** recompute reads/writes.
-2. **5-Minute Debounce (`AUTO_RECOMPUTE_DEBOUNCE_MS = 300,000`)**: Batches rapid workshop check-in bursts (e.g., 50 members scanning within 3 minutes) into **1** trailing recompute instead of 50.
-3. **Hourly Cap (`MAX_AUTO_RECOMPUTES_PER_HOUR = 6`)**: Hard cap of **6 automatic open-tab recomputes per hour per admin session** using a rolling 60-minute timestamp window (`pruneHourlyTimestamps`). Even on an active 2-hour workshop, automatic runs stay `<= 12`.
-4. **Visible-Tab & Confirmation Gate**: Paused when the admin tab is hidden (`document.visibilityState === 'hidden'`), and first-run backfill requires explicit admin confirmation instead of running silently on load.
+1. **Hard Volume Cutoff (`MAX_AUTO_RECOMPUTE_CHECKINS = 1500`)**: Once `checkIns.length > 1500`, `shouldTriggerDebouncedRecompute` always returns `false`. Automatic open-tab recomputes stop completely and **only the manual Sync button** (`PublicLeaderboardView` -> `backfillPublicLeaderboard`) runs on explicit admin click + confirmation.
+2. **Data-Change Fingerprint (`computeLeaderboardDataSignature`)**: Below 1,500 check-ins, open-tab recompute skips unless at least one check-in, session, or member status/opt-out/profile field changed since initial settle or the last completed recompute.
+3. **5-Minute Debounce (`AUTO_RECOMPUTE_DEBOUNCE_MS = 300,000`)**: Batches rapid check-in bursts during a meeting into 1 trailing recompute.
+4. **Hourly Cap (`MAX_AUTO_RECOMPUTES_PER_HOUR = 6`)**: Hard cap of **6 automatic open-tab recomputes per hour** per admin session using `pruneHourlyTimestamps`.
+5. **Visible-Tab & First-Run Confirmation Gate**: Paused when `document.visibilityState === 'hidden'`, and first-run backfill requires explicit admin confirmation.
 
 ---
 
 ## 3. Scaling Above 3,000 Check-Ins (`SERVER_AGGREGATION_THRESHOLD_DOCS`)
 
-- At **3,000+ check-ins**, `16` full-collection `backfillPublicLeaderboard` calls in a single day exhaust the **50,000 free reads/day** budget (`16 × 3,240 = 51,840`), before even counting normal app listeners or CSV exports.
-- **Trigger Point**: Once `checkIns` approaches `2,000–3,000` documents (or >1 admin keeps full-day monitoring tabs open concurrently), upgrade to Blaze / move aggregation to an incremental **Cloud Function (`onDocumentWritten` on `checkIns/{id}`)** maintaining per-member counters in `O(1)` reads instead of client full-collection sweeps.
+- At **3,000 check-ins**, `backfillPublicLeaderboard` reads `~3,240` documents per manual click (`16` manual backfills in a single day would exceed 50,000 reads).
+- **Trigger Point**: Even with auto-recompute disabled above `1,500` check-ins, once `checkIns` approaches `3,000` documents, migrate aggregation to an incremental **Cloud Function (`onDocumentWritten` on `checkIns/{id}`)** on Blaze to maintain per-member counters in `O(1)` reads.

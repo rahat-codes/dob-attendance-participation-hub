@@ -53,7 +53,7 @@ Choose **one** of these two safe options:
 1. **Security Rules (`docs/RULES_MANUAL_CHECK.md`)**:
    - Paste `docs/rules/A1.rules` or `firestore.rules` into **Staging Firebase Console -> Firestore -> Rules -> Rules Playground**.
    - Execute all **10 scenarios** (valid check-in, empty/expired token reject, closed session reject, cross-member `memberPrivate` deny, non-admin vs admin session delete, immutable notification `userId`, unverified super admin deny, link validation).
-   - If Java 21 + Firebase CLI emulators are available locally: run `npm run emulators:exec` to execute `tests/firestore-rules.test.ts` (Suites 1–16).
+   - If Java 21 + Firebase CLI emulators are available locally: run `npm run emulators:exec` to execute `tests/firestore-rules.test.ts` (**15 suites, 22 cases total**: `Suite 1` [2], `Suite 2` [1], `Suite 3` [3], `Suite 4` [1], `Suite 5` [1], `Suite 6` [3], `Suite 7` [1], `Suite 8` [1], `Suite 9` [2], `Suite 11` [1], `Suite 12` [1], `Suite 13` [2], `Suite 14` [1], `Suite 15` [1], `Suite 16` [1]; `Suite 10` unused).
 2. **End-to-End Flow (`docs/PHASE4_MANUAL_CHECK.md`)**:
    - Walk through all **7 sections**: Kiosk 45s rotation + 30s grace window, signed-out QR deep-link (`?s=...&t=...`) strip + auto check-in, self check-in (`camera_scan` & `code_input`) + double-tap idempotency + offline/error states, admin manual pass scan, `completeSession` / `reopenSession` atomic batches, role-scoped listener check (zero console errors for pending users), and `points: 0` / `maxCapacity` soft warnings.
 
@@ -63,6 +63,6 @@ Choose **one** of these two safe options:
 
 | Layer | Rollback Action |
 | :--- | :--- |
-| **Client Build (Hosting)** | Firebase Console -> **Hosting -> Release history** -> hover previous known-good release -> **Roll back** (instant CDN revert). |
+| **Web / Server Build (Cloud Run / AI Studio)** | Route traffic back to the previous healthy Cloud Run revision (`gcloud run services update-traffic <staging-service> --region=asia-northeast1 --to-revisions=<PREVIOUS_REVISION>=100`) or revert the AI Studio staging applet snapshot. (App is served by Node/Express on Cloud Run/AI Studio; no Firebase Hosting is used.) |
 | **Firestore Rules** | Firebase Console -> **Firestore Database -> Rules -> Version history** -> select the previous published ruleset -> **Publish**. If Group B broke a stale client, revert temporarily to `firestore.rules` (A1 + A2) or `docs/rules/A1.rules`. |
 | **Firestore Data** | Import from the step-1 pre-release backup (`exportFullBackupJSON` or Cloud Firestore Managed Export in Google Cloud Console). After any restore, run `prepareMemberDataRepair` and `prepareSessionMigration` dry-runs in **Admin Backup** before re-enabling Group B rules. |
