@@ -37,7 +37,11 @@ import {
   ClubNotification,
 } from '../types';
 import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE, DEFAULT_CHECKIN_SETTINGS } from '../config/constants';
-import { buildPublicLeaderboardItems, buildLeaderboardRecomputeOpsPlan } from '../utils/stats';
+import {
+  buildPublicLeaderboardItems,
+  buildLeaderboardRecomputeOpsPlan,
+  estimateLeaderboardRecomputeReads,
+} from '../utils/stats';
 import {
   getSessionState,
   getSessionTemporalInfo,
@@ -2340,10 +2344,19 @@ async function commitLeaderboardRecomputePlan(
   members: Member[],
   sessions: Session[],
   checkIns: CheckInRecord[],
-  auditDetailsPrefix: string
+  auditDetailsPrefix: string,
+  usesFullCollectionFetch: boolean = false
 ): Promise<{ totalBackfilled: number; totalRemoved: number }> {
   const currentPubSnap = await getDocs(collection(db, PUBLIC_LEADERBOARD_COLLECTION));
   const existingPublicIds = currentPubSnap.docs.map((d) => d.id);
+
+  const readEstimate = estimateLeaderboardRecomputeReads({
+    memberCount: members.length,
+    sessionCount: sessions.length,
+    checkInCount: checkIns.length,
+    publicLeaderboardCount: existingPublicIds.length,
+    usesFullCollectionFetch,
+  });
 
   const plan = buildLeaderboardRecomputeOpsPlan({
     members,
@@ -2353,7 +2366,7 @@ async function commitLeaderboardRecomputePlan(
     chunkLimit: 400,
   });
 
-  const auditDetails = `${auditDetailsPrefix} (${plan.items.length} active builders synced, ${plan.totalRemoved} opted-out/inactive pruned)`;
+  const auditDetails = `${auditDetailsPrefix} (${plan.items.length} active builders synced, ${plan.totalRemoved} opted-out/inactive pruned, est. ${readEstimate.estimatedReads} reads)`;
 
   if (plan.batches.length === 0) {
     const batch = writeBatch(db);
@@ -2382,6 +2395,19 @@ async function commitLeaderboardRecomputePlan(
     }
   }
 
+  console.info(
+    JSON.stringify({
+      event: 'leaderboard_recompute',
+      mode: usesFullCollectionFetch ? 'backfill_full' : 'in_memory',
+      estimatedReads: readEstimate.estimatedReads,
+      membersCount: members.length,
+      sessionsCount: sessions.length,
+      checkInsCount: checkIns.length,
+      syncedCount: plan.items.length,
+      removedCount: plan.totalRemoved,
+    })
+  );
+
   return { totalBackfilled: plan.items.length, totalRemoved: plan.totalRemoved };
 }
 
@@ -2401,7 +2427,8 @@ export async function backfillPublicLeaderboard(): Promise<{ totalBackfilled: nu
       members,
       sessions,
       checkIns,
-      'Backfilled public leaderboard'
+      'Backfilled public leaderboard',
+      true
     );
   } catch (err) {
     console.error('Failed to backfill public leaderboard:', err);
@@ -2419,7 +2446,8 @@ export async function recomputeAndSaveLeaderboard(
       members,
       sessions,
       checkIns,
-      'Recomputed public leaderboard rankings'
+      'Recomputed public leaderboard rankings',
+      false
     );
   } catch (err) {
     console.warn('Failed to commit public leaderboard projection:', err);

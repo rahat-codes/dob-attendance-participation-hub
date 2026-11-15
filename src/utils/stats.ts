@@ -8,6 +8,8 @@ import {
 
 export const BACKFILL_COOLDOWN_MS = 60_000;
 export const AUTO_RECOMPUTE_DEBOUNCE_MS = 300_000; // 5 minutes between open-tab admin recomputes
+export const MAX_AUTO_RECOMPUTES_PER_HOUR = 6;
+export const ONE_HOUR_MS = 3_600_000;
 
 export interface BackfillPreviewSummary {
   eligibleCount: number;
@@ -52,6 +54,80 @@ export function computeBackfillPreviewSummary(members: Member[]): BackfillPrevie
   };
 }
 
+/**
+ * Computes a deterministic fingerprint over attendance/session/member fields that
+ * affect publicLeaderboard rankings, so open-tab recomputes skip no-op rewrites.
+ */
+export function computeLeaderboardDataSignature(
+  members: Member[],
+  sessions: Session[],
+  checkIns: CheckInRecord[]
+): string {
+  const mSig = members
+    .map(
+      (m) =>
+        `${m.id}:${m.status}:${m.leaderboardOptOut ? 1 : 0}:${m.name}:${m.handle}:${m.role}:${(m.tracks || []).join(',')}:${m.showLinksPublicly ? 1 : 0}`
+    )
+    .sort()
+    .join('|');
+  const sSig = sessions
+    .map((s) => `${s.id}:${s.status}:${s.date}:${s.points ?? 10}`)
+    .sort()
+    .join('|');
+  const cSig = checkIns
+    .map((c) => `${c.id}:${c.status}:${c.monthKey || ''}`)
+    .sort()
+    .join('|');
+  const combined = `${members.length}#${sessions.length}#${checkIns.length}#${mSig}#${sSig}#${cSig}`;
+
+  // Compact FNV-1a 32-bit hash + entity counts
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < combined.length; i++) {
+    hash ^= combined.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${members.length}:${sessions.length}:${checkIns.length}:${(hash >>> 0).toString(16)}`;
+}
+
+export function pruneHourlyTimestamps(
+  timestampsMs: readonly number[],
+  nowMs: number = Date.now(),
+  windowMs: number = ONE_HOUR_MS
+): number[] {
+  const cutoff = nowMs - windowMs;
+  return timestampsMs.filter((t) => Number.isFinite(t) && t > cutoff && t <= nowMs + 5_000);
+}
+
+export function estimateLeaderboardRecomputeReads(params: {
+  memberCount: number;
+  sessionCount: number;
+  checkInCount: number;
+  publicLeaderboardCount: number;
+  usesFullCollectionFetch: boolean;
+}): {
+  estimatedReads: number;
+  breakdown: {
+    publicLeaderboardReads: number;
+    membersReads: number;
+    sessionsReads: number;
+    checkInsReads: number;
+  };
+} {
+  const publicLeaderboardReads = Math.max(1, params.publicLeaderboardCount);
+  const membersReads = params.usesFullCollectionFetch ? Math.max(1, params.memberCount) : 0;
+  const sessionsReads = params.usesFullCollectionFetch ? Math.max(1, params.sessionCount) : 0;
+  const checkInsReads = params.usesFullCollectionFetch ? Math.max(1, params.checkInCount) : 0;
+  return {
+    estimatedReads: publicLeaderboardReads + membersReads + sessionsReads + checkInsReads,
+    breakdown: {
+      publicLeaderboardReads,
+      membersReads,
+      sessionsReads,
+      checkInsReads,
+    },
+  };
+}
+
 export function shouldTriggerDebouncedRecompute(params: {
   isAdmin: boolean;
   hasSettledInitialLoad: boolean;
@@ -60,6 +136,10 @@ export function shouldTriggerDebouncedRecompute(params: {
   nowMs?: number;
   lastAutoRecomputeAtMs: number | null;
   minIntervalMs?: number;
+  dataSignature?: string;
+  lastSyncedDataSignature?: string | null;
+  recentRecomputeTimestampsMs?: readonly number[];
+  maxRunsPerHour?: number;
 }): boolean {
   const {
     isAdmin,
@@ -69,10 +149,27 @@ export function shouldTriggerDebouncedRecompute(params: {
     nowMs = Date.now(),
     lastAutoRecomputeAtMs,
     minIntervalMs = AUTO_RECOMPUTE_DEBOUNCE_MS,
+    dataSignature,
+    lastSyncedDataSignature,
+    recentRecomputeTimestampsMs,
+    maxRunsPerHour = MAX_AUTO_RECOMPUTES_PER_HOUR,
   } = params;
 
   if (!isAdmin || !hasSettledInitialLoad || !isTabVisible || !hasExistingProjection) {
     return false;
+  }
+  if (
+    typeof dataSignature === 'string' &&
+    typeof lastSyncedDataSignature === 'string' &&
+    dataSignature === lastSyncedDataSignature
+  ) {
+    return false;
+  }
+  if (Array.isArray(recentRecomputeTimestampsMs)) {
+    const recentInHour = pruneHourlyTimestamps(recentRecomputeTimestampsMs, nowMs);
+    if (recentInHour.length >= maxRunsPerHour) {
+      return false;
+    }
   }
   if (lastAutoRecomputeAtMs === null || lastAutoRecomputeAtMs <= 0) {
     return true;

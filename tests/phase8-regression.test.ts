@@ -20,7 +20,13 @@ import {
 } from '../src/utils/listenerScope';
 import {
   buildPublicLeaderboardItems,
+  computeLeaderboardDataSignature,
   computeMemberStats,
+  estimateLeaderboardRecomputeReads,
+  MAX_AUTO_RECOMPUTES_PER_HOUR,
+  ONE_HOUR_MS,
+  pruneHourlyTimestamps,
+  shouldTriggerDebouncedRecompute,
 } from '../src/utils/stats';
 import type { CheckInRecord, Member, Session } from '../src/types';
 
@@ -211,14 +217,208 @@ async function runTests() {
     assertEq(chunks10.flat(), ids35, 'chunking preserves all session IDs in exact order');
   }
 
-  console.log('\n[Test 5] Server headers & self-unregistering Service Worker invariants');
+  console.log('\n[Test 5] Server hardening headers, compression (skip 206), CSP collector, 404 assets & SW invariants');
   {
     const serverSrc = fs.readFileSync(path.join(process.cwd(), 'server.ts'), 'utf8');
     const swSrc = fs.readFileSync(path.join(process.cwd(), 'public/sw.js'), 'utf8');
+    assert(serverSrc.includes("import compression from 'compression'") && serverSrc.includes('threshold: 1024'), 'server uses standard compression package with 1 KB threshold');
+    assert(serverSrc.includes("res.statusCode === 206 || res.getHeader('Content-Range')"), 'compression filter explicitly skips HTTP 206 / Content-Range responses');
     assert(serverSrc.includes("X-Content-Type-Options', 'nosniff'"), 'server sets X-Content-Type-Options: nosniff');
-    assert(serverSrc.includes("Content-Security-Policy-Report-Only"), 'server sets Content-Security-Policy-Report-Only header');
-    assert(serverSrc.includes("immutable: true"), 'server sets immutable cache only on hashed /assets bundles');
+    assert(serverSrc.includes('Strict-Transport-Security'), 'server conditionally emits HSTS on HTTPS / x-forwarded-proto=https');
+    assert(serverSrc.includes("Content-Security-Policy-Report-Only") && serverSrc.includes('report-uri /api/csp-report'), 'server sets CSP Report-Only pointing to /api/csp-report');
+    assert(serverSrc.includes("'/api/csp-report'") && serverSrc.includes("limit: '8kb'") && serverSrc.includes('allowCspReportIp'), 'POST /api/csp-report is size-capped (8kb) and rate-limited per IP');
+    assert(serverSrc.includes("app.get('/api/health'") && serverSrc.includes("res.json({ status: 'ok' })"), '/api/health returns only { status: "ok" }');
+    assert(serverSrc.includes('path.extname(req.path)') && serverSrc.includes("res.status(404).type('text/plain').send('Not found')"), 'unknown paths with file extensions return 404 instead of index.html');
+    assert(serverSrc.includes('req.path.startsWith(\'/api/\')') && !serverSrc.includes('err.stack'), 'error handler omits stack traces and returns JSON for /api vs plain text');
+    assert(serverSrc.includes('immutable: true'), 'server sets immutable cache only on hashed /assets bundles');
     assert(swSrc.includes('self.registration.unregister()') && !swSrc.includes('caches.open'), 'public/sw.js only clears caches/unregisters and never caches network responses');
+  }
+
+  console.log('\n[Test 6] Leaderboard recompute cost guards (data signature, 6/hr cap, read estimates)');
+  {
+    const baseMembers: Member[] = [
+      {
+        id: 'mem_1',
+        name: 'Alice',
+        handle: '@alice',
+        role: 'Builder',
+        tracks: ['Software & Systems'],
+        avatarUrl: '',
+        joinedDate: '2026-01-01',
+        status: 'Active',
+      },
+    ];
+    const baseSessions: Session[] = [
+      {
+        id: 'sess_1',
+        title: 'Build Night',
+        track: 'Software & Systems',
+        date: '2026-10-10',
+        startTime: '18:00',
+        endTime: '20:00',
+        timezone: 'Asia/Seoul',
+        location: 'Lab A',
+        description: '',
+        host: 'Lead',
+        status: 'completed',
+        points: 10,
+      },
+    ];
+    const baseCheckIns: CheckInRecord[] = [
+      {
+        id: 'sess_1_mem_1',
+        sessionId: 'sess_1',
+        memberId: 'mem_1',
+        method: 'camera_scan',
+        status: 'present',
+        monthKey: '2026-10',
+        checkedInAt: '2026-10-10T09:05:00.000Z',
+        timestamp: '2026-10-10T09:05:00.000Z',
+      },
+    ];
+
+    const sig1 = computeLeaderboardDataSignature(baseMembers, baseSessions, baseCheckIns);
+    const sigSame = computeLeaderboardDataSignature([...baseMembers], [...baseSessions], [...baseCheckIns]);
+    assertEq(sig1, sigSame, 'computeLeaderboardDataSignature is deterministic for identical snapshots');
+
+    const sigNewCheckIn = computeLeaderboardDataSignature(
+      baseMembers,
+      baseSessions,
+      [...baseCheckIns, { ...baseCheckIns[0], id: 'sess_2_mem_1', sessionId: 'sess_2' }]
+    );
+    const sigStatusChange = computeLeaderboardDataSignature(
+      [{ ...baseMembers[0], status: 'Inactive' }],
+      baseSessions,
+      baseCheckIns
+    );
+    const sigSessionPointsChange = computeLeaderboardDataSignature(
+      baseMembers,
+      [{ ...baseSessions[0], points: 25 }],
+      baseCheckIns
+    );
+    assert(sigNewCheckIn !== sig1, 'data signature changes when a new check-in arrives');
+    assert(sigStatusChange !== sig1, 'data signature changes when member status changes');
+    assert(sigSessionPointsChange !== sig1, 'data signature changes when session points change');
+
+    const nowMs = Date.parse('2026-10-20T12:00:00.000Z');
+    const sixMinutesAgo = nowMs - 6 * 60_000;
+
+    // 1. No-op identical signature is skipped even past the 5m debounce
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sig1,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: [],
+      }),
+      false,
+      'skips open-tab recompute when live data signature is unchanged'
+    );
+
+    // 2. Changed signature within <6 runs/hr triggers cleanly
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sigNewCheckIn,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: [nowMs - 50 * 60_000, nowMs - 30 * 60_000],
+      }),
+      true,
+      'triggers recompute when data changed, >=5m elapsed, and runs < 6/hr'
+    );
+
+    // 3. Hard cap of 6 runs/hr blocks a 7th automatic run
+    const sixRecentRuns = Array.from({ length: MAX_AUTO_RECOMPUTES_PER_HOUR }, (_, i) => nowMs - (i + 6) * 60_000);
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sigNewCheckIn,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: sixRecentRuns,
+      }),
+      false,
+      'enforces hard cap of 6 automatic open-tab recomputes per hour'
+    );
+
+    // 4. Rolling window drops runs older than 1 hour so recomputes resume naturally
+    const expiredPlusFive = [nowMs - ONE_HOUR_MS - 10_000, ...sixRecentRuns.slice(0, 5)];
+    assertEq(pruneHourlyTimestamps(expiredPlusFive, nowMs).length, 5, 'pruneHourlyTimestamps drops entries older than 1 hour');
+    assertEq(
+      shouldTriggerDebouncedRecompute({
+        isAdmin: true,
+        hasSettledInitialLoad: true,
+        isTabVisible: true,
+        hasExistingProjection: true,
+        nowMs,
+        lastAutoRecomputeAtMs: sixMinutesAgo,
+        dataSignature: sigNewCheckIn,
+        lastSyncedDataSignature: sig1,
+        recentRecomputeTimestampsMs: expiredPlusFive,
+      }),
+      true,
+      'resumes recompute allowance once an older timestamp ages past 1 hour'
+    );
+
+    // 5. Read cost estimates match documented 100 / 500 / 3,000 scales
+    assertEq(
+      estimateLeaderboardRecomputeReads({
+        memberCount: 100,
+        sessionCount: 40,
+        checkInCount: 100,
+        publicLeaderboardCount: 100,
+        usesFullCollectionFetch: true,
+      }).estimatedReads,
+      340,
+      'read estimate for 100 check-ins backfill_full = 340 reads'
+    );
+    assertEq(
+      estimateLeaderboardRecomputeReads({
+        memberCount: 100,
+        sessionCount: 40,
+        checkInCount: 500,
+        publicLeaderboardCount: 100,
+        usesFullCollectionFetch: true,
+      }).estimatedReads,
+      740,
+      'read estimate for 500 check-ins backfill_full = 740 reads'
+    );
+    assertEq(
+      estimateLeaderboardRecomputeReads({
+        memberCount: 100,
+        sessionCount: 40,
+        checkInCount: 3000,
+        publicLeaderboardCount: 100,
+        usesFullCollectionFetch: true,
+      }).estimatedReads,
+      3240,
+      'read estimate for 3,000 check-ins backfill_full = 3,240 reads'
+    );
+    assertEq(
+      estimateLeaderboardRecomputeReads({
+        memberCount: 100,
+        sessionCount: 40,
+        checkInCount: 3000,
+        publicLeaderboardCount: 100,
+        usesFullCollectionFetch: false,
+      }).estimatedReads,
+      100,
+      'read estimate for in_memory recompute = 100 reads (publicLeaderboard IDs only)'
+    );
   }
 
   console.log(`\nPhase 8 Regression Results: ${passed} passed, ${failed} failed\n`);

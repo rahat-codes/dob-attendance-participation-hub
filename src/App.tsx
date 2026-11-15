@@ -51,6 +51,8 @@ import { todayInClubTz } from './utils/sessionWindow';
 import {
   AUTO_RECOMPUTE_DEBOUNCE_MS,
   computeBackfillPreviewSummary,
+  computeLeaderboardDataSignature,
+  pruneHourlyTimestamps,
   shouldTriggerDebouncedRecompute,
 } from './utils/stats';
 import { isTabVisible } from './utils/reminders';
@@ -195,6 +197,8 @@ export default function App() {
   const initialSessionsSettledRef = useRef(false);
   const initialCheckInsSettledRef = useRef(false);
   const lastAutoRecomputeAtRef = useRef<number | null>(null);
+  const lastSyncedDataSignatureRef = useRef<string | null>(null);
+  const recentAutoRecomputeMsRef = useRef<number[]>([]);
 
   // Guest view toggle & active guest navigation tab
   const [showGuestLeaderboard, setShowGuestLeaderboard] = useState(false);
@@ -516,6 +520,7 @@ export default function App() {
       initialMembersSettledRef.current = false;
       initialSessionsSettledRef.current = false;
       initialCheckInsSettledRef.current = false;
+      lastSyncedDataSignatureRef.current = null;
       historicalSessionsRef.current = [];
       historicalCheckInsRef.current = [];
       setHasLoadedAllHistory(false);
@@ -1039,6 +1044,22 @@ export default function App() {
     [shouldPromptFirstRunBackfill, members]
   );
 
+  const currentLeaderboardDataSignature = useMemo(
+    () => computeLeaderboardDataSignature(members, sessions, checkIns),
+    [members, sessions, checkIns]
+  );
+
+  // Capture initial baseline signature once initial admin snapshot loads settle so open-tab idle doesn't trigger a no-op write
+  useEffect(() => {
+    if (
+      isAdmin &&
+      initialAdminLoadSettledRef.current &&
+      lastSyncedDataSignatureRef.current === null
+    ) {
+      lastSyncedDataSignatureRef.current = currentLeaderboardDataSignature;
+    }
+  }, [isAdmin, currentLeaderboardDataSignature]);
+
   const handleConfirmFirstRunBackfill = async () => {
     if (!isAdmin || backfillPromptBusy) return;
     setBackfillPromptBusy(true);
@@ -1046,7 +1067,13 @@ export default function App() {
     try {
       const { backfillPublicLeaderboard } = await loadFirestoreService();
       const res = await backfillPublicLeaderboard();
-      lastAutoRecomputeAtRef.current = Date.now();
+      const now = Date.now();
+      lastAutoRecomputeAtRef.current = now;
+      lastSyncedDataSignatureRef.current = currentLeaderboardDataSignature;
+      recentAutoRecomputeMsRef.current = pruneHourlyTimestamps(
+        [...recentAutoRecomputeMsRef.current, now],
+        now
+      );
       setBackfillPromptStatus(
         `Public leaderboard initialized (${res.totalBackfilled} published, ${res.totalRemoved} pruned).`
       );
@@ -1058,7 +1085,7 @@ export default function App() {
     }
   };
 
-  // Debounced open-tab auto-recompute (every 5 minutes max while admin stays online; never on initial load)
+  // Debounced open-tab auto-recompute (only when live data changed, >=5m debounce, <=6 runs/hour, visible tab)
   useEffect(() => {
     if (
       !shouldTriggerDebouncedRecompute({
@@ -1067,6 +1094,9 @@ export default function App() {
         isTabVisible: isTabVisible(),
         hasExistingProjection: hasPublicLeaderboardLoaded && publicLeaderboard.length > 0,
         lastAutoRecomputeAtMs: lastAutoRecomputeAtRef.current,
+        dataSignature: currentLeaderboardDataSignature,
+        lastSyncedDataSignature: lastSyncedDataSignatureRef.current,
+        recentRecomputeTimestampsMs: recentAutoRecomputeMsRef.current,
       })
     ) {
       return;
@@ -1078,8 +1108,10 @@ export default function App() {
     });
     if (recomputeSource === 'skip') return;
 
+    const scheduledSignature = currentLeaderboardDataSignature;
     const timer = setTimeout(() => {
       if (!isTabVisible()) return;
+      if (scheduledSignature === lastSyncedDataSignatureRef.current) return;
       loadFirestoreService()
         .then(async ({ backfillPublicLeaderboard, recomputeAndSaveLeaderboard }) => {
           if (recomputeSource === 'live_full') {
@@ -1089,7 +1121,13 @@ export default function App() {
           }
         })
         .then(() => {
-          lastAutoRecomputeAtRef.current = Date.now();
+          const now = Date.now();
+          lastAutoRecomputeAtRef.current = now;
+          lastSyncedDataSignatureRef.current = scheduledSignature;
+          recentAutoRecomputeMsRef.current = pruneHourlyTimestamps(
+            [...recentAutoRecomputeMsRef.current, now],
+            now
+          );
         })
         .catch((err) => {
           console.warn('Debounced leaderboard recompute notice:', err);
@@ -1097,7 +1135,16 @@ export default function App() {
     }, AUTO_RECOMPUTE_DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [isAdmin, hasLoadedAllHistory, hasPublicLeaderboardLoaded, publicLeaderboard.length, members, sessions, checkIns]);
+  }, [
+    isAdmin,
+    hasLoadedAllHistory,
+    hasPublicLeaderboardLoaded,
+    publicLeaderboard.length,
+    members,
+    sessions,
+    checkIns,
+    currentLeaderboardDataSignature,
+  ]);
 
   // 1. Unauthenticated or Unapproved View
   if (!user || (!isApprovedMember && !isAdmin)) {
