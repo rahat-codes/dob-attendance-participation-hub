@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { formatAuthSignInError } from '../src/utils/authErrors';
 
 /**
  * Test Suite: Login Page Wiring and State Machine Transitions
@@ -197,18 +198,7 @@ console.log('--- RUNNING LOGIN WIRING & STATE TESTS ---');
       }
       return { ok: true, signingIn: false, error: null };
     } catch (err: any) {
-      const code = err?.code;
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'auth/user-cancelled') {
-        // User closed or cancelled: no redirect, no error displayed
-        return { ok: false, signingIn: false, error: null };
-      }
-      if (code === 'auth/network-request-failed') {
-        authError = 'Network error connecting to sign-in service. Please check your connection and try again.';
-      } else if (code === 'auth/unauthorized-domain') {
-        authError = 'This domain is not authorized for authentication. Please contact an admin.';
-      } else {
-        authError = "Sign-in isn't available on this address; contact an admin";
-      }
+      authError = formatAuthSignInError(err, 'dob-hub.vercel.app');
       return { ok: false, signingIn: false, error: authError };
     } finally {
       isSigningIn = false;
@@ -233,11 +223,17 @@ console.log('--- RUNNING LOGIN WIRING & STATE TESTS ---');
   assert.equal(isSigningIn, false, 'signingIn flag must reset to false after network failure');
   assert.ok(netResult.error?.includes('Network error'), 'Helpful network message shown');
 
-  // Case D: Unauthorized domain
+  // Case D: Unauthorized domain includes active hostname and Firebase Console guidance
   const domainResult = await mockSignIn('auth/unauthorized-domain');
   assert.equal(domainResult.ok, false);
   assert.equal(isSigningIn, false, 'signingIn flag must reset to false after domain failure');
   assert.ok(domainResult.error?.includes('not authorized'), 'Domain authorization error shown');
+  assert.ok(domainResult.error?.includes('dob-hub.vercel.app'), 'Unauthorized domain error should name active hostname');
+  assert.ok(domainResult.error?.includes('Authorized domains'), 'Unauthorized domain error should point admin to Authorized domains setting');
+
+  // Case E: Unauthorized domain fallback when hostname unavailable
+  const fallbackDomainMsg = formatAuthSignInError({ code: 'auth/unauthorized-domain' }, '');
+  assert.ok(fallbackDomainMsg?.includes('This domain is not authorized'));
 
   console.log('✓ Popup cancellation and error recovery resets button state without stuck loading');
 }

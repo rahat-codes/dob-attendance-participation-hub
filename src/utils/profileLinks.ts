@@ -10,6 +10,20 @@ export interface LinkValidationResult {
 }
 
 /**
+ * Filters an external auth photo URL so only short https:// URLs are written to
+ * Firebase Auth profiles or initial user creation payloads.
+ */
+export function sanitizeAuthPhotoUrl(url?: string): string {
+  if (!url || typeof url !== 'string') return '';
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= 500 && /^https:\/\/.+/i.test(trimmed)) {
+    return trimmed;
+  }
+  return '';
+}
+
+/**
  * Normalizes and validates a GitHub profile input.
  * Allowed formats: "user", "@user", "github.com/user", "https://github.com/user".
  * Username rules: 1-39 alphanumeric/hyphen characters, cannot start or end with a hyphen.
@@ -64,14 +78,14 @@ export function normalizeLinkedInUrl(input?: string): LinkValidationResult {
   }
 
   let slug = clean;
-  const match = clean.match(/(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([a-zA-Z0-9_%-]{3,100})\/?/i);
+  const match = clean.match(/(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([a-zA-Z0-9._%-]{3,100})\/?/i);
   if (match) {
     slug = match[1];
   } else if (clean.startsWith('in/')) {
     slug = clean.slice(3).replace(/\/$/, '');
   }
 
-  if (!/^[a-zA-Z0-9_%-]{3,100}$/.test(slug)) {
+  if (!/^[a-zA-Z0-9._%-]{3,100}$/.test(slug) || slug.includes('..')) {
     return {
       valid: false,
       error: 'Please enter a valid LinkedIn profile URL (e.g. linkedin.com/in/username).',

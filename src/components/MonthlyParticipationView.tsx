@@ -187,8 +187,8 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
   // Month sessions
   const currentMonthSessions = useMemo(() => {
     return sessions
-      .filter((s) => s.status !== 'cancelled' && !s.deletedAt && s.date.startsWith(selectedMonth))
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .filter((s) => s.status !== 'cancelled' && !s.deletedAt && (s.date || '').startsWith(selectedMonth))
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [sessions, selectedMonth]);
 
   // Helper for builder tier determination
@@ -1064,7 +1064,7 @@ export const MonthlyParticipationView: React.FC<MonthlyParticipationViewProps> =
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         <span className="font-mono text-[10px] text-[#b5ff00] uppercase font-semibold">
-                          {record.method.replace('_', ' ')}
+                          {(record.method || 'code_input').replace('_', ' ')}
                         </span>
                       </td>
                     </tr>

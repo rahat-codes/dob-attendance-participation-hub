@@ -105,9 +105,9 @@ export const SessionsView: React.FC<SessionsViewProps> = React.memo(({
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           return (
-            s.title.toLowerCase().includes(q) ||
-            (s.sessionCode && s.sessionCode.toLowerCase().includes(q)) ||
-            s.location.toLowerCase().includes(q)
+            (s.title || '').toLowerCase().includes(q) ||
+            Boolean(s.sessionCode && s.sessionCode.toLowerCase().includes(q)) ||
+            (s.location || '').toLowerCase().includes(q)
           );
         }
         return true;
@@ -153,8 +153,8 @@ export const SessionsView: React.FC<SessionsViewProps> = React.memo(({
     const q = memberSearchQuery.toLowerCase();
     return availableMembersToAdd.filter(
       (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.handle.toLowerCase().includes(q) ||
+        (m.name || '').toLowerCase().includes(q) ||
+        (m.handle || '').toLowerCase().includes(q) ||
         (m.role && m.role.toLowerCase().includes(q))
     );
   }, [availableMembersToAdd, memberSearchQuery]);

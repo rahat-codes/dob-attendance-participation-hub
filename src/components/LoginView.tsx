@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { SafeExternalLink } from './common/SafeExternalLink';
 import { decodeApplication } from '../utils/application';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 
 const ApplicationForm = lazy(() =>
   import('./ApplicationForm').then((mod) => ({ default: mod.ApplicationForm }))
@@ -59,7 +60,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     try {
       await acceptMembershipInvitation();
     } catch (err: any) {
-      setRespondError(err.message || 'Failed to accept membership invitation.');
+      setRespondError(formatUserFriendlyFirestoreError(err, 'Failed to accept membership invitation.'));
     } finally {
       setIsRespondingToOffer(false);
     }
@@ -74,7 +75,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     try {
       await declineMembershipInvitation();
     } catch (err: any) {
-      setRespondError(err.message || 'Failed to decline membership invitation.');
+      setRespondError(formatUserFriendlyFirestoreError(err, 'Failed to decline membership invitation.'));
     } finally {
       setIsRespondingToOffer(false);
     }
@@ -258,7 +259,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                   try {
                     await submitApplicationForm(appData);
                   } catch (err: any) {
-                    setLinkError(err?.message || 'Failed to submit application.');
+                    setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to submit application.'));
                     throw err;
                   }
                 }}
@@ -296,7 +297,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
             <div>
               <h2 className="text-base font-bold text-white">Registration Error</h2>
               <p className="text-xs text-red-300 mt-2 leading-relaxed">
-                {registrationError?.message || authError || 'We could not register your request: [registration-failed]. Please try again or contact an admin.'}
+                {formatUserFriendlyFirestoreError(
+                  registrationError?.message || authError,
+                  'We could not register your request. Please try again or contact an admin.'
+                )}
               </p>
             </div>
             <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
@@ -367,7 +371,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                         await submitApplicationForm(appData);
                         setIsEditingPendingHandle(false);
                       } catch (err: any) {
-                        setLinkError(err?.message || 'Failed to update application.');
+                        setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to update application.'));
                         throw err;
                       }
                     }}
@@ -603,7 +607,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     try {
                       await reRequestAccess(appData);
                     } catch (err: any) {
-                      setLinkError(err?.message || 'Failed to submit re-application.');
+                      setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to submit re-application.'));
                       throw err;
                     }
                   }}
@@ -643,7 +647,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
                     try {
                       await reRequestAccess(appData);
                     } catch (err: any) {
-                      setLinkError(err?.message || 'Failed to submit re-application.');
+                      setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to submit re-application.'));
                       throw err;
                     }
                   }}

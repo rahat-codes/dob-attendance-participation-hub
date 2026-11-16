@@ -183,19 +183,21 @@ export const MembersView: React.FC<MembersViewProps> = React.memo(({
   const filteredMembers = useMemo(() => {
     return members
       .filter((m) => {
+        const tracks = Array.isArray(m.tracks) ? m.tracks : [];
         if (roleFilter !== 'all' && m.role !== roleFilter) return false;
-        if (trackFilter !== 'all' && !m.tracks.includes(trackFilter as BuilderTrack)) return false;
+        if (trackFilter !== 'all' && !tracks.includes(trackFilter as BuilderTrack)) return false;
 
         if (searchQuery.trim()) {
           const q = searchQuery.trim().toLowerCase();
           const cleanQ = q.startsWith('@') ? q.substring(1) : q;
-          const matchName = m.name.toLowerCase().includes(q);
+          const matchName = (m.name || '').toLowerCase().includes(q);
+          const handle = (m.handle || '').toLowerCase();
           const matchHandle =
-            m.handle.toLowerCase().includes(q) ||
-            m.handle.toLowerCase().replace('@', '').includes(cleanQ);
-          const matchRole = m.role.toLowerCase().includes(q);
+            handle.includes(q) ||
+            handle.replace('@', '').includes(cleanQ);
+          const matchRole = (m.role || '').toLowerCase().includes(q);
           const matchEmail = m.email ? m.email.toLowerCase().includes(q) : false;
-          const matchTracks = m.tracks.some((t) => t.toLowerCase().includes(q));
+          const matchTracks = tracks.some((t) => t.toLowerCase().includes(q));
           const matchBio = m.bio ? m.bio.toLowerCase().includes(q) : false;
           return matchName || matchHandle || matchRole || matchEmail || matchTracks || matchBio;
         }
@@ -206,8 +208,8 @@ export const MembersView: React.FC<MembersViewProps> = React.memo(({
         const bStats = memberStatsMap.get(b.id);
         if (sortBy === 'attendance') return (bStats?.total ?? 0) - (aStats?.total ?? 0) || (bStats?.streak ?? 0) - (aStats?.streak ?? 0);
         if (sortBy === 'streak') return (bStats?.streak ?? 0) - (aStats?.streak ?? 0) || (bStats?.total ?? 0) - (aStats?.total ?? 0);
-        if (sortBy === 'name') return a.name.localeCompare(b.name);
-        if (sortBy === 'newest') return b.joinedDate.localeCompare(a.joinedDate);
+        if (sortBy === 'name') return (a.name || '').localeCompare(b.name || '');
+        if (sortBy === 'newest') return (b.joinedDate || '').localeCompare(a.joinedDate || '');
         return 0;
       });
   }, [members, roleFilter, trackFilter, searchQuery, sortBy, memberStatsMap]);
@@ -496,7 +498,7 @@ export const MembersView: React.FC<MembersViewProps> = React.memo(({
                         {mostFrequentAttendee.handle}
                       </div>
                       <div className="text-[11px] text-zinc-500 font-sans mt-0.5 line-clamp-1">
-                        {mostFrequentAttendee.tracks.join(' · ')}
+                        {(Array.isArray(mostFrequentAttendee.tracks) ? mostFrequentAttendee.tracks : []).join(' · ')}
                       </div>
                     </div>
                   </div>
@@ -543,9 +545,9 @@ export const MembersView: React.FC<MembersViewProps> = React.memo(({
                           {topAttendeeLatestCheckIn.sessionTitle}
                         </div>
                         <div className="text-[11px] text-zinc-400 font-mono mt-0.5 flex items-center gap-2">
-                          <span>Track: {topAttendeeLatestCheckIn.track}</span>
+                          <span>Track: {topAttendeeLatestCheckIn.track || 'General'}</span>
                           <span aria-hidden="true">·</span>
-                          <span className="capitalize">{topAttendeeLatestCheckIn.method.replace('_', ' ')}</span>
+                          <span className="capitalize">{(topAttendeeLatestCheckIn.method || 'code_input').replace('_', ' ')}</span>
                         </div>
                       </div>
                     ) : (
@@ -880,7 +882,7 @@ export const MembersView: React.FC<MembersViewProps> = React.memo(({
 
                 {/* Tracks */}
                 <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-zinc-400">
-                  {member.tracks.map((t, i) => (
+                  {(Array.isArray(member.tracks) ? member.tracks : []).map((t, i) => (
                     <span key={t}>
                       {i > 0 && <span className="mr-1.5 text-zinc-700">·</span>}
                       <span>{t}</span>

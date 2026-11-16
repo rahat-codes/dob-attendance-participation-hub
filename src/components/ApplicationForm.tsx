@@ -17,6 +17,7 @@ import {
 import { BuilderTrack, UserProfile } from '../types';
 import { ApplicationInput, validateApplication, decodeApplication } from '../utils/application';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 import { Switch } from '../ui/Switch';
 import { BUILDER_TRACKS } from '../config/constants';
 
@@ -106,7 +107,7 @@ export const ApplicationForm: React.FC<ApplicationFormProps> = ({
       await onSubmit(validation.sanitized);
       setSubmittedData(validation.sanitized);
     } catch (err: any) {
-      setError(err?.message || 'Failed to submit application. Please try again.');
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to submit application. Please try again.'));
     } finally {
       setSubmitting(false);
     }

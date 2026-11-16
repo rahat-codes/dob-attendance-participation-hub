@@ -68,9 +68,11 @@ import {
   type CheckInStoreAdapter,
   executeSelfCheckInWithStore,
   executeManualCheckInWithStore,
+  isPermissionDeniedError,
 } from '../utils/checkInFlow';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 import { ensureFreshServerTimeOffset, getCorrectedNowMs } from '../utils/serverTime';
-import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
+import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl, sanitizeAuthPhotoUrl } from '../utils/profileLinks';
 import {
   isTabVisible,
   filterUpcomingReminderSessions,
@@ -78,7 +80,7 @@ import {
 } from '../utils/reminders';
 import { chunkIds } from '../utils/listenerScope';
 
-export { SUPER_ADMIN_EMAIL, type SessionBatchPlan, buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan };
+export { SUPER_ADMIN_EMAIL, sanitizeAuthPhotoUrl, type SessionBatchPlan, buildCompleteSessionBatchPlan, buildReopenSessionBatchPlan };
 
 /**
  * Ensures any avatar data URL is compressed and centered before writing to Firestore,
@@ -449,27 +451,32 @@ export async function revokeAdminRole(targetUid: string, targetEmail: string): P
 
 export async function ensureUserProfile(uid: string, email: string, displayName: string, photoURL?: string): Promise<UserProfile> {
   const userRef = doc(db, USERS_COLLECTION, uid);
+  const safeAuthPhoto = sanitizeAuthPhotoUrl(photoURL);
+  const cleanDisplayName = ((displayName || '').trim() || 'Club Builder').slice(0, 100);
   try {
     const snap = await getDoc(userRef);
     if (snap.exists()) {
-      const existing = snap.data() as UserProfile;
-      if (photoURL && !existing.photoURL) {
-        ensureSafeAvatarUrl(photoURL).then((safe) => {
-          if (safe) {
-            updateDoc(userRef, { photoURL: safe, updatedAt: new Date().toISOString() }).catch(() => {});
-          }
-        }).catch(() => {});
+      const existing = { id: snap.id, ...(snap.data() as any) } as UserProfile;
+      const backfill: Record<string, any> = {};
+      if (!(snap.data() as any)?.id) {
+        backfill.id = uid;
+      }
+      if (safeAuthPhoto && !existing.photoURL) {
+        backfill.photoURL = safeAuthPhoto;
+      }
+      if (Object.keys(backfill).length > 0) {
+        backfill.updatedAt = new Date().toISOString();
+        updateDoc(userRef, backfill).catch(() => {});
       }
       return existing;
     }
 
     // Write minimal profile first without blocking on avatar compression
-    const rawPhoto = photoURL || '';
     const newProfile: UserProfile = {
       id: uid,
       email: (email || '').trim().toLowerCase(),
-      displayName: (displayName || '').trim() || 'Club Builder',
-      photoURL: rawPhoto,
+      displayName: cleanDisplayName,
+      photoURL: safeAuthPhoto,
       status: 'pending', // Initial state machine phase: always pending
       readAnnouncementIds: [],
       notificationPrefs: {
@@ -483,13 +490,6 @@ export async function ensureUserProfile(uid: string, email: string, displayName:
 
     try {
       await setDoc(userRef, newProfile);
-      if (rawPhoto) {
-        ensureSafeAvatarUrl(rawPhoto).then((safe) => {
-          if (safe && safe !== rawPhoto) {
-            updateDoc(userRef, { photoURL: safe, updatedAt: new Date().toISOString() }).catch(() => {});
-          }
-        }).catch(() => {});
-      }
       return newProfile;
     } catch (writeErr: any) {
       // If the write failed (e.g. concurrent creation race), re-read immediately
@@ -576,7 +576,7 @@ export async function submitApplication(
         linkedinUrl: sanitized.linkedinUrl,
         portfolioUrl: sanitized.portfolioUrl || undefined,
         showLinksPublicly: sanitized.showLinksPublicly ?? true,
-        displayName: sanitized.applicantName,
+        displayName: sanitized.applicantName.slice(0, 100),
         requestedNotes: encodedSummary,
         membershipRequestedAt: now,
         updatedAt: now,
@@ -608,7 +608,7 @@ export async function reRequestMembership(
         userRef,
         removeUndefinedFields({
           status: 'pending',
-          applicantName: sanitized.applicantName,
+          applicantName: sanitized.applicantName.slice(0, 100),
           applicantHandle: sanitized.applicantHandle,
           applicantStudentId: sanitized.applicantStudentId || undefined,
           applicantTrack: sanitized.applicantTrack,
@@ -617,7 +617,7 @@ export async function reRequestMembership(
           linkedinUrl: sanitized.linkedinUrl,
           portfolioUrl: sanitized.portfolioUrl || undefined,
           showLinksPublicly: sanitized.showLinksPublicly ?? true,
-          displayName: sanitized.applicantName,
+          displayName: sanitized.applicantName.slice(0, 100),
           requestedNotes: encodedSummary,
           membershipRequestedAt: now,
           updatedAt: now,
@@ -632,7 +632,7 @@ export async function reRequestMembership(
   try {
     await updateDoc(userRef, {
       status: 'pending',
-      requestedNotes: typeof application === 'string' ? application : '',
+      requestedNotes: typeof application === 'string' ? application.slice(0, 1000) : '',
       membershipRequestedAt: now,
       updatedAt: now,
     });
@@ -648,13 +648,21 @@ export async function updateUserSelfProfile(
     photoURL?: string;
     requestedNotes?: string;
     notificationPrefs?: UserProfile['notificationPrefs'];
+    notificationPreferences?: UserProfile['notificationPreferences'];
   }
 ): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, uid);
   try {
-    const cleanUpdates = { ...updates };
-    if (cleanUpdates.photoURL) {
-      cleanUpdates.photoURL = await ensureSafeAvatarUrl(cleanUpdates.photoURL);
+    const cleanUpdates: Record<string, any> = { ...updates };
+    if (typeof cleanUpdates.displayName === 'string') {
+      cleanUpdates.displayName = cleanUpdates.displayName.trim().slice(0, 100) || 'Club Builder';
+    }
+    if (typeof cleanUpdates.requestedNotes === 'string') {
+      cleanUpdates.requestedNotes = cleanUpdates.requestedNotes.trim().slice(0, 1000);
+    }
+    if (cleanUpdates.photoURL !== undefined) {
+      const safe = (await ensureSafeAvatarUrl(cleanUpdates.photoURL)) || '';
+      cleanUpdates.photoURL = safe.toLowerCase().startsWith('http://') ? '' : safe;
     }
     await updateDoc(userRef, removeUndefinedFields({
       ...cleanUpdates,
@@ -703,12 +711,12 @@ export async function requestMembershipLink(
   const userRef = doc(db, USERS_COLLECTION, userId);
   try {
     const updatePayload: Record<string, any> = {
-      requestedNotes: (requestedNotes || '').trim(),
+      requestedNotes: (requestedNotes || '').trim().slice(0, 1000),
       membershipRequestedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     if (displayName && displayName.trim()) {
-      updatePayload.displayName = displayName.trim();
+      updatePayload.displayName = displayName.trim().slice(0, 100);
     }
     await updateDoc(userRef, updatePayload);
   } catch (err) {
@@ -2324,7 +2332,7 @@ export async function syncMemberCheckInToPublicLeaderboard(
   } catch (err: any) {
     // Score writes on publicLeaderboard are admin-restricted under firestore.rules;
     // non-admin self check-ins ignore permission-denied cleanly (recomputed on admin sync/session refresh).
-    if (err?.code === 'permission-denied') {
+    if (isPermissionDeniedError(err)) {
       return;
     }
     console.warn('Public leaderboard sync notice:', err);
@@ -2706,6 +2714,7 @@ export async function markAllNotificationsAsRead(userId: string, _notifs?: ClubN
       where('read', '==', false)
     );
     const snap = await getDocs(q);
+    if (snap.empty) return;
     const batch = writeBatch(db);
     snap.forEach((d) => {
       batch.update(d.ref, { read: true });
@@ -2830,7 +2839,7 @@ export async function updateMemberSelfProfile(
 ): Promise<{ success: boolean; message?: string }> {
   try {
     let targetMemberId = (memberId || '').trim();
-    if (!targetMemberId || targetMemberId === 'undefined' || !targetMemberId.startsWith('mem_')) {
+    if (!targetMemberId || targetMemberId === 'undefined' || targetMemberId === auth.currentUser?.uid) {
       if (auth.currentUser) {
         const userSnap = await getDoc(doc(db, USERS_COLLECTION, auth.currentUser.uid));
         if (userSnap.exists()) {
@@ -2841,7 +2850,7 @@ export async function updateMemberSelfProfile(
             targetMemberId = userData.approvedMemberId;
           }
         }
-        if (!targetMemberId || !targetMemberId.startsWith('mem_')) {
+        if (!targetMemberId || targetMemberId === auth.currentUser.uid) {
           const q = query(
             collection(db, MEMBERS_COLLECTION),
             where('authUid', '==', auth.currentUser.uid),
@@ -2859,8 +2868,52 @@ export async function updateMemberSelfProfile(
       return { success: false, message: 'No linked builder profile ID found to update.' };
     }
 
+    const cleanName = (details.name || '').trim();
+    if (!cleanName || cleanName.length > 100) {
+      return { success: false, message: 'Full Name must be between 1 and 100 characters.' };
+    }
+
+    const cleanBio = (details.bio || '').trim();
+    if (cleanBio.length > 500) {
+      return { success: false, message: 'Bio cannot exceed 500 characters.' };
+    }
+
+    const rawAvatarInput = (details.avatarUrl || '').trim();
+    if (rawAvatarInput.toLowerCase().startsWith('http://')) {
+      return {
+        success: false,
+        message: 'Avatar URL must use https:// or be uploaded as an image file.',
+      };
+    }
+    if (rawAvatarInput.startsWith('https://') && rawAvatarInput.length > 500) {
+      return {
+        success: false,
+        message: 'Avatar HTTPS URL cannot exceed 500 characters.',
+      };
+    }
+
     const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
+
+    // Pre-check user and member alignment so actionable guidance is returned before hitting opaque rules errors
+    if (auth.currentUser) {
+      try {
+        const userSnap = await getDoc(doc(db, USERS_COLLECTION, auth.currentUser.uid));
+        if (userSnap.exists()) {
+          const userData = userSnap.data() as UserProfile;
+          if (userData.status === 'approved_waiting_response' && userData.approvedMemberId === targetMemberId) {
+            await acceptMembershipInvitation(auth.currentUser.uid);
+          } else if (userData.status !== 'active') {
+            return {
+              success: false,
+              message: 'Your membership invitation must be active before completing your builder profile. Please refresh and try again.',
+            };
+          }
+        }
+      } catch {
+        // Proceed cleanly to standard checks
+      }
+    }
 
     // Normalize and strictly validate social & portfolio links with profileLinks.ts
     let canonicalGithub = '';
@@ -2891,13 +2944,23 @@ export async function updateMemberSelfProfile(
     }
 
     const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
+    const normalizedAvatar = safeAvatar && safeAvatar.startsWith('http://') ? '' : safeAvatar || '';
+    if (normalizedAvatar.startsWith('data:image/') && normalizedAvatar.length > 150000) {
+      return {
+        success: false,
+        message: 'Uploaded avatar image is too large. Please choose a smaller image.',
+      };
+    }
 
-    // STOP writing studentId and university to members now. Only write whitelisted public fields!
+    const normalizedTracks = details.tracks && details.tracks.length > 0 ? details.tracks.slice(0, 10) : ['Software & Systems'];
+    const nowIso = new Date().toISOString();
+
+    // STOP writing PII (email, phone, department, major, semester) to members. Only write whitelisted public fields!
     const memberUpdates: Record<string, any> = {
-      name: details.name.trim(),
-      avatarUrl: safeAvatar || '',
-      bio: details.bio?.trim() || '',
-      tracks: details.tracks && details.tracks.length > 0 ? details.tracks : ['Software & Systems'],
+      name: cleanName,
+      avatarUrl: normalizedAvatar,
+      bio: cleanBio,
+      tracks: normalizedTracks,
       leaderboardOptOut: details.leaderboardOptOut ?? false,
       githubUrl: canonicalGithub,
       linkedinUrl: canonicalLinkedin,
@@ -2905,10 +2968,40 @@ export async function updateMemberSelfProfile(
       showLinksPublicly: details.showLinksPublicly ?? false,
     };
 
+    // Inspect member document to self-heal missing id/authUid and detect inactive/reassigned link states
+    if (auth.currentUser) {
+      try {
+        const memberSnap = await getDoc(memberRef);
+        if (memberSnap.exists()) {
+          const memberData = memberSnap.data() as Member;
+          if (memberData.status === 'Inactive') {
+            return {
+              success: false,
+              message: 'Your builder record is currently Inactive. Please contact an administrator to reactivate your pass.',
+            };
+          }
+          if (memberData.authUid && memberData.authUid !== auth.currentUser.uid) {
+            return {
+              success: false,
+              message: 'This builder record is currently linked to another account. Please contact an administrator.',
+            };
+          }
+          if (!memberData.id) {
+            memberUpdates.id = targetMemberId;
+          }
+          if (!memberData.authUid) {
+            memberUpdates.authUid = auth.currentUser.uid;
+          }
+        }
+      } catch {
+        // Proceed without pre-read self-heal if transient read fails
+      }
+    }
+
     const privUpdates: Record<string, any> = {
       profileCompleted: true,
-      profileCompletedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      profileCompletedAt: nowIso,
+      updatedAt: nowIso,
     };
     if (details.email?.trim()) privUpdates.email = details.email.trim().toLowerCase();
     if (details.phone?.trim()) privUpdates.phone = details.phone.trim();
@@ -2918,70 +3011,57 @@ export async function updateMemberSelfProfile(
     if (details.major?.trim()) privUpdates.major = details.major.trim();
     if (details.semester?.trim()) privUpdates.semester = details.semester.trim();
 
-    // 1. Core Private Profile Update (MemberPrivate stores studentId, phone, department, major, semester)
+    // 1. Core Member Update & Private Profile Update (critical path)
+    await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
     await setDoc(privRef, privUpdates, { merge: true });
 
-    // 2. Member & Leaderboard Projection in ONE writeBatch
+    // 2. Leaderboard Projection Sync (best-effort; never blocks profile activation)
     const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
-    let pubExists = false;
     try {
       const pubSnap = await getDoc(pubRef);
-      pubExists = pubSnap.exists();
-    } catch (err: any) {
-      if (err?.code !== 'not-found') {
-        throw err;
+      if (pubSnap.exists()) {
+        if (details.leaderboardOptOut === true) {
+          await deleteDoc(pubRef);
+        } else {
+          const pubUpdates: Record<string, any> = {
+            displayName: cleanName,
+            name: cleanName,
+            avatar: normalizedAvatar,
+            avatarUrl: normalizedAvatar,
+            lastUpdated: nowIso,
+            githubUrl: details.showLinksPublicly ? canonicalGithub : '',
+            linkedinUrl: details.showLinksPublicly ? canonicalLinkedin : '',
+            portfolioUrl: details.showLinksPublicly ? canonicalPortfolio : '',
+            showLinksPublicly: details.showLinksPublicly ?? false,
+          };
+          await updateDoc(pubRef, removeUndefinedFields(pubUpdates));
+        }
       }
-    }
-
-    const batch = writeBatch(db);
-    batch.update(memberRef, removeUndefinedFields(memberUpdates));
-
-    if (pubExists) {
-      if (details.leaderboardOptOut === true) {
-        batch.delete(pubRef);
-      } else {
-        const pubUpdates: Record<string, any> = {
-          displayName: details.name.trim(),
-          name: details.name.trim(),
-          avatar: safeAvatar || '',
-          avatarUrl: safeAvatar || '',
-          lastUpdated: new Date().toISOString(),
-          githubUrl: details.showLinksPublicly ? canonicalGithub : '',
-          linkedinUrl: details.showLinksPublicly ? canonicalLinkedin : '',
-          portfolioUrl: details.showLinksPublicly ? canonicalPortfolio : '',
-          showLinksPublicly: details.showLinksPublicly ?? false,
-        };
-        batch.update(pubRef, removeUndefinedFields(pubUpdates));
-      }
-    }
-
-    try {
-      await batch.commit();
-    } catch (batchErr: any) {
-      if (batchErr?.code === 'not-found' && pubExists) {
-        // If projection doc was deleted concurrently, update member alone
-        await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
-      } else {
-        // Show permission or schema validation error directly
-        throw batchErr;
-      }
+    } catch (pubErr) {
+      console.warn('Public leaderboard projection sync notice:', pubErr);
     }
 
     // 3. User Document & Auth Display Name Sync
     if (auth.currentUser) {
       try {
-        if (safeAvatar !== undefined) {
-          await updateProfile(auth.currentUser, {
-            displayName: details.name.trim() || auth.currentUser.displayName || undefined,
-            photoURL: safeAvatar || '',
-          }).catch(() => {});
+        const authPhoto = sanitizeAuthPhotoUrl(normalizedAvatar);
+        const authProfilePayload: { displayName?: string; photoURL?: string } = {
+          displayName: cleanName || auth.currentUser.displayName || undefined,
+        };
+        if (normalizedAvatar === '' || authPhoto) {
+          authProfilePayload.photoURL = authPhoto;
         }
+        await updateProfile(auth.currentUser, authProfilePayload).catch(() => {});
+
         const userRef = doc(db, USERS_COLLECTION, auth.currentUser.uid);
-        await updateDoc(userRef, {
-          photoURL: safeAvatar || '',
-          displayName: details.name.trim(),
+        const userSyncPayload: Record<string, any> = {
+          displayName: cleanName,
           updatedAt: new Date().toISOString(),
-        }).catch(() => {});
+        };
+        if (normalizedAvatar === '' || normalizedAvatar.startsWith('https://') || normalizedAvatar.startsWith('data:image/')) {
+          userSyncPayload.photoURL = normalizedAvatar;
+        }
+        await updateDoc(userRef, userSyncPayload).catch(() => {});
       } catch (authErr) {
         console.warn('Profile sync to auth/users completed with fallback:', authErr);
       }
@@ -2990,7 +3070,10 @@ export async function updateMemberSelfProfile(
     return { success: true };
   } catch (err: any) {
     console.error('updateMemberSelfProfile error:', err);
-    return { success: false, message: err?.message || 'Failed to update profile' };
+    return {
+      success: false,
+      message: formatUserFriendlyFirestoreError(err, 'Failed to update profile'),
+    };
   }
 }
 

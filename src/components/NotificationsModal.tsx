@@ -23,6 +23,7 @@ import { useAuth } from '../firebase/AuthContext';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { ModalSheet } from './ModalSheet';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 
 interface NotificationsModalProps {
   isOpen: boolean;
@@ -53,6 +54,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   });
   const [savingPrefs, setSavingPrefs] = useState(false);
   const [prefsSavedMessage, setPrefsSavedMessage] = useState(false);
+  const [prefsError, setPrefsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -81,7 +83,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   };
 
   const handleSavePreferences = async (newPrefs: UserNotificationPreferences) => {
+    const previousPrefs = prefs;
     setPrefs(newPrefs);
+    setPrefsError(null);
     if (!user) return;
     setSavingPrefs(true);
     try {
@@ -94,6 +98,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
       setTimeout(() => setPrefsSavedMessage(false), 2000);
     } catch (err) {
       console.warn('Failed to save notification preferences:', err);
+      setPrefs(previousPrefs);
+      setPrefsError(formatUserFriendlyFirestoreError(err, 'Could not save notification preferences.'));
     } finally {
       setSavingPrefs(false);
     }
@@ -227,6 +233,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
               </span>
               {prefsSavedMessage && (
                 <span className="text-xs font-mono text-[#b5ff00]">Preferences Saved!</span>
+              )}
+              {prefsError && (
+                <span className="text-xs font-mono text-red-400">{prefsError}</span>
               )}
             </div>
 

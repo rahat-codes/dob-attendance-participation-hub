@@ -5,6 +5,7 @@ import { ModalSheet } from './ModalSheet';
 import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
 import { BUILDER_TRACKS } from '../config/constants';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 
 interface AddMemberModalProps {
   isOpen: boolean;
@@ -219,7 +220,7 @@ export const AddMemberModal: React.FC<AddMemberModalProps> = ({
       }, 700);
     } catch (err: any) {
       console.error('Builder save error:', err);
-      setFormError(err?.message || 'Failed to save builder profile. Please try again.');
+      setFormError(formatUserFriendlyFirestoreError(err, 'Failed to save builder profile. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }

@@ -15,6 +15,8 @@ import { singleFlight } from '../utils/singleFlight';
 import { ApplicationInput, isApplicationSubmitted } from '../utils/application';
 import { getUserState } from '../utils/userStateMachine';
 import { resolveAuthFirestoreLoadFailure } from './lazyFirestore';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
+import { formatAuthSignInError } from '../utils/authErrors';
 
 export type MembershipPhase =
   | 'loading'
@@ -102,6 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const memberUnsubRef = useRef<(() => void) | null>(null);
   const privateUnsubRef = useRef<(() => void) | null>(null);
 
+  const activeMemberIdRef = useRef<string | null>(null);
   const memberLoadSeqRef = useRef(0);
 
   // Capture any incoming deep link params (?s=...&t=...) immediately on load
@@ -115,6 +118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Loads linked member profile and private data in real time (lazy-loading Firestore SDK on demand)
   const loadMemberData = useCallback(async (memberId: string) => {
+    activeMemberIdRef.current = memberId;
     const seq = ++memberLoadSeqRef.current;
     if (memberUnsubRef.current) {
       memberUnsubRef.current();
@@ -231,7 +235,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (auth.currentUser?.uid !== currentUser.uid) return;
             console.error('Failed to register/ensure user profile:', ensureErr);
             const code = ensureErr?.code || (ensureErr?.message?.includes('permission-denied') ? 'permission-denied' : 'registration-failed');
-            const errorMsg = `We could not register your request: [${code}]. Please try again or contact an admin.`;
+            const errorMsg = formatUserFriendlyFirestoreError(
+              ensureErr,
+              'We could not register your request. Please try again or contact an admin.'
+            );
             setRegistrationError({ code, message: errorMsg });
             setAuthError(errorMsg);
             setLoading(false);
@@ -253,7 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             async (snap) => {
               if (auth.currentUser?.uid !== currentUser.uid) return;
               if (snap.exists()) {
-                const updatedProfile = snap.data() as UserProfile;
+                const updatedProfile = { id: snap.id, ...(snap.data() as any) } as UserProfile;
                 setProfile(updatedProfile);
 
                 // Check if admin status changed
@@ -262,8 +269,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setIsAdmin(freshAdmin);
 
                 if (updatedProfile.memberId) {
-                  void loadMemberData(updatedProfile.memberId);
+                  if (activeMemberIdRef.current !== updatedProfile.memberId) {
+                    void loadMemberData(updatedProfile.memberId);
+                  }
                 } else {
+                  activeMemberIdRef.current = null;
                   memberLoadSeqRef.current += 1;
                   if (memberUnsubRef.current) {
                     memberUnsubRef.current();
@@ -285,7 +295,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const code = (err as any)?.code || (err?.message?.includes('permission-denied') ? 'permission-denied' : 'listener-error');
               setRegistrationError({
                 code,
-                message: `Unable to sync user profile [${code}]. Please check permissions or contact an admin.`,
+                message: formatUserFriendlyFirestoreError(
+                  err,
+                  'Unable to sync user profile. Please check permissions or contact an admin.'
+                ),
               });
               setLoading(false);
             }
@@ -320,16 +333,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
       .catch((err: any) => {
         console.error('Redirect sign-in error detail:', err);
-        const code = err?.code || '';
-        if (code === 'auth/popup-closed-by-user') {
-          return;
-        }
-        if (code === 'auth/network-request-failed') {
-          setAuthError('Network error connecting to sign-in service. Please check your connection.');
-        } else if (code === 'auth/unauthorized-domain') {
-          setAuthError('This domain is not authorized for authentication. Please contact an admin.');
-        } else {
-          setAuthError("Sign-in isn't available on this address; contact an admin");
+        const friendly = formatAuthSignInError(err);
+        if (friendly) {
+          setAuthError(friendly);
         }
       });
 
@@ -341,6 +347,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await attachUserListeners(currentUser);
       } else {
         // Sign-out cleanup
+        activeMemberIdRef.current = null;
         if (profileUnsubRef.current) profileUnsubRef.current();
         if (memberUnsubRef.current) memberUnsubRef.current();
         if (privateUnsubRef.current) privateUnsubRef.current();
@@ -394,31 +401,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return true;
         } catch (redirectErr: any) {
           console.error('Redirect sign-in error detail:', redirectErr);
-          const redirectCode = redirectErr?.code || '';
-          if (
-            redirectCode === 'auth/popup-closed-by-user' ||
-            redirectCode === 'auth/cancelled-popup-request' ||
-            redirectCode === 'auth/user-cancelled'
-          ) {
-            return false;
-          }
-          if (redirectCode === 'auth/network-request-failed') {
-            setAuthError('Network error connecting to sign-in service. Please check your connection and try again.');
-          } else if (redirectCode === 'auth/unauthorized-domain') {
-            setAuthError('This domain is not authorized for authentication. Please contact an admin.');
-          } else {
-            setAuthError("Sign-in isn't available on this address; contact an admin");
+          const friendlyRedirect = formatAuthSignInError(redirectErr);
+          if (friendlyRedirect) {
+            setAuthError(friendlyRedirect);
           }
           return false;
         }
       }
 
-      if (code === 'auth/network-request-failed') {
-        setAuthError('Network error connecting to sign-in service. Please check your connection and try again.');
-      } else if (code === 'auth/unauthorized-domain') {
-        setAuthError('This domain is not authorized for authentication. Please contact an admin.');
-      } else {
-        setAuthError("Sign-in isn't available on this address; contact an admin");
+      const friendly = formatAuthSignInError(err);
+      if (friendly) {
+        setAuthError(friendly);
       }
       return false;
     } finally {
@@ -445,6 +438,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMemberPrivate(null);
       setIsAdmin(false);
       setAuthError(null);
+      activeMemberIdRef.current = null;
       setRegistrationError(null);
       setLoading(false);
     }
@@ -462,7 +456,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { updateUserSelfProfile } = await import('./firestoreService');
       await updateUserSelfProfile(user.uid, { requestedNotes: notes });
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to update notes.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to update notes.'));
       throw err;
     }
   };
@@ -473,7 +467,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { submitApplication } = await import('./firestoreService');
       await submitApplication(user.uid, application);
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to submit application.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to submit application.'));
       throw err;
     }
   };
@@ -484,7 +478,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { reRequestMembership } = await import('./firestoreService');
       await reRequestMembership(user.uid, appOrNotes);
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to re-submit membership request.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to re-submit membership request.'));
       throw err;
     }
   };
@@ -495,7 +489,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { requestMembershipLink: requestLink } = await import('./firestoreService');
       await requestLink(user.uid, notes, displayName);
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to submit membership request.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to submit membership request.'));
       throw err;
     }
   };
@@ -506,7 +500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { acceptMembershipInvitation: acceptOffer } = await import('./firestoreService');
       await acceptOffer(user.uid);
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to accept membership invitation.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to accept membership invitation.'));
       throw err;
     }
   };
@@ -517,7 +511,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { declineMembershipInvitation: declineOffer } = await import('./firestoreService');
       await declineOffer(user.uid);
     } catch (err: any) {
-      setAuthError(err?.message || 'Failed to decline membership invitation.');
+      setAuthError(formatUserFriendlyFirestoreError(err, 'Failed to decline membership invitation.'));
       throw err;
     }
   };

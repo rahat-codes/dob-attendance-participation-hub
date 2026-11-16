@@ -58,6 +58,7 @@ import {
 } from './utils/stats';
 import { isTabVisible } from './utils/reminders';
 import { NavigationTab, resolveAppRoute } from './utils/routing';
+import { formatUserFriendlyFirestoreError } from './utils/firestoreErrors';
 import {
   PendingRequestDetector,
   triggerBrowserNotification,
@@ -485,7 +486,7 @@ export default function App() {
             console.warn('Public leaderboard listener notice:', err);
             setGuestLeaderboardStatus('error');
             setGuestLeaderboardError(
-              err?.message || 'Unable to sync public rankings. Please check your connection and retry.'
+              formatUserFriendlyFirestoreError(err, 'Unable to sync public rankings. Please check your connection and retry.')
             );
           }
         );
@@ -495,7 +496,7 @@ export default function App() {
         console.warn('Failed to load leaderboard listener:', err);
         setGuestLeaderboardStatus('error');
         setGuestLeaderboardError(
-          err?.message || 'Failed to load public leaderboard module. Please check your connection and retry.'
+          formatUserFriendlyFirestoreError(err, 'Failed to load public leaderboard module. Please check your connection and retry.')
         );
       });
 
@@ -564,7 +565,7 @@ export default function App() {
               updateSettledFlag();
             },
             (err) => {
-              setFirestoreError('Could not sync members directory: ' + err.message);
+              setFirestoreError(formatUserFriendlyFirestoreError(err, 'Could not sync members directory. Please refresh and try again.'));
             }
           );
         }
@@ -582,7 +583,7 @@ export default function App() {
               updateSettledFlag();
             },
             (err) => {
-              setFirestoreError('Could not sync sessions: ' + err.message);
+              setFirestoreError(formatUserFriendlyFirestoreError(err, 'Could not sync sessions. Please refresh and try again.'));
             },
             isAdmin ? { minDate: adminMinSessionDate } : undefined
           );
@@ -599,7 +600,7 @@ export default function App() {
               updateSettledFlag();
             },
             (err) => {
-              setFirestoreError('Could not sync attendance records: ' + err.message);
+              setFirestoreError(formatUserFriendlyFirestoreError(err, 'Could not sync attendance records. Please refresh and try again.'));
             },
             { minMonthKey: adminMinMonthKey }
           );
@@ -614,7 +615,7 @@ export default function App() {
               updateSettledFlag();
             },
             (err) => {
-              setFirestoreError('Could not sync attendance records: ' + err.message);
+              setFirestoreError(formatUserFriendlyFirestoreError(err, 'Could not sync attendance records. Please refresh and try again.'));
             }
           );
         }
@@ -640,9 +641,8 @@ export default function App() {
               }
             },
             (err: any) => {
-              const code = err?.code ? `[${err.code}] ` : '';
               console.error('Failed to sync users directory:', err);
-              setFirestoreError(`User directory sync failed: ${code}${err?.message || 'Access denied'}`);
+              setFirestoreError(formatUserFriendlyFirestoreError(err, 'User directory sync failed. Please refresh and try again.'));
             }
           );
         } else {
@@ -654,7 +654,7 @@ export default function App() {
         console.warn('Failed to initialize Firestore listeners:', err);
         if (!cancelled) {
           setFirestoreError(
-            'Could not connect to club database: ' + (err?.message || 'Please check your connection and retry.')
+            formatUserFriendlyFirestoreError(err, 'Could not connect to club database. Please check your connection and retry.')
           );
         }
       });
@@ -684,7 +684,7 @@ export default function App() {
       setCheckIns((prev) => mergeBoundedWithHistory(allCheckIns, prev));
       setHasLoadedAllHistory(true);
     } catch (err: any) {
-      setFirestoreError('Failed to load historical records: ' + (err?.message || 'Try again.'));
+      setFirestoreError(formatUserFriendlyFirestoreError(err, 'Failed to load historical records. Please try again.'));
     } finally {
       setIsLoadingHistory(false);
     }
@@ -911,8 +911,7 @@ export default function App() {
       setFirestoreError(null);
     } catch (err: any) {
       console.error('Failed to update session status:', err);
-      const code = err?.code ? `[${err.code}] ` : '';
-      setFirestoreError(`Failed to update session status: ${code}${err?.message || 'Access denied'}`);
+      setFirestoreError(formatUserFriendlyFirestoreError(err, 'Failed to update session status. Please try again.'));
       throw err;
     }
   };
@@ -996,8 +995,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Failed to approve membership request:', err);
-      const code = err?.code ? `[${err.code}] ` : '';
-      setFirestoreError(`Failed to approve request: ${code}${err?.message || 'Access denied'}`);
+      setFirestoreError(formatUserFriendlyFirestoreError(err, 'Failed to approve request. Please try again.'));
     }
   };
 
@@ -1009,8 +1007,7 @@ export default function App() {
       setFirestoreError(null);
     } catch (err: any) {
       console.error('Failed to reject membership request:', err);
-      const code = err?.code ? `[${err.code}] ` : '';
-      setFirestoreError(`Failed to reject request: ${code}${err?.message || 'Access denied'}`);
+      setFirestoreError(formatUserFriendlyFirestoreError(err, 'Failed to reject request. Please try again.'));
     }
   };
 
@@ -1080,7 +1077,7 @@ export default function App() {
       );
       setFirstRunBackfillDismissed(true);
     } catch (err: any) {
-      setBackfillPromptStatus('Backfill failed: ' + (err?.message || 'Check admin permissions.'));
+      setBackfillPromptStatus(formatUserFriendlyFirestoreError(err, 'Backfill failed. Check admin permissions and try again.'));
     } finally {
       setBackfillPromptBusy(false);
     }
@@ -1916,8 +1913,7 @@ export default function App() {
                       await reactivateMember(member.id);
                     } catch (err: any) {
                       console.error('Failed to reactivate member:', err);
-                      const code = err?.code ? `[${err.code}] ` : '';
-                      setFirestoreError(`Failed to reactivate member: ${code}${err?.message || 'Access denied'}`);
+                      setFirestoreError(formatUserFriendlyFirestoreError(err, 'Failed to reactivate member. Please try again.'));
                     }
                   }}
                   onViewMemberPass={(m) => setSelectedPassMember(m)}

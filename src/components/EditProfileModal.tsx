@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   User,
   Phone,
@@ -22,6 +22,7 @@ import { processProfilePhoto } from '../utils/imageUtils';
 import { SecureAvatar } from './common/SecureAvatar';
 import { Switch } from '../ui/Switch';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl } from '../utils/profileLinks';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 import { BUILDER_TRACKS } from '../config/constants';
 
 interface EditProfileModalProps {
@@ -64,8 +65,21 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [portfolioUrl, setPortfolioUrl] = useState(member.portfolioUrl || '');
   const [showLinksPublicly, setShowLinksPublicly] = useState<boolean>(member.showLinksPublicly ?? true);
 
+  const initializedSessionKeyRef = useRef<string | null>(null);
+  const appliedPrivateRef = useRef<boolean>(false);
+
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) {
+      initializedSessionKeyRef.current = null;
+      appliedPrivateRef.current = false;
+      return;
+    }
+
+    const sessionKey = member.id;
+    const isFreshOpen = initializedSessionKeyRef.current !== sessionKey;
+    if (isFreshOpen) {
+      initializedSessionKeyRef.current = sessionKey;
+      appliedPrivateRef.current = Boolean(memberPrivate);
       setName(member.name || '');
       setEmail(member.email || memberPrivate?.email || '');
       setPhone(member.phone || memberPrivate?.phone || '');
@@ -84,6 +98,16 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setShowLinksPublicly(member.showLinksPublicly ?? true);
       setError(null);
       setSuccess(null);
+    } else if (memberPrivate && !appliedPrivateRef.current) {
+      // Backfill late-arriving private fields only if the user hasn't typed into them yet
+      appliedPrivateRef.current = true;
+      if (memberPrivate.email) setEmail((prev) => prev || memberPrivate.email || '');
+      if (memberPrivate.phone) setPhone((prev) => prev || memberPrivate.phone || '');
+      if (memberPrivate.studentId) setStudentId((prev) => prev || memberPrivate.studentId || '');
+      if (memberPrivate.university) setUniversity((prev) => (prev && prev !== 'Tongmyong University' ? prev : memberPrivate.university || prev));
+      if (memberPrivate.department) setDepartment((prev) => prev || memberPrivate.department || '');
+      if (memberPrivate.major) setMajor((prev) => prev || memberPrivate.major || '');
+      if (memberPrivate.semester) setSemester((prev) => prev || memberPrivate.semester || '');
     }
   }, [isOpen, member, memberPrivate]);
 
@@ -140,8 +164,23 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     setSuccess(null);
 
     const cleanName = name.trim();
-    if (!cleanName) {
-      setError('Full Name is required.');
+    if (!cleanName || cleanName.length > 100) {
+      setError('Full Name must be between 1 and 100 characters.');
+      return;
+    }
+
+    if (bio.trim().length > 500) {
+      setError('Bio cannot exceed 500 characters.');
+      return;
+    }
+
+    const trimmedAvatar = avatarUrl.trim();
+    if (trimmedAvatar.toLowerCase().startsWith('http://')) {
+      setError('Avatar URL must use https:// or be uploaded as an image file.');
+      return;
+    }
+    if (trimmedAvatar.startsWith('https://') && trimmedAvatar.length > 500) {
+      setError('Avatar HTTPS URL cannot exceed 500 characters.');
       return;
     }
 
@@ -260,10 +299,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           onClose();
         }, 900);
       } else {
-        setError(res.message || 'Failed to update builder profile.');
+        setError(formatUserFriendlyFirestoreError(res.message, 'Failed to update builder profile.'));
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to update builder profile.');
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to update builder profile.'));
     } finally {
       setSaving(false);
     }
@@ -407,6 +446,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             <input
               type="text"
               required
+              maxLength={100}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ada Lovelace"
@@ -584,6 +624,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Bio / Specialties</label>
           <textarea
             rows={2}
+            maxLength={500}
             value={bio}
             onChange={(e) => setBio(e.target.value)}
             placeholder="Hardware hacking, robotics firmware, embedded machine learning..."

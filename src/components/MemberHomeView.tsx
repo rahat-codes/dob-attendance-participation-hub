@@ -137,7 +137,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = React.memo(({
                 {member.handle}{member.email ? ` · ${member.email}` : ''}
               </p>
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {member.tracks.map((track) => (
+                {(Array.isArray(member.tracks) ? member.tracks : []).map((track) => (
                   <span
                     key={track}
                     className="px-2.5 py-0.5 rounded-full bg-zinc-950/80 border border-white/5 text-[10px] text-zinc-300 font-mono"
@@ -428,7 +428,7 @@ export const MemberHomeView: React.FC<MemberHomeViewProps> = React.memo(({
 
                   <div className="shrink-0 flex items-center gap-2">
                     <span className="px-3 py-1 rounded-xl bg-zinc-950/80 border border-white/5 neu-inset text-[10px] font-mono text-zinc-300 uppercase">
-                      {record.method.replace('_', ' ')}
+                      {(record.method || 'code_input').replace('_', ' ')}
                     </span>
                   </div>
                 </div>

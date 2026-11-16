@@ -31,6 +31,7 @@ import { SafeExternalLink } from './common/SafeExternalLink';
 import { findReuseCandidates, parseApplicantNotes } from '../utils/reuseHelpers';
 import { decodeApplication, isApplicationSubmitted } from '../utils/application';
 import { getUserState } from '../utils/userStateMachine';
+import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 
 interface PendingRequestsProps {
   members: Member[];
@@ -91,8 +92,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       },
       (err: any) => {
         console.error('Failed to listen to pending users:', err);
-        const code = err?.code ? `[${err.code}] ` : '';
-        setError(`Could not sync pending requests: ${code}${err?.message || 'Access denied or network error'}`);
+        setError(formatUserFriendlyFirestoreError(err, 'Could not sync pending requests. Please check your permissions and retry.'));
         setLoading(false);
       }
     );
@@ -161,7 +161,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       onStatusChange?.();
     } catch (err: any) {
       console.error('Failed to approve user:', err);
-      setError(`Failed to approve request: ${err.message || 'Unknown error'}`);
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to approve request. Please try again.'));
     } finally {
       setProcessingId(null);
     }
@@ -201,8 +201,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       onStatusChange?.();
     } catch (err: any) {
       console.error('Failed to directly activate user:', err);
-      const code = err?.code ? `[${err.code}] ` : '';
-      setError(`Failed to directly activate user: ${code}${err?.message || 'Unknown error'}`);
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to directly activate user. Please try again.'));
     } finally {
       setProcessingId(null);
     }
@@ -236,7 +235,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       }
     } catch (err: any) {
       console.error('Failed to archive previous member handle:', err);
-      setError(`Failed to archive old record: ${err?.message || 'Unknown error'}`);
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to archive old record. Please try again.'));
     } finally {
       setProcessingId(null);
     }
@@ -256,7 +255,7 @@ export const PendingRequests: React.FC<PendingRequestsProps> = ({
       onStatusChange?.();
     } catch (err: any) {
       console.error('Failed to reject user:', err);
-      setError(`Failed to reject request: ${err.message || 'Unknown error'}`);
+      setError(formatUserFriendlyFirestoreError(err, 'Failed to reject request. Please try again.'));
     } finally {
       setProcessingId(null);
     }

@@ -1120,6 +1120,341 @@ async function runRulesTests() {
     await assertFails(deleteDoc(doc(memberDb, 'auditLogs', 'log_perm_del_survive_1')));
   });
 
+  // 29. Legacy users/{uid} doc with extra fields & photoURL: null allows owner updates, blocks privilege escalation
+  await test('29. Legacy users/{uid} doc (extra keys & photoURL: null) permits submitApplication & blocks escalation', async () => {
+    const legacyUid = 'user_legacy_extra_1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', legacyUid), {
+        uid: legacyUid,
+        role: 'Member',
+        email: 'legacy_builder@example.com',
+        displayName: 'Legacy Builder',
+        photoURL: null,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(legacyUid, {
+      email: 'legacy_builder@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        id: legacyUid,
+        displayName: 'Legacy Builder Updated',
+        applicantName: 'Legacy Builder Updated',
+        applicantHandle: '@legacybuilder',
+        applicantTrack: 'Software & Systems',
+        githubUrl: 'https://github.com/legacybuilder',
+        linkedinUrl: 'https://www.linkedin.com/in/legacybuilder',
+        requestedNotes: '@legacybuilder - Track: Software & Systems - Name: Legacy Builder Updated',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Owner still cannot escalate status or memberId or alter email
+    await assertFails(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        status: 'active',
+        memberId: 'mem_active_1',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        email: 'spoofed@example.com',
+      })
+    );
+  });
+
+  // 30. Declined / deactivated user reRequestMembership with displayName succeeds
+  await test('30. Declined & deactivated users can re-apply including displayName update', async () => {
+    const declinedUid = 'user_declined_reapply_1';
+    const deactivatedUid = 'user_deactivated_reapply_1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', declinedUid), {
+        id: declinedUid,
+        email: 'declined_reapply@example.com',
+        displayName: 'Old Name',
+        status: 'declined',
+      });
+      await setDoc(doc(seedDb, 'users', deactivatedUid), {
+        id: deactivatedUid,
+        email: 'deactivated_reapply@example.com',
+        displayName: 'Inactive User',
+        status: 'active',
+        memberId: 'mem_inactive_reapply_1',
+      });
+      await setDoc(doc(seedDb, 'members', 'mem_inactive_reapply_1'), {
+        id: 'mem_inactive_reapply_1',
+        name: 'Inactive User',
+        handle: '@inactiveuser',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        joinedDate: '2026-01-01',
+        status: 'Inactive',
+      });
+    });
+
+    const declinedDb = testEnv.authenticatedContext(declinedUid, {
+      email: 'declined_reapply@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(declinedDb, 'users', declinedUid), {
+        status: 'pending',
+        displayName: 'New Reapplicant Name',
+        applicantName: 'New Reapplicant Name',
+        applicantHandle: '@newreapp',
+        applicantTrack: 'AI & Embedded',
+        githubUrl: 'https://github.com/newreapp',
+        linkedinUrl: 'https://www.linkedin.com/in/newreapp',
+        requestedNotes: '@newreapp - Track: AI & Embedded - Name: New Reapplicant Name',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    const deactivatedDb = testEnv.authenticatedContext(deactivatedUid, {
+      email: 'deactivated_reapply@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(deactivatedDb, 'users', deactivatedUid), {
+        status: 'pending',
+        displayName: 'Restored Applicant',
+        requestedNotes: 'Requesting reactivation',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  // 31. Active linked member with missing/empty authUid can complete mandatory setup (memberPrivate + members + data:image avatar + publicLeaderboard)
+  await test('31. Active member with empty/missing authUid can complete mandatory profile setup & upload compressed avatar', async () => {
+    const uid = 'user_unseeded_authuid_1';
+    const memberId = 'mem_unseeded_authuid_1';
+    const otherMemberId = 'mem_active_1';
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'iuliia@example.com',
+        displayName: 'Iuliia Gafurova',
+        status: 'active',
+        memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        id: memberId,
+        name: 'Iuliia Gafurova',
+        handle: '@iuliia',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        authUid: '',
+      });
+      await setDoc(doc(seedDb, 'publicLeaderboard', memberId), {
+        memberId,
+        displayName: 'Iuliia Gafurova',
+        handle: '@iuliia',
+        rank: 5,
+        totalPoints: 0,
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'iuliia@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Private profile read & write succeeds via myMemberId() even when member.authUid is ''
+    await assertSucceeds(getDoc(doc(userDb, 'memberPrivate', memberId)));
+    await assertSucceeds(
+      setDoc(
+        doc(userDb, 'memberPrivate', memberId),
+        {
+          email: 'iuliia@example.com',
+          studentId: '20251508',
+          phone: '+82 10-1234-5678',
+          profileCompleted: true,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+    );
+
+    const tinyPngDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+    // Self-profile update + authUid self-heal + data:image avatar + publicLeaderboard sync succeed
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        name: 'Iuliia Gafurova',
+        avatarUrl: tinyPngDataUrl,
+        bio: 'Building full-stack tools',
+        tracks: ['Software & Systems', 'AI & Embedded'],
+        leaderboardOptOut: false,
+        githubUrl: 'https://github.com/iuliia',
+        linkedinUrl: 'https://www.linkedin.com/in/iuliia',
+        portfolioUrl: '',
+        showLinksPublicly: true,
+        authUid: uid,
+      })
+    );
+
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'publicLeaderboard', memberId), {
+        displayName: 'Iuliia Gafurova',
+        name: 'Iuliia Gafurova',
+        avatar: tinyPngDataUrl,
+        avatarUrl: tinyPngDataUrl,
+        lastUpdated: new Date().toISOString(),
+        githubUrl: 'https://github.com/iuliia',
+        linkedinUrl: 'https://www.linkedin.com/in/iuliia',
+        portfolioUrl: '',
+        showLinksPublicly: true,
+      })
+    );
+
+    // SVG data URI and HTTP URLs are still blocked, and cross-member writes / role escalation fail
+    await assertFails(
+      updateDoc(doc(userDb, 'members', memberId), {
+        avatarUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'members', memberId), {
+        role: 'President',
+      })
+    );
+    await assertFails(
+      setDoc(doc(userDb, 'memberPrivate', otherMemberId), { studentId: '99999999' }, { merge: true })
+    );
+  });
+
+  // 32. Legacy users/{uid} missing email, oversized untouched photoURL, legacy applicantTrack, and missing status permits submitApplication & notificationPrefs while blocking tampering
+  await test('32. Legacy users/{uid} (missing email/status, oversized untouched photoURL, legacy track) allows valid updates & blocks escalation', async () => {
+    const legacyUid = 'user_legacy_punisher_1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', legacyUid), {
+        displayName: 'Legacy Member',
+        photoURL: 'https://lh3.googleusercontent.com/' + 'x'.repeat(600),
+        applicantTrack: 'Legacy Robotics Track',
+        requestedNotes: 'Old bio note',
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(legacyUid, {
+      email: 'legacy_punisher@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Saving notification preferences without touching legacy photoURL or track succeeds
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        notificationPreferences: { enabled: true, reminders: true, announcements: false },
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Submitting application with dot-containing LinkedIn slug and missing status/email succeeds
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        id: legacyUid,
+        status: 'pending',
+        displayName: 'Punisher Builder',
+        applicantName: 'Punisher Builder',
+        applicantHandle: '@punisher',
+        applicantTrack: 'Hardware & Robotics',
+        githubUrl: 'https://github.com/punisher-builder',
+        linkedinUrl: 'https://www.linkedin.com/in/punisher.builder',
+        requestedNotes: '@punisher - Track: Hardware & Robotics',
+        membershipRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Tampering with invalid new photoURL or escalating status still fails
+    await assertFails(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        photoURL: 'http://insecure.example.com/avatar.png',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'users', legacyUid), {
+        status: 'active',
+        memberId: 'mem_active_1',
+      })
+    );
+  });
+
+  // 33. Legacy members/{memberId} missing internal id permits member self-profile update, id backfill, profileCompleted, updatedAt, and dot/non-www LinkedIn URLs
+  await test('33. Legacy members/{memberId} missing id allows self-update with id backfill & dot/no-www LinkedIn slugs', async () => {
+    const uid = 'user_legacy_member_self_1';
+    const memberId = 'mem_legacy_no_id_1';
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'legacy_self@example.com',
+        displayName: 'Legacy Self',
+        status: 'active',
+        memberId,
+      });
+      // Deliberately omit internal `id` and include an old >500-char untouched avatarUrl
+      await setDoc(doc(seedDb, 'members', memberId), {
+        name: 'Legacy Self',
+        handle: '@legacyself',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        avatarUrl: 'https://lh3.googleusercontent.com/' + 'a'.repeat(550),
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'legacy_self@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        id: memberId,
+        name: 'Legacy Self Completed',
+        bio: 'Ready to ship',
+        tracks: ['Software & Systems'],
+        githubUrl: 'https://github.com/legacyself',
+        linkedinUrl: 'https://linkedin.com/in/legacy.self',
+        portfolioUrl: 'https://legacyself.dev',
+        showLinksPublicly: true,
+        authUid: uid,
+        profileCompleted: true,
+        profileCompletedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Path traversal (..) in LinkedIn slug and mismatched id backfill remain rejected
+    await assertFails(
+      updateDoc(doc(userDb, 'members', memberId), {
+        linkedinUrl: 'https://www.linkedin.com/in/bad..slug',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'members', memberId), {
+        id: 'mem_other_spoof',
+      })
+    );
+  });
+
   console.log('\n========================================');
   console.log(`PHASE 2-5 RULES TEST SUITE COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);
