@@ -51,3 +51,8 @@ export const BUILDER_ROLES = [
   'Vice President',
   'President',
 ] as const;
+
+// Client & Security Rules Compatibility Version
+export const CLIENT_SCHEMA_VERSION = '2026.11.v3-profile-fix';
+export const EXPECTED_RULES_VERSION = '2026.11.v3';
+

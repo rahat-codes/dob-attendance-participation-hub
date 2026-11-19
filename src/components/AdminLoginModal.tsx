@@ -361,6 +361,66 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                       )}
                     </span>
                   </div>
+
+                  {/* Item e: Onboarding link & rules health diagnostics */}
+                  {pipelineResult.onboardingHealth && (
+                    <div className="p-2 rounded-xl bg-black/40 border border-white/5 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-300 font-semibold">Onboarding Link &amp; Rules Health</span>
+                        <span
+                          className={`text-[10px] font-bold ${
+                            pipelineResult.onboardingHealth.activeUsersWithoutMemberId === 0 &&
+                            pipelineResult.onboardingHealth.approvedWaitingMissingId === 0 &&
+                            pipelineResult.onboardingHealth.membersMissingAuthUid === 0 &&
+                            pipelineResult.onboardingHealth.membersMissingCoreFields === 0 &&
+                            !pipelineResult.onboardingHealth.rulesVersionDrift
+                              ? 'text-[#b5ff00]'
+                              : 'text-amber-400'
+                          }`}
+                        >
+                          {pipelineResult.onboardingHealth.activeUsersWithoutMemberId === 0 &&
+                          pipelineResult.onboardingHealth.approvedWaitingMissingId === 0 &&
+                          pipelineResult.onboardingHealth.membersMissingAuthUid === 0 &&
+                          pipelineResult.onboardingHealth.membersMissingCoreFields === 0 &&
+                          !pipelineResult.onboardingHealth.rulesVersionDrift
+                            ? 'HEALTHY'
+                            : 'NEEDS ATTENTION'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 text-[10px] text-zinc-400">
+                        <div className="p-1 rounded bg-zinc-900 border border-white/5">
+                          <span className={`font-bold block ${pipelineResult.onboardingHealth.activeUsersWithoutMemberId > 0 ? 'text-red-400' : 'text-zinc-200'}`}>
+                            {pipelineResult.onboardingHealth.activeUsersWithoutMemberId}
+                          </span>
+                          <span>active users w/o memberId</span>
+                        </div>
+                        <div className="p-1 rounded bg-zinc-900 border border-white/5">
+                          <span className={`font-bold block ${pipelineResult.onboardingHealth.approvedWaitingMissingId > 0 ? 'text-red-400' : 'text-zinc-200'}`}>
+                            {pipelineResult.onboardingHealth.approvedWaitingMissingId}
+                          </span>
+                          <span>waiting w/o approvedMemberId</span>
+                        </div>
+                        <div className="p-1 rounded bg-zinc-900 border border-white/5">
+                          <span className={`font-bold block ${pipelineResult.onboardingHealth.membersMissingAuthUid > 0 ? 'text-amber-400' : 'text-zinc-200'}`}>
+                            {pipelineResult.onboardingHealth.membersMissingAuthUid}
+                          </span>
+                          <span>active members w/o authUid</span>
+                        </div>
+                        <div className="p-1 rounded bg-zinc-900 border border-white/5">
+                          <span className={`font-bold block ${pipelineResult.onboardingHealth.membersMissingCoreFields > 0 ? 'text-amber-400' : 'text-zinc-200'}`}>
+                            {pipelineResult.onboardingHealth.membersMissingCoreFields}
+                          </span>
+                          <span>legacy docs missing id/tracks</span>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-zinc-500 flex flex-wrap items-center justify-between gap-1 pt-0.5">
+                        <span>Client: {pipelineResult.onboardingHealth.clientSchemaVersion}</span>
+                        <span className={pipelineResult.onboardingHealth.rulesVersionDrift ? 'text-red-400 font-bold' : ''}>
+                          Rules meta: {pipelineResult.onboardingHealth.rulesVersion || `unset (expected ${pipelineResult.onboardingHealth.expectedRulesVersion})`}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

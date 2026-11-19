@@ -17,6 +17,7 @@ import { getUserState } from '../utils/userStateMachine';
 import { resolveAuthFirestoreLoadFailure } from './lazyFirestore';
 import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 import { formatAuthSignInError } from '../utils/authErrors';
+import { extractFirebaseErrorCode } from '../utils/profileEdit';
 
 export type MembershipPhase =
   | 'loading'
@@ -33,6 +34,12 @@ export type MembershipPhase =
   | 'deactivated'
   | 'error';
 
+export interface MemberSyncError {
+  source: 'members' | 'memberPrivate';
+  code: string;
+  message: string;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
@@ -41,6 +48,7 @@ interface AuthContextType {
   loading: boolean;
   signingIn: boolean;
   authError: string | null;
+  memberSyncError: MemberSyncError | null;
   membershipPhase: MembershipPhase;
   membershipState: MembershipPhase;
   isAdmin: boolean;
@@ -69,6 +77,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signingIn: false,
   authError: null,
+  memberSyncError: null,
   registrationError: null,
   retryRegistration: async () => {},
   membershipPhase: 'loading',
@@ -97,6 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [memberSyncError, setMemberSyncError] = useState<MemberSyncError | null>(null);
   const [registrationError, setRegistrationError] = useState<{ code: string; message: string } | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
@@ -119,6 +129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Loads linked member profile and private data in real time (lazy-loading Firestore SDK on demand)
   const loadMemberData = useCallback(async (memberId: string) => {
     activeMemberIdRef.current = memberId;
+    setMemberSyncError(null);
     const seq = ++memberLoadSeqRef.current;
     if (memberUnsubRef.current) {
       memberUnsubRef.current();
@@ -150,6 +161,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     memberUnsubRef.current = onSnapshot(
       memberRef,
       (snap) => {
+        if (seq !== memberLoadSeqRef.current) return;
+        setMemberSyncError((prev) => (prev?.source === 'members' ? null : prev));
         if (snap.exists()) {
           const data = snap.data() as Member;
           setLinkedMember((prev) => ({
@@ -169,7 +182,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       },
       (err) => {
+        if (seq !== memberLoadSeqRef.current) return;
         console.warn('Member profile subscription notice:', err);
+        const code = extractFirebaseErrorCode(err);
+        const message = formatUserFriendlyFirestoreError(
+          err,
+          'Could not sync your builder profile due to a permission check.',
+          { path: 'members/', operation: 'subscribe', step: 'members' }
+        );
+        setMemberSyncError({ source: 'members', code, message });
       }
     );
 
@@ -177,6 +198,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     privateUnsubRef.current = onSnapshot(
       privRef,
       (privSnap) => {
+        if (seq !== memberLoadSeqRef.current) return;
+        setMemberSyncError((prev) => (prev?.source === 'memberPrivate' ? null : prev));
         if (privSnap.exists()) {
           const pData = privSnap.data() as MemberPrivate;
           setMemberPrivate(pData);
@@ -198,7 +221,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       },
       (err) => {
+        if (seq !== memberLoadSeqRef.current) return;
         console.warn('Member private subscription notice:', err);
+        const code = extractFirebaseErrorCode(err);
+        const message = formatUserFriendlyFirestoreError(
+          err,
+          'Could not load your private contact details due to a permission check.',
+          { path: 'memberPrivate/', operation: 'subscribe', step: 'memberPrivate' }
+        );
+        setMemberSyncError({ source: 'memberPrivate', code, message });
         setMemberPrivate(null);
       }
     );
@@ -285,6 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   }
                   setLinkedMember(null);
                   setMemberPrivate(null);
+                  setMemberSyncError(null);
                 }
               }
               setLoading(false);
@@ -358,6 +390,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLinkedMember(null);
         setMemberPrivate(null);
         setIsAdmin(false);
+        setMemberSyncError(null);
         setRegistrationError(null);
         setLoading(false);
       }
@@ -438,6 +471,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMemberPrivate(null);
       setIsAdmin(false);
       setAuthError(null);
+      setMemberSyncError(null);
       activeMemberIdRef.current = null;
       setRegistrationError(null);
       setLoading(false);
@@ -573,6 +607,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         signingIn,
         authError,
+        memberSyncError,
         registrationError,
         retryRegistration,
         membershipPhase,

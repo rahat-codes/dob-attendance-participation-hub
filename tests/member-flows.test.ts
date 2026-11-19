@@ -133,4 +133,22 @@ test('UI forms and App/PendingRequests wrap Firestore errors via formatUserFrien
   assert.ok(membersViewText.includes('Array.isArray(m.tracks)'), 'MembersView.tsx should guard tracks array');
 });
 
+test('AuthContext, firestoreService, EditProfileModal, and LoginView never swallow member sync or acceptInvitation errors', () => {
+  const authText = fs.readFileSync(path.resolve(process.cwd(), 'src/firebase/AuthContext.tsx'), 'utf8');
+  const svcText = fs.readFileSync(path.resolve(process.cwd(), 'src/firebase/firestoreService.ts'), 'utf8');
+  const editModalText = fs.readFileSync(path.resolve(process.cwd(), 'src/components/EditProfileModal.tsx'), 'utf8');
+  const loginViewText = fs.readFileSync(path.resolve(process.cwd(), 'src/components/LoginView.tsx'), 'utf8');
+
+  assert.ok(authText.includes('memberSyncError'), 'AuthContext must expose memberSyncError');
+  assert.ok(authText.includes("source: 'members'"), 'AuthContext must surface members listener failures');
+  assert.ok(authText.includes("source: 'memberPrivate'"), 'AuthContext must surface memberPrivate listener failures');
+
+  assert.ok(svcText.includes("failedStep: 'acceptInvitation'"), 'updateMemberSelfProfile must isolate acceptInvitation failures');
+  assert.ok(svcText.includes("failedStep: 'precheck'"), 'updateMemberSelfProfile must isolate precheck read failures');
+
+  assert.ok(editModalText.includes('diagnosticCode'), 'EditProfileModal must display diagnosticCode');
+  assert.ok(editModalText.includes('syncErrorMessage'), 'EditProfileModal must display syncErrorMessage');
+  assert.ok(loginViewText.includes("memberSyncError?.source === 'members'"), 'LoginView must distinguish member listener failure from deactivated state');
+});
+
 console.log(`Passed ${passed} member flow tests.`);

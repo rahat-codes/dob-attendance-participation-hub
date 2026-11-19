@@ -36,7 +36,13 @@ import {
   BuilderTrack,
   ClubNotification,
 } from '../types';
-import { SUPER_ADMIN_EMAIL, DEFAULT_CLUB_TIMEZONE, DEFAULT_CHECKIN_SETTINGS } from '../config/constants';
+import {
+  SUPER_ADMIN_EMAIL,
+  DEFAULT_CLUB_TIMEZONE,
+  DEFAULT_CHECKIN_SETTINGS,
+  CLIENT_SCHEMA_VERSION,
+  EXPECTED_RULES_VERSION,
+} from '../config/constants';
 import {
   buildPublicLeaderboardItems,
   buildLeaderboardRecomputeOpsPlan,
@@ -75,7 +81,10 @@ import { ensureFreshServerTimeOffset, getCorrectedNowMs } from '../utils/serverT
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl, sanitizeAuthPhotoUrl } from '../utils/profileLinks';
 import {
   buildMemberProfileDiff,
+  buildProfileDiagnosticCode,
   executeIsolatedProfileUpdate,
+  extractFirebaseErrorCode,
+  formatStepFailureMessage,
   type ProfileUpdateResult,
 } from '../utils/profileEdit';
 import {
@@ -277,6 +286,17 @@ export async function checkIsAdmin(uid: string, email?: string | null): Promise<
   }
 }
 
+export interface OnboardingHealthSummary {
+  activeUsersWithoutMemberId: number;
+  approvedWaitingMissingId: number;
+  membersMissingAuthUid: number;
+  membersMissingCoreFields: number;
+  rulesVersion?: string | null;
+  expectedRulesVersion: string;
+  clientSchemaVersion: string;
+  rulesVersionDrift: boolean;
+}
+
 export interface RequestPipelineCheckResult {
   canReadUsers: { pass: boolean; error?: string; errorCode?: string };
   userCounts: {
@@ -296,10 +316,54 @@ export interface RequestPipelineCheckResult {
     sessionsError?: string;
     sessionsErrorCode?: string;
   };
+  onboardingHealth?: OnboardingHealthSummary;
+}
+
+export function evaluateOnboardingHealth(
+  users: Array<{ status?: string; memberId?: string; approvedMemberId?: string }>,
+  members: Array<{ id?: string; authUid?: string; status?: string; joinedDate?: string; tracks?: unknown }>,
+  appMeta?: { rulesVersion?: string | null } | null
+): OnboardingHealthSummary {
+  let activeUsersWithoutMemberId = 0;
+  let approvedWaitingMissingId = 0;
+  for (const u of users) {
+    if (u.status === 'active' && !u.memberId) {
+      activeUsersWithoutMemberId += 1;
+    }
+    if (u.status === 'approved_waiting_response' && !u.approvedMemberId) {
+      approvedWaitingMissingId += 1;
+    }
+  }
+
+  let membersMissingAuthUid = 0;
+  let membersMissingCoreFields = 0;
+  for (const m of members) {
+    if (m.status !== 'Inactive' && !m.authUid) {
+      membersMissingAuthUid += 1;
+    }
+    const hasTracks = Array.isArray(m.tracks) && m.tracks.length > 0;
+    if (!m.id || !m.joinedDate || !hasTracks) {
+      membersMissingCoreFields += 1;
+    }
+  }
+
+  const rulesVersion = typeof appMeta?.rulesVersion === 'string' ? appMeta.rulesVersion.trim() : null;
+  const rulesVersionDrift = Boolean(rulesVersion && rulesVersion !== EXPECTED_RULES_VERSION);
+
+  return {
+    activeUsersWithoutMemberId,
+    approvedWaitingMissingId,
+    membersMissingAuthUid,
+    membersMissingCoreFields,
+    rulesVersion,
+    expectedRulesVersion: EXPECTED_RULES_VERSION,
+    clientSchemaVersion: CLIENT_SCHEMA_VERSION,
+    rulesVersionDrift,
+  };
 }
 
 /**
- * Purely read-only diagnostic verifying the admin request pipeline connectivity and permissions.
+ * Purely read-only diagnostic verifying the admin request pipeline connectivity, permissions, and onboarding health.
  */
 export async function checkRequestPipeline(currentUid: string): Promise<RequestPipelineCheckResult> {
   const result: RequestPipelineCheckResult = {
@@ -319,12 +383,16 @@ export async function checkRequestPipeline(currentUid: string): Promise<RequestP
     },
   };
 
+  const usersList: UserProfile[] = [];
+  const membersList: Member[] = [];
+
   // a & b: Can read users collection & count by status
   try {
     const usersSnap = await getDocs(collection(db, USERS_COLLECTION));
     result.canReadUsers = { pass: true };
     usersSnap.forEach((d) => {
       const data = d.data() as UserProfile;
+      usersList.push(data);
       const status = data.status || 'pending';
       if (status in result.userCounts) {
         result.userCounts[status as keyof typeof result.userCounts]++;
@@ -362,9 +430,12 @@ export async function checkRequestPipeline(currentUid: string): Promise<RequestP
   let membersOk = false;
   let sessionsOk = false;
   try {
-    await getDocs(query(collection(db, MEMBERS_COLLECTION), limit(1)));
+    const membersSnap = await getDocs(query(collection(db, MEMBERS_COLLECTION), limit(200)));
     membersOk = true;
     result.canReadMembersAndSessions.membersPass = true;
+    membersSnap.forEach((d) => {
+      membersList.push({ id: d.id, ...(d.data() as any) } as Member);
+    });
   } catch (err: any) {
     result.canReadMembersAndSessions.membersError = err?.message || 'Members read error';
     result.canReadMembersAndSessions.membersErrorCode = err?.code || 'permission-denied';
@@ -379,7 +450,18 @@ export async function checkRequestPipeline(currentUid: string): Promise<RequestP
     result.canReadMembersAndSessions.sessionsErrorCode = err?.code || 'permission-denied';
   }
 
+  let appMeta: { rulesVersion?: string | null } | null = null;
+  try {
+    const metaSnap = await getDoc(doc(db, SETTINGS_COLLECTION, 'appMeta'));
+    if (metaSnap.exists()) {
+      appMeta = metaSnap.data() as { rulesVersion?: string | null };
+    }
+  } catch {
+    // appMeta doc is optional
+  }
+
   result.canReadMembersAndSessions.pass = membersOk && sessionsOk;
+  result.onboardingHealth = evaluateOnboardingHealth(usersList, membersList, appMeta);
   return result;
 }
 
@@ -1046,55 +1128,78 @@ export async function activateDirectly(
 
 export async function acceptMembershipInvitation(userId: string): Promise<void> {
   const userRef = doc(db, USERS_COLLECTION, userId);
-  const userSnap = await getDoc(userRef);
-  if (!userSnap.exists()) {
+  let userSnap;
+  try {
+    userSnap = await getDoc(userRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users/${userId}`);
+  }
+  if (!userSnap || !userSnap.exists()) {
     throw new Error('User profile not found.');
   }
 
   const userProfile = userSnap.data() as UserProfile;
+
+  // Idempotent no-op if already accepted and linked to the same member record
+  if (userProfile.status === 'active' && userProfile.memberId) {
+    const existingMemberRef = doc(db, MEMBERS_COLLECTION, userProfile.memberId);
+    let existingSnap;
+    try {
+      existingSnap = await getDoc(existingMemberRef);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `members/${userProfile.memberId}`);
+    }
+    if (!existingSnap || !existingSnap.exists()) {
+      throw new Error('Your linked builder roster record no longer exists. Please contact an administrator.');
+    }
+    const existingMemData = existingSnap.data() as Member;
+    if (existingMemData.authUid && existingMemData.authUid !== userId) {
+      throw new Error('Member record is already linked to another account.');
+    }
+    return;
+  }
+
   if (userProfile.status !== 'approved_waiting_response' || !userProfile.approvedMemberId) {
     throw new Error('No pending approved membership invitation to accept.');
   }
 
   const memberId = userProfile.approvedMemberId;
   const memberRef = doc(db, MEMBERS_COLLECTION, memberId);
-  let memberExists = true;
-  let alreadyLinked = false;
+  let memberSnap;
   try {
-    const memberSnap = await getDoc(memberRef);
-    if (memberSnap.exists()) {
-      const memData = memberSnap.data() as Member;
-      if (memData.authUid && memData.authUid !== userId) {
-        throw new Error('Member record is already linked to another account.');
-      }
-      if (memData.authUid === userId) {
-        alreadyLinked = true;
-      }
-    } else {
-      memberExists = false;
-    }
-  } catch (err: any) {
-    if (err?.message?.includes('already linked')) {
-      throw err;
-    }
+    memberSnap = await getDoc(memberRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `members/${memberId}`);
   }
 
+  if (!memberSnap || !memberSnap.exists()) {
+    throw new Error('Your linked builder roster record no longer exists. Please contact an administrator.');
+  }
+
+  const memData = memberSnap.data() as Member;
+  if (memData.authUid && memData.authUid !== userId) {
+    throw new Error('Member record is already linked to another account.');
+  }
+  const alreadyLinked = memData.authUid === userId;
+
   const batch = writeBatch(db);
+  const now = new Date().toISOString();
   batch.update(userRef, {
     status: 'active',
-    memberId: memberId,
-    respondedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    memberId,
+    respondedAt: now,
+    updatedAt: now,
   });
 
-  if (memberExists && !alreadyLinked) {
+  if (!alreadyLinked) {
     batch.update(memberRef, { authUid: userId });
   }
 
   try {
     await batch.commit();
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
+    const failPath = !alreadyLinked ? `users/${userId}+members/${memberId}` : `users/${userId}`;
+    handleFirestoreError(err, OperationType.WRITE, failPath);
   }
 }
 
@@ -2851,30 +2956,76 @@ export async function updateMemberSelfProfile(
     let targetMemberId = '';
     const currentUid = auth.currentUser?.uid;
 
-    // Resolve authoritative linked memberId from users/{uid}.memberId first (do not require members.authUid query on client)
+    // Resolve authoritative linked memberId from users/{uid} (never swallow read or accept errors)
     if (currentUid) {
+      let userSnap;
       try {
-        const userSnap = await getDoc(doc(db, USERS_COLLECTION, currentUid));
-        if (userSnap.exists()) {
-          const userData = userSnap.data() as UserProfile;
-          if (userData.status === 'approved_waiting_response' && userData.approvedMemberId) {
-            await acceptMembershipInvitation(currentUid);
-            targetMemberId = userData.approvedMemberId;
-          } else if (userData.memberId) {
-            targetMemberId = userData.memberId;
-          } else if (userData.approvedMemberId) {
-            targetMemberId = userData.approvedMemberId;
-          } else if (userData.status !== 'active') {
+        userSnap = await getDoc(doc(db, USERS_COLLECTION, currentUid));
+      } catch (preErr) {
+        const formatted = formatStepFailureMessage('precheck', preErr, 'get');
+        return {
+          success: false,
+          failedStep: 'precheck',
+          failedOperation: formatted.operation,
+          failedCollection: formatted.collection,
+          errorCode: formatted.code,
+          diagnosticCode: formatted.diagnosticCode,
+          message: formatted.message,
+        };
+      }
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data() as UserProfile;
+        if (userData.status === 'approved_waiting_response') {
+          if (!userData.approvedMemberId) {
             return {
               success: false,
-              failedStep: 'members',
+              failedStep: 'acceptInvitation',
+              failedOperation: 'precheck',
+              failedCollection: 'users',
               errorCode: 'unlinked-account',
-              message: 'Your membership invitation must be active before editing your builder profile. Please refresh and try again.',
+              diagnosticCode: buildProfileDiagnosticCode({
+                step: 'acceptInvitation',
+                operation: 'precheck',
+                code: 'unlinked-account',
+              }),
+              message: 'Your approval is missing a linked roster ID. Please contact an administrator.',
             };
           }
+          try {
+            await acceptMembershipInvitation(currentUid);
+            targetMemberId = userData.approvedMemberId;
+          } catch (acceptErr) {
+            const formatted = formatStepFailureMessage('acceptInvitation', acceptErr, 'batchWrite');
+            return {
+              success: false,
+              failedStep: 'acceptInvitation',
+              failedOperation: formatted.operation,
+              failedCollection: formatted.collection,
+              errorCode: formatted.code,
+              diagnosticCode: formatted.diagnosticCode,
+              message: formatted.message,
+            };
+          }
+        } else if (userData.memberId) {
+          targetMemberId = userData.memberId;
+        } else if (userData.approvedMemberId && userData.status === 'active') {
+          targetMemberId = userData.approvedMemberId;
+        } else if (userData.status !== 'active') {
+          return {
+            success: false,
+            failedStep: 'precheck',
+            failedOperation: 'precheck',
+            failedCollection: 'users',
+            errorCode: 'unlinked-account',
+            diagnosticCode: buildProfileDiagnosticCode({
+              step: 'precheck',
+              operation: 'precheck',
+              code: 'unlinked-account',
+            }),
+            message: 'Your membership invitation must be active before editing your builder profile. Please refresh and try again.',
+          };
         }
-      } catch (preErr) {
-        console.warn('Could not read user account link before profile save:', preErr);
       }
     }
 
@@ -2888,8 +3039,15 @@ export async function updateMemberSelfProfile(
     if (!targetMemberId) {
       return {
         success: false,
-        failedStep: 'members',
+        failedStep: 'precheck',
+        failedOperation: 'precheck',
+        failedCollection: 'users',
         errorCode: 'unlinked-account',
+        diagnosticCode: buildProfileDiagnosticCode({
+          step: 'precheck',
+          operation: 'precheck',
+          code: 'unlinked-account',
+        }),
         message: 'No linked builder roster record was found for your account. Please contact an administrator.',
       };
     }
@@ -2898,40 +3056,72 @@ export async function updateMemberSelfProfile(
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
     const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
 
-    // Inspect member document to verify Active status, ownership, and legacy baseline
+    // Inspect member document to verify Active status, ownership, and legacy baseline (never mask permission errors)
     let loadedMember: Partial<Member> = options?.existingMember ? { ...options.existingMember } : {};
     if (currentUid) {
+      let memberSnap;
       try {
-        const memberSnap = await getDoc(memberRef);
-        if (!memberSnap.exists()) {
-          return {
-            success: false,
-            failedStep: 'members',
-            errorCode: 'not-found',
-            message: 'Your linked builder roster record no longer exists. Please contact an administrator.',
-          };
-        }
-        const memberData = memberSnap.data() as Member;
-        if (memberData.status === 'Inactive') {
-          return {
-            success: false,
-            failedStep: 'members',
-            errorCode: 'inactive-member',
-            message: 'Your builder record is currently Inactive. Please contact an administrator to reactivate your pass.',
-          };
-        }
-        if (memberData.authUid && memberData.authUid !== currentUid) {
-          return {
-            success: false,
-            failedStep: 'members',
-            errorCode: 'account-mismatch',
-            message: 'This builder record is linked to another account. Please contact an administrator.',
-          };
-        }
-        loadedMember = { ...memberData };
+        memberSnap = await getDoc(memberRef);
       } catch (readErr) {
-        console.warn('Could not pre-read member doc; falling back to loaded UI baseline:', readErr);
+        const formatted = formatStepFailureMessage('members', readErr, 'get');
+        return {
+          success: false,
+          failedStep: 'members',
+          failedOperation: formatted.operation,
+          failedCollection: formatted.collection,
+          errorCode: formatted.code,
+          diagnosticCode: formatted.diagnosticCode,
+          message: formatted.message,
+        };
       }
+
+      if (!memberSnap.exists()) {
+        return {
+          success: false,
+          failedStep: 'members',
+          failedOperation: 'get',
+          failedCollection: 'members',
+          errorCode: 'not-found',
+          diagnosticCode: buildProfileDiagnosticCode({
+            step: 'members',
+            operation: 'get',
+            code: 'not-found',
+          }),
+          message: 'Your linked builder roster record no longer exists. Please contact an administrator.',
+        };
+      }
+      const memberData = memberSnap.data() as Member;
+      if (memberData.status === 'Inactive') {
+        return {
+          success: false,
+          failedStep: 'members',
+          failedOperation: 'precheck',
+          failedCollection: 'members',
+          errorCode: 'inactive-member',
+          diagnosticCode: buildProfileDiagnosticCode({
+            step: 'members',
+            operation: 'precheck',
+            code: 'inactive-member',
+          }),
+          message: 'Your builder record is currently Inactive. Please contact an administrator to reactivate your pass.',
+        };
+      }
+      if (memberData.authUid && memberData.authUid !== currentUid) {
+        return {
+          success: false,
+          failedStep: 'members',
+          failedOperation: 'precheck',
+          failedCollection: 'members',
+          errorCode: 'account-mismatch',
+          diagnosticCode: buildProfileDiagnosticCode({
+            step: 'members',
+            operation: 'precheck',
+            code: 'account-mismatch',
+          }),
+          message: 'This builder record is linked to another account. Please contact an administrator.',
+        };
+      }
+      loadedMember = { ...memberData };
     }
 
     let loadedPrivate: Partial<MemberPrivate> | null = options?.existingPrivate ?? null;
@@ -2941,8 +3131,20 @@ export async function updateMemberSelfProfile(
         if (privSnap.exists()) {
           loadedPrivate = privSnap.data() as MemberPrivate;
         }
-      } catch {
-        // Non-fatal: proceed cleanly
+      } catch (privErr) {
+        const privCode = extractFirebaseErrorCode(privErr);
+        if (privCode !== 'not-found') {
+          const formatted = formatStepFailureMessage('memberPrivate', privErr, 'get');
+          return {
+            success: false,
+            failedStep: 'memberPrivate',
+            failedOperation: formatted.operation,
+            failedCollection: formatted.collection,
+            errorCode: formatted.code,
+            diagnosticCode: formatted.diagnosticCode,
+            message: formatted.message,
+          };
+        }
       }
     }
 
@@ -2955,7 +3157,14 @@ export async function updateMemberSelfProfile(
         return {
           success: false,
           failedStep: 'members',
+          failedOperation: 'validate',
+          failedCollection: 'members',
           errorCode: 'invalid-argument',
+          diagnosticCode: buildProfileDiagnosticCode({
+            step: 'members',
+            operation: 'validate',
+            code: 'invalid-argument',
+          }),
           message: 'Avatar URL must use https:// or be uploaded as an image file.',
         };
       }
@@ -2980,7 +3189,14 @@ export async function updateMemberSelfProfile(
       return {
         success: false,
         failedStep: 'members',
+        failedOperation: 'validate',
+        failedCollection: 'members',
         errorCode: 'invalid-argument',
+        diagnosticCode: buildProfileDiagnosticCode({
+          step: 'members',
+          operation: 'validate',
+          code: 'invalid-argument',
+        }),
         message: 'error' in diffResult ? diffResult.error : 'Invalid profile details.',
       };
     }
@@ -3015,11 +3231,15 @@ export async function updateMemberSelfProfile(
     return result;
   } catch (err: any) {
     console.error('updateMemberSelfProfile unexpected error:', err);
+    const formatted = formatStepFailureMessage('members', err, 'save');
     return {
       success: false,
       failedStep: 'members',
-      errorCode: 'unknown',
-      message: formatUserFriendlyFirestoreError(err, 'Failed to update profile'),
+      failedOperation: formatted.operation,
+      failedCollection: formatted.collection,
+      errorCode: formatted.code,
+      diagnosticCode: formatted.diagnosticCode,
+      message: formatted.message,
     };
   }
 }

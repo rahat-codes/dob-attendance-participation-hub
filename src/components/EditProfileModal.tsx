@@ -30,6 +30,7 @@ interface EditProfileModalProps {
   onClose: () => void;
   member: Member;
   memberPrivate?: MemberPrivate | null;
+  syncErrorMessage?: string | null;
   isMandatory?: boolean;
   onSignOut?: () => void;
   onProfileUpdated?: (updated: Member) => void;
@@ -42,6 +43,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   onClose,
   member,
   memberPrivate,
+  syncErrorMessage = null,
   isMandatory = false,
   onSignOut,
   onProfileUpdated,
@@ -75,6 +77,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [saving, setSaving] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [diagnosticCode, setDiagnosticCode] = useState<string | null>(null);
   const [canRetry, setCanRetry] = useState(false);
   const [warningNotice, setWarningNotice] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -112,6 +115,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setPortfolioUrl(member.portfolioUrl || '');
       setShowLinksPublicly(member.showLinksPublicly ?? true);
       setError(null);
+      setDiagnosticCode(null);
       setCanRetry(false);
       setWarningNotice(null);
       setSuccess(null);
@@ -184,6 +188,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
   const executeSave = async () => {
     setError(null);
+    setDiagnosticCode(null);
     setCanRetry(false);
     setWarningNotice(null);
     setSuccess(null);
@@ -324,10 +329,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         }, res.warnings && res.warnings.length > 0 ? 1800 : 900);
       } else {
         setCanRetry(true);
+        setDiagnosticCode(res.diagnosticCode || null);
         setError(res.message || formatUserFriendlyFirestoreError(res.message, 'Failed to update builder profile.'));
       }
     } catch (err: any) {
       setCanRetry(true);
+      setDiagnosticCode(null);
       setError(formatUserFriendlyFirestoreError(err, 'Failed to update builder profile.'));
     } finally {
       setSaving(false);
@@ -412,6 +419,16 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           </div>
         )}
 
+        {syncErrorMessage && !error && (
+          <div
+            role="alert"
+            className="p-3 rounded-xl bg-amber-950/60 border border-amber-700/80 text-amber-200 flex items-start gap-2"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <span className="break-words">{syncErrorMessage}</span>
+          </div>
+        )}
+
         {error && (
           <div
             role="alert"
@@ -419,7 +436,14 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
           >
             <div className="flex items-start gap-2 min-w-0 flex-1">
               <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-              <span className="break-words">{error}</span>
+              <div className="min-w-0 space-y-1">
+                <span className="block break-words">{error}</span>
+                {diagnosticCode && (
+                  <span className="block font-mono text-[10px] text-red-300/80 break-all">
+                    Ref: {diagnosticCode}
+                  </span>
+                )}
+              </div>
             </div>
             {canRetry && (
               <button

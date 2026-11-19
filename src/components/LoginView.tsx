@@ -37,6 +37,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
     handleSignIn,
     signOutUser,
     authError,
+    memberSyncError,
     clearAuthError,
     registrationError,
     retryRegistration,
@@ -618,44 +619,77 @@ export const LoginView: React.FC<LoginViewProps> = ({ onContinueAsGuest }) => {
           </div>
         )}
 
-        {/* State 7D: Deactivated Member */}
+        {/* State 7D: Deactivated Member or Members Listener Permission Failure */}
         {user && !loading && membershipState === 'deactivated' && profile && (
-          <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
-            <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
-              <AlertCircle className="h-6 w-6" />
-            </div>
-            <h2 className="text-base font-bold text-white">Account deactivated: re-apply or contact an admin</h2>
-            <p className="text-xs text-zinc-400">
-              Account deactivated: re-apply or contact an admin to restore your builder membership. You can submit a new application below.
-            </p>
-
-            {linkError && (
-              <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
-                <span>{linkError}</span>
+          memberSyncError?.source === 'members' ? (
+            <div className="bg-zinc-900/90 border border-red-500/40 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
+              <div className="inline-flex p-3 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto">
+                <AlertCircle className="h-6 w-6" />
               </div>
-            )}
-
-            <div className="pt-1 text-left">
-              <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading form...</p>}>
-                <ApplicationForm
-                  user={profile}
-                  initialValues={decodeApplication(profile)}
-                  isReapplying={true}
-                  onSubmit={async (appData) => {
-                    setLinkError(null);
-                    try {
-                      await reRequestAccess(appData);
-                    } catch (err: any) {
-                      setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to submit re-application.'));
-                      throw err;
-                    }
-                  }}
-                  onSignOut={signOutUser}
-                />
-              </Suspense>
+              <div className="space-y-2">
+                <h2 className="text-base font-bold text-white">Profile Sync / Permission Error</h2>
+                <p className="text-xs text-red-200 leading-relaxed">{memberSyncError.message}</p>
+                <p className="text-[11px] font-mono text-zinc-400">
+                  Ref: source={memberSyncError.source} code={memberSyncError.code}
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={refreshProfile}
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#b5ff00] hover:bg-[#a3e600] text-black font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  <span>Retry Sync</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={signOutUser}
+                  className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-6 sm:p-8 backdrop-blur-xl shadow-2xl space-y-5 text-center">
+              <div className="inline-flex p-3 rounded-2xl bg-zinc-800 border border-zinc-700 text-zinc-400 mx-auto">
+                <AlertCircle className="h-6 w-6" />
+              </div>
+              <h2 className="text-base font-bold text-white">Account deactivated: re-apply or contact an admin</h2>
+              <p className="text-xs text-zinc-400">
+                Account deactivated: re-apply or contact an admin to restore your builder membership. You can submit a new application below.
+              </p>
+
+              {linkError && (
+                <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-200 text-xs text-left flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+                  <span>{linkError}</span>
+                </div>
+              )}
+
+              <div className="pt-1 text-left">
+                <Suspense fallback={<p className="text-xs font-mono text-zinc-400 text-center py-4">Loading form...</p>}>
+                  <ApplicationForm
+                    user={profile}
+                    initialValues={decodeApplication(profile)}
+                    isReapplying={true}
+                    onSubmit={async (appData) => {
+                      setLinkError(null);
+                      try {
+                        await reRequestAccess(appData);
+                      } catch (err: any) {
+                        setLinkError(formatUserFriendlyFirestoreError(err, 'Failed to submit re-application.'));
+                        throw err;
+                      }
+                    }}
+                    onSignOut={signOutUser}
+                  />
+                </Suspense>
+              </div>
+            </div>
+          )
         )}
 
         {/* State 8: Suspended or Inactive */}

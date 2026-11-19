@@ -153,6 +153,7 @@ export default function App() {
     profile,
     linkedMember,
     memberPrivate,
+    memberSyncError,
     membershipState,
     isAdmin,
     isApprovedMember,
@@ -2185,6 +2186,7 @@ export default function App() {
             }
           }
           memberPrivate={memberPrivate}
+          syncErrorMessage={memberSyncError?.message || null}
           onSignOut={signOutUser}
           onProfileUpdated={(updated) => {
             refreshProfile();

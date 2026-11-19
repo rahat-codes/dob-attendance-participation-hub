@@ -12,6 +12,8 @@ import {
   executeIsolatedProfileUpdate,
   formatStepFailureMessage,
 } from '../src/utils/profileEdit';
+import { formatUserFriendlyFirestoreError } from '../src/utils/firestoreErrors';
+import { CLIENT_SCHEMA_VERSION } from '../src/config/constants';
 import type { Member, MemberPrivate } from '../src/types';
 
 let passed = 0;
@@ -359,14 +361,85 @@ async function run() {
     assert.equal(res.warnings?.[1].step, 'users');
   });
 
-  await test('formatStepFailureMessage returns step label and code with zero sensitive data', () => {
-    const formatted = formatStepFailureMessage('memberPrivate', {
-      code: 'permission-denied',
-      message: 'Missing or insufficient permissions for TVE6rPuwvfcZDJjGv3t9ESJ1t8v1',
-    });
+  await test('formatStepFailureMessage returns step label, collection, diagnosticCode, and redacts sensitive data', () => {
+    const formatted = formatStepFailureMessage(
+      'memberPrivate',
+      {
+        code: 'permission-denied',
+        message: 'Missing or insufficient permissions for user@example.com /TVE6rPuwvfcZDJjGv3t9ESJ1t8v1',
+      },
+      'merge'
+    );
     assert.equal(formatted.code, 'permission-denied');
+    assert.equal(formatted.collection, 'memberPrivate');
+    assert.equal(formatted.operation, 'merge');
     assert.ok(formatted.message.includes('private contact details'));
     assert.ok(formatted.message.includes('permission-denied'));
+    assert.ok(!formatted.message.includes('Permission check failed for this action.'));
+    assert.ok(!formatted.message.includes('TVE6rPuwvfcZDJjGv3t9ESJ1t8v1'));
+    assert.ok(!formatted.message.includes('user@example.com'));
+    assert.equal(
+      formatted.diagnosticCode,
+      `step=memberPrivate op=merge code=permission-denied v=${CLIENT_SCHEMA_VERSION}`
+    );
+
+    const acceptFmt = formatStepFailureMessage(
+      'acceptInvitation',
+      { code: 'permission-denied', message: 'Missing or insufficient permissions.' },
+      'batchWrite'
+    );
+    assert.equal(acceptFmt.collection, 'users+members');
+    assert.ok(acceptFmt.message.includes('membership invitation'));
+    assert.ok(!acceptFmt.message.includes('Permission check failed for this action.'));
+  });
+
+  await test('formatUserFriendlyFirestoreError maps native FirebaseError via explicit context path', () => {
+    const nativeErr = { code: 'permission-denied', message: 'Missing or insufficient permissions.' };
+    const msg = formatUserFriendlyFirestoreError(nativeErr, 'Fallback', {
+      path: 'memberPrivate/',
+      operation: 'merge',
+      step: 'memberPrivate',
+    });
+    assert.ok(msg.toLowerCase().includes('private contact details'));
+    assert.ok(!msg.includes('Permission check failed for this action.'));
+  });
+
+  await test('buildMemberProfileDiff for mandatory setup with missing id/authUid and null memberPrivate populates required patches cleanly', () => {
+    const legacyPendingMember: Partial<Member> = {
+      name: 'Iuliia Gafurova',
+      handle: '@iuliia',
+      role: 'Member',
+      tracks: ['Software & Systems'],
+      status: 'Active',
+    };
+    const diff = buildMemberProfileDiff(
+      legacyPendingMember,
+      null,
+      {
+        name: 'Iuliia Gafurova',
+        email: 'gafurovaiullia@gmail.com',
+        phone: '+82 10-5555-1234',
+        studentId: '20251508',
+        university: 'Tongmyong University',
+        tracks: ['AI & Embedded'],
+      },
+      {
+        targetMemberId: 'mem_iuliia_1',
+        currentUid: 'uid_iuliia_1',
+        isMandatory: true,
+        nowIso: '2026-11-18T12:00:00.000Z',
+      }
+    );
+    assert.equal(diff.valid, true);
+    if (!diff.valid) return;
+    assert.deepEqual(Object.keys(diff.plan.memberPatch).sort(), ['authUid', 'id', 'tracks']);
+    assert.equal(diff.plan.memberPatch.id, 'mem_iuliia_1');
+    assert.equal(diff.plan.memberPatch.authUid, 'uid_iuliia_1');
+    assert.deepEqual(diff.plan.memberPatch.tracks, ['AI & Embedded']);
+    assert.equal(diff.plan.privatePatch.studentId, '20251508');
+    assert.equal(diff.plan.privatePatch.phone, '+82 10-5555-1234');
+    assert.equal(diff.plan.privatePatch.profileCompleted, true);
+    assert.equal(diff.plan.privatePatch.profileCompletedAt, '2026-11-18T12:00:00.000Z');
   });
 
   console.log(`Passed ${passed} profile edit tests.`);

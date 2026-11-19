@@ -1,5 +1,6 @@
 import { BuilderTrack, Member, MemberPrivate } from '../types';
-import { formatUserFriendlyFirestoreError } from './firestoreErrors';
+import { CLIENT_SCHEMA_VERSION } from '../config/constants';
+import { formatUserFriendlyFirestoreError, sanitizeDiagnosticLabel } from './firestoreErrors';
 import {
   normalizeGitHubUrl,
   normalizeLinkedInUrl,
@@ -7,19 +8,29 @@ import {
   sanitizeAuthPhotoUrl,
 } from './profileLinks';
 
-export type ProfileStepName = 'members' | 'memberPrivate' | 'publicLeaderboard' | 'users';
+export type ProfileStepName =
+  | 'precheck'
+  | 'acceptInvitation'
+  | 'members'
+  | 'memberPrivate'
+  | 'publicLeaderboard'
+  | 'users';
 
 export interface ProfileStepWarning {
   step: 'publicLeaderboard' | 'users';
   code: string;
   message: string;
+  diagnosticCode?: string;
 }
 
 export interface ProfileUpdateResult {
   success: boolean;
   message?: string;
   failedStep?: ProfileStepName;
+  failedOperation?: string;
+  failedCollection?: string;
   errorCode?: string;
+  diagnosticCode?: string;
   warnings?: ProfileStepWarning[];
   appliedMemberPatch?: Record<string, unknown>;
 }
@@ -112,22 +123,70 @@ export function extractFirebaseErrorCode(err: unknown): string {
   return 'unknown';
 }
 
-export function formatStepFailureMessage(step: ProfileStepName, err: unknown): {
+export function stepToCollectionName(step: ProfileStepName): string {
+  switch (step) {
+    case 'precheck':
+    case 'users':
+      return 'users';
+    case 'acceptInvitation':
+      return 'users+members';
+    case 'members':
+      return 'members';
+    case 'memberPrivate':
+      return 'memberPrivate';
+    case 'publicLeaderboard':
+      return 'publicLeaderboard';
+  }
+}
+
+export function buildProfileDiagnosticCode(opts: {
+  step: ProfileStepName;
+  operation?: string;
+  code?: string;
+}): string {
+  const safeStep = sanitizeDiagnosticLabel(opts.step);
+  const safeOp = sanitizeDiagnosticLabel(opts.operation || 'write');
+  const safeCode = sanitizeDiagnosticLabel(opts.code || 'unknown');
+  return `step=${safeStep} op=${safeOp} code=${safeCode} v=${CLIENT_SCHEMA_VERSION}`;
+}
+
+export function formatStepFailureMessage(
+  step: ProfileStepName,
+  err: unknown,
+  operation: string = 'write'
+): {
   code: string;
+  collection: string;
+  operation: string;
+  diagnosticCode: string;
   message: string;
 } {
   const code = extractFirebaseErrorCode(err);
-  const friendly = formatUserFriendlyFirestoreError(err, 'Failed to save your profile changes.');
+  const collectionName = stepToCollectionName(step);
+  const contextPath = step === 'acceptInvitation' ? 'acceptInvitation' : `${collectionName}/`;
+  const friendly = formatUserFriendlyFirestoreError(err, 'Failed to save your profile changes.', {
+    path: contextPath,
+    operation,
+    step,
+  });
   const stepLabel =
-    step === 'members'
+    step === 'precheck'
+      ? 'account link check'
+      : step === 'acceptInvitation'
+      ? 'membership invitation acceptance'
+      : step === 'members'
       ? 'builder profile'
       : step === 'memberPrivate'
       ? 'private contact details'
       : step === 'publicLeaderboard'
       ? 'public leaderboard sync'
       : 'account sync';
+  const diagnosticCode = buildProfileDiagnosticCode({ step, operation, code });
   return {
     code,
+    collection: collectionName,
+    operation,
+    diagnosticCode,
     message: `Could not update ${stepLabel} (${code}): ${friendly}`,
   };
 }
@@ -394,11 +453,14 @@ export async function executeIsolatedProfileUpdate(
       await deps.updateMemberDoc(plan.memberPatch);
     } catch (err) {
       logError('updateMemberSelfProfile step (a) members update failed:', err);
-      const formatted = formatStepFailureMessage('members', err);
+      const formatted = formatStepFailureMessage('members', err, 'update');
       return {
         success: false,
         failedStep: 'members',
+        failedOperation: formatted.operation,
+        failedCollection: formatted.collection,
         errorCode: formatted.code,
+        diagnosticCode: formatted.diagnosticCode,
         message: formatted.message,
       };
     }
@@ -410,11 +472,14 @@ export async function executeIsolatedProfileUpdate(
       await deps.mergeMemberPrivateDoc(plan.privatePatch);
     } catch (err) {
       logError('updateMemberSelfProfile step (b) memberPrivate merge failed:', err);
-      const formatted = formatStepFailureMessage('memberPrivate', err);
+      const formatted = formatStepFailureMessage('memberPrivate', err, 'merge');
       return {
         success: false,
         failedStep: 'memberPrivate',
+        failedOperation: formatted.operation,
+        failedCollection: formatted.collection,
         errorCode: formatted.code,
+        diagnosticCode: formatted.diagnosticCode,
         message: formatted.message,
       };
     }
@@ -433,10 +498,11 @@ export async function executeIsolatedProfileUpdate(
       }
     } catch (pubErr) {
       logWarn('Public leaderboard projection sync notice:', pubErr);
-      const formatted = formatStepFailureMessage('publicLeaderboard', pubErr);
+      const formatted = formatStepFailureMessage('publicLeaderboard', pubErr, plan.publicLeaderboardAction === 'delete' ? 'delete' : 'update');
       warnings.push({
         step: 'publicLeaderboard',
         code: formatted.code,
+        diagnosticCode: formatted.diagnosticCode,
         message: 'Saved your profile, though public leaderboard link preview sync will refresh shortly.',
       });
     }
@@ -472,10 +538,11 @@ export async function executeIsolatedProfileUpdate(
       }
     } catch (userErr) {
       logWarn('Profile sync to auth/users completed with fallback:', userErr);
-      const formatted = formatStepFailureMessage('users', userErr);
+      const formatted = formatStepFailureMessage('users', userErr, 'update');
       warnings.push({
         step: 'users',
         code: formatted.code,
+        diagnosticCode: formatted.diagnosticCode,
         message: 'Saved your builder profile, though account display sync hit a temporary notice.',
       });
     }

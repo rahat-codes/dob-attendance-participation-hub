@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
-import { notifyListenerError, RequestPipelineCheckResult } from '../src/firebase/firestoreService';
+import {
+  notifyListenerError,
+  evaluateOnboardingHealth,
+  RequestPipelineCheckResult,
+} from '../src/firebase/firestoreService';
 import { OperationType } from '../src/firebase/config';
+import { EXPECTED_RULES_VERSION, CLIENT_SCHEMA_VERSION } from '../src/config/constants';
 
 console.log('--- RUNNING REQUEST PIPELINE & WRONG-ACCOUNT GUARD TESTS ---');
 
@@ -255,6 +260,46 @@ import path from 'node:path';
   assert.ok(adminDeclineSlice.includes('respondedAt'), 'declineUserRequest must record respondedAt for re-applicant history');
 
   console.log('✓ (e) F15 applicant audit-free accept/decline and respondedAt history tracking verified');
+}
+
+// Test 7: evaluateOnboardingHealth detects broken links, missing authUid, legacy fields, and rules version drift
+{
+  const health = evaluateOnboardingHealth(
+    [
+      { status: 'active', memberId: 'm1' },
+      { status: 'active' }, // missing memberId
+      { status: 'approved_waiting_response', approvedMemberId: 'm2' },
+      { status: 'approved_waiting_response' }, // missing approvedMemberId
+    ],
+    [
+      { id: 'm1', authUid: 'u1', status: 'Active', joinedDate: '2026-01-01', tracks: ['AI & Embedded'] },
+      { id: 'm2', status: 'Active', joinedDate: '2026-01-02', tracks: [] }, // missing authUid + empty tracks
+      { status: 'Inactive', tracks: ['Software & Systems'] }, // missing id & joinedDate
+    ],
+    { rulesVersion: '2026.10.A1' }
+  );
+
+  assert.equal(health.activeUsersWithoutMemberId, 1);
+  assert.equal(health.approvedWaitingMissingId, 1);
+  assert.equal(health.membersMissingAuthUid, 1);
+  assert.equal(health.membersMissingCoreFields, 2);
+  assert.equal(health.rulesVersion, '2026.10.A1');
+  assert.equal(health.expectedRulesVersion, EXPECTED_RULES_VERSION);
+  assert.equal(health.clientSchemaVersion, CLIENT_SCHEMA_VERSION);
+  assert.equal(health.rulesVersionDrift, true);
+
+  const cleanHealth = evaluateOnboardingHealth(
+    [{ status: 'active', memberId: 'm1' }],
+    [{ id: 'm1', authUid: 'u1', status: 'Active', joinedDate: '2026-01-01', tracks: ['AI & Embedded'] }],
+    { rulesVersion: EXPECTED_RULES_VERSION }
+  );
+  assert.equal(cleanHealth.activeUsersWithoutMemberId, 0);
+  assert.equal(cleanHealth.approvedWaitingMissingId, 0);
+  assert.equal(cleanHealth.membersMissingAuthUid, 0);
+  assert.equal(cleanHealth.membersMissingCoreFields, 0);
+  assert.equal(cleanHealth.rulesVersionDrift, false);
+
+  console.log('✓ (f) evaluateOnboardingHealth link integrity and rules version drift verified');
 }
 
 console.log('ALL REQUEST PIPELINE TESTS PASSED SUCCESSFULLY!');
