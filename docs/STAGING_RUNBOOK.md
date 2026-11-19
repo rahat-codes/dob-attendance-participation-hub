@@ -63,6 +63,6 @@ Choose **one** of these two safe options:
 
 | Layer | Rollback Action |
 | :--- | :--- |
-| **Web / Server Build (Cloud Run / AI Studio)** | Route traffic back to the previous healthy Cloud Run revision (`gcloud run services update-traffic <staging-service> --region=asia-northeast1 --to-revisions=<PREVIOUS_REVISION>=100`) or revert the AI Studio staging applet snapshot. (App is served by Node/Express on Cloud Run/AI Studio; no Firebase Hosting is used.) |
+| **Web / Build (Vercel / Preview)** | In **Vercel Dashboard -> Deployments**, locate the previous healthy staging/preview deployment and click **Promote to Production** (or run `vercel rollback` / re-alias the staging deployment). App is served via Vercel (`vercel.json` + `/api/*`); no Firebase Hosting or Cloud Run service is used. |
 | **Firestore Rules** | Firebase Console -> **Firestore Database -> Rules -> Version history** -> select the previous published ruleset -> **Publish**. If Group B broke a stale client, revert temporarily to `firestore.rules` (A1 + A2) or `docs/rules/A1.rules`. |
 | **Firestore Data** | Import from the step-1 pre-release backup (`exportFullBackupJSON` or Cloud Firestore Managed Export in Google Cloud Console). After any restore, run `prepareMemberDataRepair` and `prepareSessionMigration` dry-runs in **Admin Backup** before re-enabling Group B rules. |

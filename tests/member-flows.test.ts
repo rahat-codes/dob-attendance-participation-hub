@@ -102,16 +102,19 @@ test('AuthContext keeps member/memberPrivate listeners attached across same-memb
   assert.ok(authText.includes('formatUserFriendlyFirestoreError('), 'Expected friendly error translation in AuthContext');
 });
 
-test('updateMemberSelfProfile pre-checks membership state, backfills id/authUid, and isolates publicLeaderboard sync', () => {
+test('updateMemberSelfProfile pre-checks membership state, diffs only changed fields, and isolates 4 save steps', () => {
   const svcText = fs.readFileSync(path.resolve(process.cwd(), 'src/firebase/firestoreService.ts'), 'utf8');
+  const editText = fs.readFileSync(path.resolve(process.cwd(), 'src/utils/profileEdit.ts'), 'utf8');
   const startIdx = svcText.indexOf('export async function updateMemberSelfProfile(');
   const endIdx = svcText.indexOf('export async function recordCheckInAtomic', startIdx);
   const block = svcText.slice(startIdx, endIdx > startIdx ? endIdx : undefined);
   assert.ok(block.includes("userData.status === 'approved_waiting_response'"), 'Expected automatic invitation accept safety net');
   assert.ok(block.includes("memberData.status === 'Inactive'"), 'Expected Inactive member pre-check');
-  assert.ok(block.includes('memberUpdates.id = targetMemberId'), 'Expected missing id backfill');
-  assert.ok(block.includes('await updateDoc(memberRef, removeUndefinedFields(memberUpdates))'), 'Expected direct critical-path member update');
-  assert.ok(block.includes('Public leaderboard projection sync notice:'), 'Expected best-effort leaderboard sync isolation');
+  assert.ok(block.includes('buildMemberProfileDiff('), 'Expected diff-only profile builder delegation');
+  assert.ok(block.includes('executeIsolatedProfileUpdate('), 'Expected 4-step isolated executor delegation');
+  assert.ok(block.includes('await updateDoc(memberRef, removeUndefinedFields(patch))'), 'Expected direct critical-path member patch update');
+  assert.ok(editText.includes('memberPatch.id = options.targetMemberId'), 'Expected missing id backfill in profileEdit');
+  assert.ok(editText.includes('Public leaderboard projection sync notice:'), 'Expected best-effort leaderboard sync isolation');
 });
 
 test('UI forms and App/PendingRequests wrap Firestore errors via formatUserFriendlyFirestoreError and guard legacy arrays', () => {

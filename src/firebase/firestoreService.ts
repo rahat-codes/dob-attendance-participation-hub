@@ -74,6 +74,11 @@ import { formatUserFriendlyFirestoreError } from '../utils/firestoreErrors';
 import { ensureFreshServerTimeOffset, getCorrectedNowMs } from '../utils/serverTime';
 import { normalizeGitHubUrl, normalizeLinkedInUrl, normalizePortfolioUrl, sanitizeAuthPhotoUrl } from '../utils/profileLinks';
 import {
+  buildMemberProfileDiff,
+  executeIsolatedProfileUpdate,
+  type ProfileUpdateResult,
+} from '../utils/profileEdit';
+import {
   isTabVisible,
   filterUpcomingReminderSessions,
   buildReminderSweepPlan,
@@ -2835,243 +2840,185 @@ export async function updateMemberSelfProfile(
     linkedinUrl?: string;
     portfolioUrl?: string;
     showLinksPublicly?: boolean;
+  },
+  options?: {
+    existingMember?: Partial<Member> | null;
+    existingPrivate?: Partial<MemberPrivate> | null;
+    isMandatory?: boolean;
   }
-): Promise<{ success: boolean; message?: string }> {
+): Promise<ProfileUpdateResult> {
   try {
-    let targetMemberId = (memberId || '').trim();
-    if (!targetMemberId || targetMemberId === 'undefined' || targetMemberId === auth.currentUser?.uid) {
-      if (auth.currentUser) {
-        const userSnap = await getDoc(doc(db, USERS_COLLECTION, auth.currentUser.uid));
+    let targetMemberId = '';
+    const currentUid = auth.currentUser?.uid;
+
+    // Resolve authoritative linked memberId from users/{uid}.memberId first (do not require members.authUid query on client)
+    if (currentUid) {
+      try {
+        const userSnap = await getDoc(doc(db, USERS_COLLECTION, currentUid));
         if (userSnap.exists()) {
           const userData = userSnap.data() as UserProfile;
-          if (userData.memberId) {
+          if (userData.status === 'approved_waiting_response' && userData.approvedMemberId) {
+            await acceptMembershipInvitation(currentUid);
+            targetMemberId = userData.approvedMemberId;
+          } else if (userData.memberId) {
             targetMemberId = userData.memberId;
           } else if (userData.approvedMemberId) {
             targetMemberId = userData.approvedMemberId;
+          } else if (userData.status !== 'active') {
+            return {
+              success: false,
+              failedStep: 'members',
+              errorCode: 'unlinked-account',
+              message: 'Your membership invitation must be active before editing your builder profile. Please refresh and try again.',
+            };
           }
         }
-        if (!targetMemberId || targetMemberId === auth.currentUser.uid) {
-          const q = query(
-            collection(db, MEMBERS_COLLECTION),
-            where('authUid', '==', auth.currentUser.uid),
-            limit(1)
-          );
-          const mSnap = await getDocs(q);
-          if (!mSnap.empty) {
-            targetMemberId = mSnap.docs[0].id;
-          }
-        }
+      } catch (preErr) {
+        console.warn('Could not read user account link before profile save:', preErr);
       }
     }
 
     if (!targetMemberId) {
-      return { success: false, message: 'No linked builder profile ID found to update.' };
+      const candidate = (memberId || '').trim();
+      if (candidate && candidate !== 'undefined' && candidate !== currentUid) {
+        targetMemberId = candidate;
+      }
     }
 
-    const cleanName = (details.name || '').trim();
-    if (!cleanName || cleanName.length > 100) {
-      return { success: false, message: 'Full Name must be between 1 and 100 characters.' };
-    }
-
-    const cleanBio = (details.bio || '').trim();
-    if (cleanBio.length > 500) {
-      return { success: false, message: 'Bio cannot exceed 500 characters.' };
-    }
-
-    const rawAvatarInput = (details.avatarUrl || '').trim();
-    if (rawAvatarInput.toLowerCase().startsWith('http://')) {
+    if (!targetMemberId) {
       return {
         success: false,
-        message: 'Avatar URL must use https:// or be uploaded as an image file.',
-      };
-    }
-    if (rawAvatarInput.startsWith('https://') && rawAvatarInput.length > 500) {
-      return {
-        success: false,
-        message: 'Avatar HTTPS URL cannot exceed 500 characters.',
+        failedStep: 'members',
+        errorCode: 'unlinked-account',
+        message: 'No linked builder roster record was found for your account. Please contact an administrator.',
       };
     }
 
     const memberRef = doc(db, MEMBERS_COLLECTION, targetMemberId);
     const privRef = doc(db, MEMBER_PRIVATE_COLLECTION, targetMemberId);
+    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
 
-    // Pre-check user and member alignment so actionable guidance is returned before hitting opaque rules errors
-    if (auth.currentUser) {
+    // Inspect member document to verify Active status, ownership, and legacy baseline
+    let loadedMember: Partial<Member> = options?.existingMember ? { ...options.existingMember } : {};
+    if (currentUid) {
       try {
-        const userSnap = await getDoc(doc(db, USERS_COLLECTION, auth.currentUser.uid));
-        if (userSnap.exists()) {
-          const userData = userSnap.data() as UserProfile;
-          if (userData.status === 'approved_waiting_response' && userData.approvedMemberId === targetMemberId) {
-            await acceptMembershipInvitation(auth.currentUser.uid);
-          } else if (userData.status !== 'active') {
-            return {
-              success: false,
-              message: 'Your membership invitation must be active before completing your builder profile. Please refresh and try again.',
-            };
-          }
+        const memberSnap = await getDoc(memberRef);
+        if (!memberSnap.exists()) {
+          return {
+            success: false,
+            failedStep: 'members',
+            errorCode: 'not-found',
+            message: 'Your linked builder roster record no longer exists. Please contact an administrator.',
+          };
+        }
+        const memberData = memberSnap.data() as Member;
+        if (memberData.status === 'Inactive') {
+          return {
+            success: false,
+            failedStep: 'members',
+            errorCode: 'inactive-member',
+            message: 'Your builder record is currently Inactive. Please contact an administrator to reactivate your pass.',
+          };
+        }
+        if (memberData.authUid && memberData.authUid !== currentUid) {
+          return {
+            success: false,
+            failedStep: 'members',
+            errorCode: 'account-mismatch',
+            message: 'This builder record is linked to another account. Please contact an administrator.',
+          };
+        }
+        loadedMember = { ...memberData };
+      } catch (readErr) {
+        console.warn('Could not pre-read member doc; falling back to loaded UI baseline:', readErr);
+      }
+    }
+
+    let loadedPrivate: Partial<MemberPrivate> | null = options?.existingPrivate ?? null;
+    if (!loadedPrivate && currentUid) {
+      try {
+        const privSnap = await getDoc(privRef);
+        if (privSnap.exists()) {
+          loadedPrivate = privSnap.data() as MemberPrivate;
         }
       } catch {
-        // Proceed cleanly to standard checks
+        // Non-fatal: proceed cleanly
       }
     }
 
-    // Normalize and strictly validate social & portfolio links with profileLinks.ts
-    let canonicalGithub = '';
-    if (details.githubUrl && details.githubUrl.trim()) {
-      const res = normalizeGitHubUrl(details.githubUrl);
-      if (!res.valid || !res.canonicalUrl) {
-        return { success: false, message: res.error || 'Invalid GitHub URL format.' };
+    const rawAvatarInput = (details.avatarUrl || '').trim();
+    const baseAvatar = (loadedMember.avatarUrl || loadedMember.photoURL || '').trim();
+    let preparedAvatar = rawAvatarInput;
+    if (rawAvatarInput !== baseAvatar && rawAvatarInput) {
+      const safeAvatar = await ensureSafeAvatarUrl(rawAvatarInput);
+      if (safeAvatar && safeAvatar.startsWith('http://')) {
+        return {
+          success: false,
+          failedStep: 'members',
+          errorCode: 'invalid-argument',
+          message: 'Avatar URL must use https:// or be uploaded as an image file.',
+        };
       }
-      canonicalGithub = res.canonicalUrl;
+      preparedAvatar = safeAvatar || '';
     }
 
-    let canonicalLinkedin = '';
-    if (details.linkedinUrl && details.linkedinUrl.trim()) {
-      const res = normalizeLinkedInUrl(details.linkedinUrl);
-      if (!res.valid || !res.canonicalUrl) {
-        return { success: false, message: res.error || 'Invalid LinkedIn URL format.' };
+    const diffResult = buildMemberProfileDiff(
+      loadedMember,
+      loadedPrivate,
+      {
+        ...details,
+        avatarUrl: preparedAvatar,
+      },
+      {
+        targetMemberId,
+        currentUid,
+        isMandatory: options?.isMandatory,
       }
-      canonicalLinkedin = res.canonicalUrl;
-    }
+    );
 
-    let canonicalPortfolio = '';
-    if (details.portfolioUrl && details.portfolioUrl.trim()) {
-      const res = normalizePortfolioUrl(details.portfolioUrl);
-      if (!res.valid) {
-        return { success: false, message: res.error || 'Invalid Portfolio URL format.' };
-      }
-      canonicalPortfolio = res.canonicalUrl || '';
-    }
-
-    const safeAvatar = await ensureSafeAvatarUrl(details.avatarUrl);
-    const normalizedAvatar = safeAvatar && safeAvatar.startsWith('http://') ? '' : safeAvatar || '';
-    if (normalizedAvatar.startsWith('data:image/') && normalizedAvatar.length > 150000) {
+    if (!diffResult.valid) {
       return {
         success: false,
-        message: 'Uploaded avatar image is too large. Please choose a smaller image.',
+        failedStep: 'members',
+        errorCode: 'invalid-argument',
+        message: 'error' in diffResult ? diffResult.error : 'Invalid profile details.',
       };
     }
 
-    const normalizedTracks = details.tracks && details.tracks.length > 0 ? details.tracks.slice(0, 10) : ['Software & Systems'];
-    const nowIso = new Date().toISOString();
+    const result = await executeIsolatedProfileUpdate(diffResult.plan, {
+      updateMemberDoc: async (patch) => {
+        await updateDoc(memberRef, removeUndefinedFields(patch));
+      },
+      mergeMemberPrivateDoc: async (patch) => {
+        await setDoc(privRef, removeUndefinedFields(patch), { merge: true });
+      },
+      publicLeaderboardDocExists: async () => {
+        const snap = await getDoc(pubRef);
+        return snap.exists();
+      },
+      updatePublicLeaderboardDoc: async (patch) => {
+        await updateDoc(pubRef, removeUndefinedFields(patch));
+      },
+      deletePublicLeaderboardDoc: async () => {
+        await deleteDoc(pubRef);
+      },
+      updateUserDoc: async (patch) => {
+        if (!currentUid) return;
+        await updateDoc(doc(db, USERS_COLLECTION, currentUid), removeUndefinedFields(patch));
+      },
+      updateAuthProfile: async (patch) => {
+        if (!auth.currentUser) return;
+        await updateProfile(auth.currentUser, patch);
+      },
+    });
 
-    // STOP writing PII (email, phone, department, major, semester) to members. Only write whitelisted public fields!
-    const memberUpdates: Record<string, any> = {
-      name: cleanName,
-      avatarUrl: normalizedAvatar,
-      bio: cleanBio,
-      tracks: normalizedTracks,
-      leaderboardOptOut: details.leaderboardOptOut ?? false,
-      githubUrl: canonicalGithub,
-      linkedinUrl: canonicalLinkedin,
-      portfolioUrl: canonicalPortfolio,
-      showLinksPublicly: details.showLinksPublicly ?? false,
-    };
-
-    // Inspect member document to self-heal missing id/authUid and detect inactive/reassigned link states
-    if (auth.currentUser) {
-      try {
-        const memberSnap = await getDoc(memberRef);
-        if (memberSnap.exists()) {
-          const memberData = memberSnap.data() as Member;
-          if (memberData.status === 'Inactive') {
-            return {
-              success: false,
-              message: 'Your builder record is currently Inactive. Please contact an administrator to reactivate your pass.',
-            };
-          }
-          if (memberData.authUid && memberData.authUid !== auth.currentUser.uid) {
-            return {
-              success: false,
-              message: 'This builder record is currently linked to another account. Please contact an administrator.',
-            };
-          }
-          if (!memberData.id) {
-            memberUpdates.id = targetMemberId;
-          }
-          if (!memberData.authUid) {
-            memberUpdates.authUid = auth.currentUser.uid;
-          }
-        }
-      } catch {
-        // Proceed without pre-read self-heal if transient read fails
-      }
-    }
-
-    const privUpdates: Record<string, any> = {
-      profileCompleted: true,
-      profileCompletedAt: nowIso,
-      updatedAt: nowIso,
-    };
-    if (details.email?.trim()) privUpdates.email = details.email.trim().toLowerCase();
-    if (details.phone?.trim()) privUpdates.phone = details.phone.trim();
-    if (details.studentId?.trim()) privUpdates.studentId = details.studentId.trim();
-    if (details.university?.trim()) privUpdates.university = details.university.trim();
-    if (details.department?.trim()) privUpdates.department = details.department.trim();
-    if (details.major?.trim()) privUpdates.major = details.major.trim();
-    if (details.semester?.trim()) privUpdates.semester = details.semester.trim();
-
-    // 1. Core Member Update & Private Profile Update (critical path)
-    await updateDoc(memberRef, removeUndefinedFields(memberUpdates));
-    await setDoc(privRef, privUpdates, { merge: true });
-
-    // 2. Leaderboard Projection Sync (best-effort; never blocks profile activation)
-    const pubRef = doc(db, PUBLIC_LEADERBOARD_COLLECTION, targetMemberId);
-    try {
-      const pubSnap = await getDoc(pubRef);
-      if (pubSnap.exists()) {
-        if (details.leaderboardOptOut === true) {
-          await deleteDoc(pubRef);
-        } else {
-          const pubUpdates: Record<string, any> = {
-            displayName: cleanName,
-            name: cleanName,
-            avatar: normalizedAvatar,
-            avatarUrl: normalizedAvatar,
-            lastUpdated: nowIso,
-            githubUrl: details.showLinksPublicly ? canonicalGithub : '',
-            linkedinUrl: details.showLinksPublicly ? canonicalLinkedin : '',
-            portfolioUrl: details.showLinksPublicly ? canonicalPortfolio : '',
-            showLinksPublicly: details.showLinksPublicly ?? false,
-          };
-          await updateDoc(pubRef, removeUndefinedFields(pubUpdates));
-        }
-      }
-    } catch (pubErr) {
-      console.warn('Public leaderboard projection sync notice:', pubErr);
-    }
-
-    // 3. User Document & Auth Display Name Sync
-    if (auth.currentUser) {
-      try {
-        const authPhoto = sanitizeAuthPhotoUrl(normalizedAvatar);
-        const authProfilePayload: { displayName?: string; photoURL?: string } = {
-          displayName: cleanName || auth.currentUser.displayName || undefined,
-        };
-        if (normalizedAvatar === '' || authPhoto) {
-          authProfilePayload.photoURL = authPhoto;
-        }
-        await updateProfile(auth.currentUser, authProfilePayload).catch(() => {});
-
-        const userRef = doc(db, USERS_COLLECTION, auth.currentUser.uid);
-        const userSyncPayload: Record<string, any> = {
-          displayName: cleanName,
-          updatedAt: new Date().toISOString(),
-        };
-        if (normalizedAvatar === '' || normalizedAvatar.startsWith('https://') || normalizedAvatar.startsWith('data:image/')) {
-          userSyncPayload.photoURL = normalizedAvatar;
-        }
-        await updateDoc(userRef, userSyncPayload).catch(() => {});
-      } catch (authErr) {
-        console.warn('Profile sync to auth/users completed with fallback:', authErr);
-      }
-    }
-
-    return { success: true };
+    return result;
   } catch (err: any) {
-    console.error('updateMemberSelfProfile error:', err);
+    console.error('updateMemberSelfProfile unexpected error:', err);
     return {
       success: false,
+      failedStep: 'members',
+      errorCode: 'unknown',
       message: formatUserFriendlyFirestoreError(err, 'Failed to update profile'),
     };
   }

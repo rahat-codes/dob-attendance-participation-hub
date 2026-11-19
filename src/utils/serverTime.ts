@@ -64,6 +64,10 @@ export async function syncServerTimeOffset(
       if (!res.ok) {
         return serverOffsetMs;
       }
+      const contentType = res.headers?.get?.('content-type')?.toLowerCase();
+      if (contentType && !contentType.includes('application/json')) {
+        return serverOffsetMs;
+      }
       const data = (await res.json()) as { nowMs?: unknown };
       if (typeof data?.nowMs === 'number' && Number.isFinite(data.nowMs)) {
         const computed = computeClockOffsetMs(clientBeforeMs, data.nowMs, clientAfterMs);

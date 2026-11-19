@@ -40,11 +40,11 @@ This runbook governs deploying the hardened V3 release cleanly with zero downtim
    npm run build
    ```
 2. Verify `dist/` + `server.js` built cleanly.
-3. Roll out the web app & Cloud Run service (Node `>= 22.18.0` for `npm start` / `node server.ts`, or `node server.js` from the build artifact).
-4. Smoke-check HTTP endpoints on the live domain:
-   - `GET /_healthz` returns `200 OK`
+3. Deploy the built static SPA (`dist/`) and `/api/*` serverless endpoints (`api/health.ts`, `api/time.ts`, `api/csp-report.ts`) to Vercel (`https://dob-hub.vercel.app` via `vercel.json`), or run the Express server (`node server.js` / `npm start` on Node `>= 22.18.0`) when self-hosting.
+4. Smoke-check HTTP endpoints on the live domain (`https://dob-hub.vercel.app`):
+   - `GET /api/health` returns `200` with `{ "status": "ok" }`
    - `GET /api/time` returns `200` with `Cache-Control: no-store` and JSON `{ "nowMs": ... }`
-   - `GET /` includes security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Content-Security-Policy-Report-Only`)
+   - `GET /` includes security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`, `Content-Security-Policy-Report-Only`)
    - Hard-refresh once and confirm legacy Service Workers unregister (`/sw.js` served with `no-cache, must-revalidate`).
 
 ---
@@ -94,5 +94,5 @@ Re-run all three **Dry Runs** and confirm **`0` proposed changes** remain. Also 
 | Layer | Rollback Action |
 | :--- | :--- |
 | **Security Rules** | Paste `firestore.rules.prev` (or `docs/rules/A1.rules` if A2/Group B rejects transitioning data) in **Firebase Console -> Firestore -> Rules -> Publish** (takes effect in < 30s), or restore the previous ruleset from **Firestore -> Rules -> Version history**. |
-| **Web / Server Build** | Re-deploy previous Cloud Run / AI Studio revision and route traffic back (`gcloud run services update-traffic <service> --region=asia-northeast1 --to-revisions=<PREVIOUS_REVISION>=100`). Old clients remain compatible with `docs/rules/A1.rules`. |
+| **Web / Server Build (Vercel)** | In **Vercel Dashboard -> Project (`dob-hub`) -> Deployments**, open the previous healthy deployment and click **Promote to Production** ("Promote previous deployment", or run `vercel rollback` via Vercel CLI). No Firebase Hosting or Cloud Run service is used. Old clients remain compatible with `docs/rules/A1.rules`. |
 | **Data Corruption / Bad Migration** | Restore affected documents from the Step 1 JSON backup (`exportFullBackupJSON`) or Managed Firestore PITR export. Audit entries in `auditLogs` remain immutable for post-incident tracing. |

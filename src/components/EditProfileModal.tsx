@@ -46,17 +46,21 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   onSignOut,
   onProfileUpdated,
 }) => {
+  const initialUniversity =
+    member.university || memberPrivate?.university || (isMandatory ? 'Tongmyong University' : '');
+  const initialTracks: BuilderTrack[] = Array.isArray(member.tracks) ? member.tracks : [];
+
   const [name, setName] = useState(member.name || '');
   const [email, setEmail] = useState(member.email || memberPrivate?.email || '');
   const [phone, setPhone] = useState(member.phone || memberPrivate?.phone || '');
   const [studentId, setStudentId] = useState(member.studentId || memberPrivate?.studentId || '');
-  const [university, setUniversity] = useState(member.university || memberPrivate?.university || 'Tongmyong University');
+  const [university, setUniversity] = useState(initialUniversity);
   const [department, setDepartment] = useState(member.department || memberPrivate?.department || '');
   const [major, setMajor] = useState(member.major || memberPrivate?.major || '');
   const [semester, setSemester] = useState(member.semester || memberPrivate?.semester || '');
   const [avatarUrl, setAvatarUrl] = useState(member.avatarUrl || member.photoURL || '');
   const [bio, setBio] = useState(member.bio || '');
-  const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(member.tracks || []);
+  const [selectedTracks, setSelectedTracks] = useState<BuilderTrack[]>(initialTracks);
   const [showOnLeaderboard, setShowOnLeaderboard] = useState<boolean>(!member.leaderboardOptOut);
 
   // Social & portfolio links
@@ -68,6 +72,13 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const initializedSessionKeyRef = useRef<string | null>(null);
   const appliedPrivateRef = useRef<boolean>(false);
 
+  const [saving, setSaving] = useState(false);
+  const [processingImage, setProcessingImage] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
+  const [warningNotice, setWarningNotice] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isOpen) {
       initializedSessionKeyRef.current = null;
@@ -77,6 +88,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
     const sessionKey = member.id;
     const isFreshOpen = initializedSessionKeyRef.current !== sessionKey;
+    const resolvedUni =
+      member.university || memberPrivate?.university || (isMandatory ? 'Tongmyong University' : '');
+    const resolvedTracks: BuilderTrack[] = Array.isArray(member.tracks) ? member.tracks : [];
+
     if (isFreshOpen) {
       initializedSessionKeyRef.current = sessionKey;
       appliedPrivateRef.current = Boolean(memberPrivate);
@@ -84,19 +99,21 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       setEmail(member.email || memberPrivate?.email || '');
       setPhone(member.phone || memberPrivate?.phone || '');
       setStudentId(member.studentId || memberPrivate?.studentId || '');
-      setUniversity(member.university || memberPrivate?.university || 'Tongmyong University');
+      setUniversity(resolvedUni);
       setDepartment(member.department || memberPrivate?.department || '');
       setMajor(member.major || memberPrivate?.major || '');
       setSemester(member.semester || memberPrivate?.semester || '');
       setAvatarUrl(member.avatarUrl || member.photoURL || '');
       setBio(member.bio || '');
-      setSelectedTracks(member.tracks && member.tracks.length > 0 ? member.tracks : ['Software & Systems']);
+      setSelectedTracks(resolvedTracks);
       setShowOnLeaderboard(!member.leaderboardOptOut);
       setGithubUrl(member.githubUrl || '');
       setLinkedinUrl(member.linkedinUrl || '');
       setPortfolioUrl(member.portfolioUrl || '');
       setShowLinksPublicly(member.showLinksPublicly ?? true);
       setError(null);
+      setCanRetry(false);
+      setWarningNotice(null);
       setSuccess(null);
     } else if (memberPrivate && !appliedPrivateRef.current) {
       // Backfill late-arriving private fields only if the user hasn't typed into them yet
@@ -109,30 +126,36 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       if (memberPrivate.major) setMajor((prev) => prev || memberPrivate.major || '');
       if (memberPrivate.semester) setSemester((prev) => prev || memberPrivate.semester || '');
     }
-  }, [isOpen, member, memberPrivate]);
+  }, [isOpen, member, memberPrivate, isMandatory]);
 
-  const [saving, setSaving] = useState(false);
-  const [processingImage, setProcessingImage] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const baseTracks = Array.isArray(member.tracks) ? member.tracks : [];
+  const tracksChanged =
+    selectedTracks.length !== baseTracks.length ||
+    selectedTracks.some((t, idx) => t !== baseTracks[idx]);
 
   const hasUnsavedChanges = Boolean(
     name !== (member.name || '') ||
     email !== (member.email || memberPrivate?.email || '') ||
     phone !== (member.phone || memberPrivate?.phone || '') ||
     studentId !== (member.studentId || memberPrivate?.studentId || '') ||
-    university !== (member.university || memberPrivate?.university || 'Tongmyong University') ||
+    university !== (member.university || memberPrivate?.university || (isMandatory ? 'Tongmyong University' : '')) ||
     department !== (member.department || memberPrivate?.department || '') ||
     major !== (member.major || memberPrivate?.major || '') ||
     semester !== (member.semester || memberPrivate?.semester || '') ||
     avatarUrl !== (member.avatarUrl || member.photoURL || '') ||
     bio !== (member.bio || '') ||
+    tracksChanged ||
     showOnLeaderboard !== !member.leaderboardOptOut ||
     githubUrl !== (member.githubUrl || '') ||
     linkedinUrl !== (member.linkedinUrl || '') ||
     portfolioUrl !== (member.portfolioUrl || '') ||
     showLinksPublicly !== (member.showLinksPublicly ?? true)
   );
+
+  // Live canonical previews & inline field errors
+  const ghValidation = normalizeGitHubUrl(githubUrl, { allowEmpty: true });
+  const liValidation = normalizeLinkedInUrl(linkedinUrl, { allowEmpty: true });
+  const pfValidation = normalizePortfolioUrl(portfolioUrl);
 
   const handleTrackToggle = (track: BuilderTrack) => {
     setSelectedTracks((prev) =>
@@ -146,6 +169,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
     setProcessingImage(true);
     setError(null);
+    setCanRetry(false);
     try {
       const optimized = await processProfilePhoto(file, 256, 0.85);
       setAvatarUrl(optimized);
@@ -158,9 +182,10 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const executeSave = async () => {
     setError(null);
+    setCanRetry(false);
+    setWarningNotice(null);
     setSuccess(null);
 
     const cleanName = name.trim();
@@ -211,40 +236,28 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
       return;
     }
 
-    let canonicalGh = githubUrl.trim();
-    if (canonicalGh) {
-      const ghRes = normalizeGitHubUrl(canonicalGh);
-      if (!ghRes.valid) {
-        setError(ghRes.error || 'Invalid GitHub URL.');
-        return;
-      }
-      canonicalGh = ghRes.canonicalUrl || canonicalGh;
+    if (!ghValidation.valid) {
+      setError(ghValidation.error || 'GitHub URL must look like https://github.com/your-username');
+      return;
+    }
+    if (!liValidation.valid) {
+      setError(liValidation.error || 'LinkedIn URL must look like https://www.linkedin.com/in/your-name');
+      return;
+    }
+    if (!pfValidation.valid) {
+      setError(pfValidation.error || 'Portfolio URL must look like https://your-site.dev');
+      return;
     }
 
-    let canonicalLi = linkedinUrl.trim();
-    if (canonicalLi) {
-      const liRes = normalizeLinkedInUrl(canonicalLi);
-      if (!liRes.valid) {
-        setError(liRes.error || 'Invalid LinkedIn URL.');
-        return;
-      }
-      canonicalLi = liRes.canonicalUrl || canonicalLi;
-    }
-
-    let canonicalPf = portfolioUrl.trim();
-    if (canonicalPf) {
-      const pfRes = normalizePortfolioUrl(canonicalPf);
-      if (!pfRes.valid) {
-        setError(pfRes.error || 'Invalid portfolio URL.');
-        return;
-      }
-      canonicalPf = pfRes.canonicalUrl || canonicalPf;
-    }
+    const canonicalGh = ghValidation.canonicalUrl ?? '';
+    const canonicalLi = liValidation.canonicalUrl ?? '';
+    const canonicalPf = pfValidation.canonicalUrl ?? '';
 
     setSaving(true);
     try {
-      let finalAvatarUrl = avatarUrl.trim();
-      if (finalAvatarUrl.startsWith('data:image/') && finalAvatarUrl.length > 80000) {
+      let finalAvatarUrl = trimmedAvatar;
+      const baseAvatar = (member.avatarUrl || member.photoURL || '').trim();
+      if (finalAvatarUrl !== baseAvatar && finalAvatarUrl.startsWith('data:image/') && finalAvatarUrl.length > 80000) {
         try {
           finalAvatarUrl = await processProfilePhoto(finalAvatarUrl, 256, 0.85);
         } catch (imgErr) {
@@ -252,27 +265,38 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         }
       }
 
-      const res = await updateMemberSelfProfile(member.id, {
-        name: cleanName,
-        email: cleanEmail,
-        phone: cleanPhone,
-        studentId: cleanStudentId,
-        university: university.trim() || 'Tongmyong University',
-        department: department.trim(),
-        major: major.trim(),
-        semester: semester.trim(),
-        avatarUrl: finalAvatarUrl,
-        bio: bio.trim(),
-        tracks: selectedTracks,
-        leaderboardOptOut: !showOnLeaderboard,
-        githubUrl: canonicalGh,
-        linkedinUrl: canonicalLi,
-        portfolioUrl: canonicalPf,
-        showLinksPublicly,
-      });
+      const res = await updateMemberSelfProfile(
+        member.id,
+        {
+          name: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
+          studentId: cleanStudentId,
+          university: university.trim(),
+          department: department.trim(),
+          major: major.trim(),
+          semester: semester.trim(),
+          avatarUrl: finalAvatarUrl,
+          bio: bio.trim(),
+          tracks: selectedTracks,
+          leaderboardOptOut: !showOnLeaderboard,
+          githubUrl: canonicalGh,
+          linkedinUrl: canonicalLi,
+          portfolioUrl: canonicalPf,
+          showLinksPublicly,
+        },
+        {
+          existingMember: member,
+          existingPrivate: memberPrivate,
+          isMandatory,
+        }
+      );
 
       if (res.success) {
         setSuccess(isMandatory ? 'Profile setup complete! Welcome to Den of Builders!' : 'Profile updated successfully!');
+        if (res.warnings && res.warnings.length > 0) {
+          setWarningNotice(res.warnings.map((w) => w.message).join(' '));
+        }
         if (onProfileUpdated) {
           onProfileUpdated({
             ...member,
@@ -280,7 +304,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             email: cleanEmail,
             phone: cleanPhone,
             studentId: cleanStudentId,
-            university: university.trim() || 'Tongmyong University',
+            university: university.trim(),
             department: department.trim(),
             major: major.trim(),
             semester: semester.trim(),
@@ -292,20 +316,27 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             linkedinUrl: canonicalLi,
             portfolioUrl: canonicalPf,
             showLinksPublicly,
-            profileCompleted: true,
+            profileCompleted: isMandatory ? true : member.profileCompleted,
           });
         }
         setTimeout(() => {
           onClose();
-        }, 900);
+        }, res.warnings && res.warnings.length > 0 ? 1800 : 900);
       } else {
-        setError(formatUserFriendlyFirestoreError(res.message, 'Failed to update builder profile.'));
+        setCanRetry(true);
+        setError(res.message || formatUserFriendlyFirestoreError(res.message, 'Failed to update builder profile.'));
       }
     } catch (err: any) {
+      setCanRetry(true);
       setError(formatUserFriendlyFirestoreError(err, 'Failed to update builder profile.'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSave();
   };
 
   return (
@@ -382,9 +413,35 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         )}
 
         {error && (
-          <div className="p-3 rounded-xl bg-red-950/60 border border-red-800 text-red-300 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
-            <span>{error}</span>
+          <div
+            role="alert"
+            className="p-3 rounded-xl bg-red-950/60 border border-red-800 text-red-200 flex flex-wrap items-center justify-between gap-2"
+          >
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <AlertCircle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+              <span className="break-words">{error}</span>
+            </div>
+            {canRetry && (
+              <button
+                type="button"
+                onClick={() => void executeSave()}
+                disabled={saving}
+                className="min-h-11 px-3 py-1.5 rounded-lg bg-red-900/70 hover:bg-red-800 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${saving ? 'animate-spin' : ''}`} />
+                <span>Retry</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {warningNotice && (
+          <div
+            role="status"
+            className="p-3 rounded-xl bg-amber-950/50 border border-amber-700/70 text-amber-200 flex items-start gap-2"
+          >
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+            <span>{warningNotice}</span>
           </div>
         )}
 
@@ -460,7 +517,6 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
             <label className="block text-zinc-300 font-medium mb-1.5 text-xs">Email Address</label>
             <input
               type="email"
-              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="builder@example.com"
@@ -532,36 +588,124 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-zinc-400 mb-1 text-[11px]">GitHub Profile</label>
+              <div className="flex items-center justify-between mb-1">
+                <label htmlFor="edit-github-url" className="text-zinc-400 text-[11px]">
+                  GitHub Profile
+                </label>
+                {githubUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setGithubUrl('')}
+                    aria-label="Clear GitHub URL"
+                    className="text-[10.5px] text-zinc-400 hover:text-white underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <input
+                id="edit-github-url"
                 type="text"
                 value={githubUrl}
                 onChange={(e) => setGithubUrl(e.target.value)}
                 placeholder="https://github.com/username or @username"
-                className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+                aria-invalid={Boolean(githubUrl.trim() && !ghValidation.valid)}
+                className={`w-full bg-[#12141a] border neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none transition-colors min-h-11 text-base sm:text-xs ${
+                  githubUrl.trim() && !ghValidation.valid
+                    ? 'border-red-500/80 focus:border-red-400'
+                    : 'border-white/10 focus:border-[#b5ff00]'
+                }`}
               />
+              {githubUrl.trim() ? (
+                ghValidation.valid && ghValidation.canonicalUrl ? (
+                  <p className="mt-1 text-[10.5px] font-mono text-[#b5ff00]/90 truncate">
+                    Saves as: {ghValidation.canonicalUrl}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[10.5px] text-red-400">{ghValidation.error}</p>
+                )
+              ) : null}
             </div>
+
             <div>
-              <label className="block text-zinc-400 mb-1 text-[11px]">LinkedIn Profile</label>
+              <div className="flex items-center justify-between mb-1">
+                <label htmlFor="edit-linkedin-url" className="text-zinc-400 text-[11px]">
+                  LinkedIn Profile
+                </label>
+                {linkedinUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setLinkedinUrl('')}
+                    aria-label="Clear LinkedIn URL"
+                    className="text-[10.5px] text-zinc-400 hover:text-white underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <input
+                id="edit-linkedin-url"
                 type="text"
                 value={linkedinUrl}
                 onChange={(e) => setLinkedinUrl(e.target.value)}
-                placeholder="https://linkedin.com/in/username"
-                className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+                placeholder="https://www.linkedin.com/in/your-name"
+                aria-invalid={Boolean(linkedinUrl.trim() && !liValidation.valid)}
+                className={`w-full bg-[#12141a] border neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none transition-colors min-h-11 text-base sm:text-xs ${
+                  linkedinUrl.trim() && !liValidation.valid
+                    ? 'border-red-500/80 focus:border-red-400'
+                    : 'border-white/10 focus:border-[#b5ff00]'
+                }`}
               />
+              {linkedinUrl.trim() ? (
+                liValidation.valid && liValidation.canonicalUrl ? (
+                  <p className="mt-1 text-[10.5px] font-mono text-[#b5ff00]/90 truncate">
+                    Saves as: {liValidation.canonicalUrl}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[10.5px] text-red-400">{liValidation.error}</p>
+                )
+              ) : null}
             </div>
           </div>
 
           <div>
-            <label className="block text-zinc-400 mb-1 text-[11px]">Personal Portfolio URL (Optional)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="edit-portfolio-url" className="text-zinc-400 text-[11px]">
+                Personal Portfolio URL (Optional)
+              </label>
+              {portfolioUrl && (
+                <button
+                  type="button"
+                  onClick={() => setPortfolioUrl('')}
+                  aria-label="Clear Portfolio URL"
+                  className="text-[10.5px] text-zinc-400 hover:text-white underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
             <input
+              id="edit-portfolio-url"
               type="text"
               value={portfolioUrl}
               onChange={(e) => setPortfolioUrl(e.target.value)}
               placeholder="https://yourportfolio.dev"
-              className="w-full bg-[#12141a] border border-white/10 neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-[#b5ff00] transition-colors min-h-11 text-base sm:text-xs"
+              aria-invalid={Boolean(portfolioUrl.trim() && !pfValidation.valid)}
+              className={`w-full bg-[#12141a] border neu-inset rounded-xl px-3 py-2 text-zinc-100 placeholder:text-zinc-600 focus:outline-none transition-colors min-h-11 text-base sm:text-xs ${
+                portfolioUrl.trim() && !pfValidation.valid
+                  ? 'border-red-500/80 focus:border-red-400'
+                  : 'border-white/10 focus:border-[#b5ff00]'
+              }`}
             />
+            {portfolioUrl.trim() ? (
+              pfValidation.valid && pfValidation.canonicalUrl ? (
+                <p className="mt-1 text-[10.5px] font-mono text-[#b5ff00]/90 truncate">
+                  Saves as: {pfValidation.canonicalUrl}
+                </p>
+              ) : (
+                <p className="mt-1 text-[10.5px] text-red-400">{pfValidation.error}</p>
+              )
+            ) : null}
           </div>
         </div>
 
