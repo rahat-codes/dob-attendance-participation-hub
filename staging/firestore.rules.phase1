@@ -387,11 +387,11 @@ service cloud.firestore {
                        isValidUserCreate(request.resource.data);
 
       allow update: if signedIn() &&
-                       (!('email' in resource.data) || request.resource.data.email == resource.data.email) && (
-        (isAdmin() && isValidUserUpdate(request.resource.data, resource.data)) ||
+                       (!('email' in resource.data) || request.resource.data.email == resource.data.email) &&
+                       isValidUserUpdate(request.resource.data, resource.data) && (
+        isAdmin() ||
         (
           request.auth.uid == userId &&
-          isValidUserUpdate(request.resource.data, resource.data) &&
           (!('id' in request.resource.data) || request.resource.data.id == userId) &&
           (
             (
@@ -444,8 +444,8 @@ service cloud.firestore {
       allow read: if isAdmin() || isActiveMember() || (
         signedIn() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', null) == 'approved_waiting_response' &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('approvedMemberId', null) == memberId
+        me().get('status', null) == 'approved_waiting_response' &&
+        me().get('approvedMemberId', null) == memberId
       );
 
       allow create: if isAdmin() && isValidId(memberId) && isValidMember(request.resource.data);
@@ -455,8 +455,8 @@ service cloud.firestore {
         signedIn() &&
         request.auth.uid == request.resource.data.authUid &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', null) == 'approved_waiting_response' &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('approvedMemberId', null) == memberId &&
+        me().get('status', null) == 'approved_waiting_response' &&
+        me().get('approvedMemberId', null) == memberId &&
         (!('authUid' in resource.data) || resource.data.authUid == null || resource.data.authUid == '' || resource.data.authUid == request.auth.uid) &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authUid'])
       ) || (
@@ -654,7 +654,8 @@ service cloud.firestore {
 
     match /settings/publicMeta {
       allow read: if signedIn();
-      allow write: if isAdmin() && isValidPublicMeta(request.resource.data);
+      allow create, update: if isAdmin() && isValidPublicMeta(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /settings/{settingId} {

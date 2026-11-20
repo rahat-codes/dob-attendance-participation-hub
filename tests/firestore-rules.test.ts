@@ -213,6 +213,16 @@ async function runRulesTests() {
   // ========================================================================
   // SUITE 2: FINDING H — Session Temporal Window vs Status Check
   // ========================================================================
+  const h1Now = new Date();
+  const h1StartAt = new Date(h1Now.getTime() - 5 * 60 * 1000);
+  const h1EndAt = new Date(h1Now.getTime() + 2 * 60 * 60 * 1000);
+  const h1Yyyy = h1Now.getUTCFullYear();
+  const h1Mm = String(h1Now.getUTCMonth() + 1).padStart(2, '0');
+  const h1Dd = String(h1Now.getUTCDate()).padStart(2, '0');
+  const h1SessionDate = `${h1Yyyy}-${h1Mm}-${h1Dd}`;
+  const h1MonthKey = `${h1Yyyy}-${h1Mm}`;
+  const h1WrongMonthKey = h1Mm === '12' ? `${h1Yyyy + 1}-01` : `${h1Yyyy}-${String(h1Now.getUTCMonth() + 2).padStart(2, '0')}`;
+
   await test('FINDING H (H-1): Rules allow check-in when session is scheduled (not active) but temporally open', async () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const adminDb = context.firestore();
@@ -220,7 +230,9 @@ async function runRulesTests() {
         id: 'sess_scheduled_open',
         title: 'Temporal Window Test Session',
         track: 'Software & Systems',
-        date: '2026-10-25',
+        date: h1SessionDate,
+        startAt: h1StartAt,
+        endAt: h1EndAt,
         status: 'scheduled', // NOTE: 'scheduled', NOT 'active'!
         location: 'BIC Lab 101',
         checkInMode: 'open',
@@ -252,7 +264,7 @@ async function runRulesTests() {
         token: 'TESTTOK1',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
       })
     );
   });
@@ -431,7 +443,7 @@ async function runRulesTests() {
         token: 'TESTTOK1',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
         points: 9999, // Unauthorized extra field!
       })
     );
@@ -447,7 +459,7 @@ async function runRulesTests() {
         token: 'TESTTOK1',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
         verifiedBy: 'user_active_1', // Member cannot self-verify
       })
     );
@@ -462,7 +474,7 @@ async function runRulesTests() {
         token: 'TESTTOK1',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
         notes: 'Trying to inject notes', // Member self-checkin allowlist forbids notes
       })
     );
@@ -475,7 +487,7 @@ async function runRulesTests() {
     });
     const db = memberContext.firestore();
 
-    // Wrong monthKey (session date is 2026-10-15, trying monthKey 2026-11)
+    // Wrong monthKey (must match session date year-month)
     await assertFails(
       setDoc(doc(db, 'checkIns', 'sess_scheduled_open_mem_active_1_month_mismatch'), {
         id: 'sess_scheduled_open_mem_active_1_month_mismatch',
@@ -486,7 +498,7 @@ async function runRulesTests() {
         token: 'TESTTOK1',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-11', // Mismatch! Must match session date year-month 2026-10
+        monthKey: h1WrongMonthKey, // Mismatch! Must match session date year-month
       })
     );
 
@@ -501,7 +513,7 @@ async function runRulesTests() {
         token: 'SHORT1', // Only 6 chars, rule requires size() == 8
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
       })
     );
   });
@@ -524,7 +536,7 @@ async function runRulesTests() {
         method: 'manual_entry',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
         verifiedBy: 'admin_super_1',
       })
     );
@@ -539,7 +551,7 @@ async function runRulesTests() {
         method: 'manual_entry',
         checkedInAt: serverTimestamp(),
         status: 'present',
-        monthKey: '2026-10',
+        monthKey: h1MonthKey,
         verifiedBy: 'someone_else_uid',
       })
     );
