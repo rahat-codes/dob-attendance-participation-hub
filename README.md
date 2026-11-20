@@ -47,9 +47,9 @@ VITE_PUBLIC_BASE_URL=""
 | `npm run build` | `NODE_ENV=production vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.js` | Build `dist/` SPA + bundled `server.js` |
 | `npm start` | `node server.ts` | Start Express production server (requires Node `>= 22.18.0` native TS type stripping, or run `node server.js`) |
 | `npm run lint` | `tsc --noEmit` | Run strict TypeScript check |
-| `npm test` | Runs all 17 Vitest/tsx suites (`phase4`–`phase8` + static motion checks) | Verify client logic & regressions |
+| `npm test` | Runs all 19 tsx behavioral & regression test files | Verify client logic & regressions |
 | `npm run test:rules` | `tsx tests/firestore-rules.test.ts` | Run Firestore security rules suite against a running emulator |
-| `npm run emulators:exec` | `npx -y firebase-tools@15.36.0 emulators:exec --only firestore "tsx tests/firestore-rules.test.ts"` | Boot Firestore Emulator and run rules tests end-to-end |
+| `npm run emulators:exec` | `npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore "npx tsx tests/firestore-rules.test.ts"` | Boot Firestore Emulator and run rules tests end-to-end |
 
 ---
 
@@ -75,7 +75,7 @@ CI automatically executes `lint`, `test`, `build`, and `emulators:exec` via `.gi
 
 ## Deployment & Cutover Docs
 
-- `docs/SCHEMA.md` — Authoritative 11-collection schema, validators, and index patterns
+- `docs/SCHEMA.md` — Authoritative 12-collection schema, validators, and index patterns
 - `docs/RULES_COVERAGE.md` — Operation-to-rule coverage matrix (emitted via `node scripts/list-firestore-ops.mjs`)
 - `docs/RELEASE_V3.md` — Phased production cutover (Backup -> Group A1 -> Client -> Group A2 -> Repair/Migrations -> Group B -> Rollback)
 - `docs/STAGING_RUNBOOK.md` — Isolated staging setup and test checklists

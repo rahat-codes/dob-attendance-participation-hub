@@ -1120,6 +1120,9 @@ async function runRulesTests() {
     await assertFails(deleteDoc(doc(memberDb, 'auditLogs', 'log_perm_del_survive_1')));
   });
 
+  // ========================================================================
+  // SUITE 17: LEGACY PROFILE & MANDATORY SETUP COMPATIBILITY (29–33)
+  // ========================================================================
   // 29. Legacy users/{uid} doc with extra fields & photoURL: null allows owner updates, blocks privilege escalation
   await test('29. Legacy users/{uid} doc (extra keys & photoURL: null) permits submitApplication & blocks escalation', async () => {
     const legacyUid = 'user_legacy_extra_1';
@@ -1455,8 +1458,945 @@ async function runRulesTests() {
     );
   });
 
+  // ========================================================================
+  // SUITE 18: CRIT-01 PROFILE SETUP, LEGACY COMPATIBILITY & ESCALATION GUARDS
+  // ========================================================================
+  await test('CRIT-01 (1): Approved user reads settings/publicMeta (not appMeta), accepts invite, activates, reads settings/club, and completes setup', async () => {
+    const uid = 'user_crit01_flow_1';
+    const memberId = 'mem_crit01_flow_1';
+    const pendingUid = 'user_crit01_pending_1';
+    const nowIso = new Date().toISOString();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'settings', 'appMeta'), {
+        rulesVersion: '2026.11.v3',
+        internalFlag: true,
+      });
+      await setDoc(doc(seedDb, 'settings', 'publicMeta'), {
+        clubName: 'Den of Builders',
+        timezone: 'Asia/Seoul',
+        maintenanceMode: false,
+        schemaVersion: '2026.11.v3',
+      });
+      await setDoc(doc(seedDb, 'settings', 'club'), {
+        name: 'Den of Builders',
+        timezone: 'Asia/Seoul',
+      });
+      await setDoc(doc(seedDb, 'users', pendingUid), {
+        id: pendingUid,
+        email: 'pending_crit01@example.com',
+        displayName: 'Pending User',
+        status: 'pending',
+      });
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'crit01@example.com',
+        displayName: 'Crit Zero One',
+        status: 'approved_waiting_response',
+        approvedMemberId: memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        name: 'Crit Zero One',
+        handle: '@crit01',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+      });
+    });
+
+    const pendingDb = testEnv.authenticatedContext(pendingUid, {
+      email: 'pending_crit01@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Signed-in users read settings/publicMeta only; settings/appMeta (admin-only) and settings/club (active-member/admin) stay denied
+    await assertSucceeds(getDoc(doc(pendingDb, 'settings', 'publicMeta')));
+    await assertFails(getDoc(doc(pendingDb, 'settings', 'appMeta')));
+    await assertFails(getDoc(doc(pendingDb, 'settings', 'club')));
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'crit01@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Invited user reads staged member doc, accepts invitation, then activates
+    await assertSucceeds(getDoc(doc(userDb, 'members', memberId)));
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        authUid: uid,
+      })
+    );
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'users', uid), {
+        status: 'active',
+        memberId,
+        respondedAt: nowIso,
+        updatedAt: nowIso,
+      })
+    );
+
+    // Newly active member can read settings/club and complete mandatory setup across members + memberPrivate
+    await assertSucceeds(getDoc(doc(userDb, 'settings', 'club')));
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        id: memberId,
+        name: 'Crit Zero One Completed',
+        tracks: ['AI & Embedded'],
+        updatedAt: nowIso,
+      })
+    );
+    await assertSucceeds(
+      setDoc(
+        doc(userDb, 'memberPrivate', memberId),
+        {
+          email: 'crit01@example.com',
+          phone: '+82 10-1111-2222',
+          studentId: '20261234',
+          university: 'Tongmyong University',
+          profileCompleted: true,
+          profileCompletedAt: nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      )
+    );
+  });
+
+  await test('CRIT-01 (2): Invitation acceptance allows idempotent authUid match and blocks claiming another users member', async () => {
+    const uid = 'user_idem_accept_1';
+    const memberId = 'mem_idem_accept_1';
+    const claimedMemberId = 'mem_idem_claimed_other';
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'idem@example.com',
+        displayName: 'Idem Builder',
+        status: 'approved_waiting_response',
+        approvedMemberId: memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        id: memberId,
+        name: 'Idem Builder',
+        handle: '@idem',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        authUid: uid,
+      });
+      await setDoc(doc(seedDb, 'members', claimedMemberId), {
+        id: claimedMemberId,
+        name: 'Claimed By Other',
+        handle: '@other_claimed',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        authUid: 'someone_else_uid',
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'idem@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        authUid: uid,
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'members', claimedMemberId), {
+        authUid: uid,
+      })
+    );
+  });
+
+  await test('CRIT-01 (3): Legacy member missing optional fields allows link/portfolio query updates and blocks role/handle/status tampering', async () => {
+    const uid = 'user_legacy_minimal_1';
+    const memberId = 'mem_legacy_minimal_1';
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'legacy_minimal@example.com',
+        displayName: 'Legacy Minimal',
+        status: 'active',
+        memberId,
+      });
+      // Intentionally omit id, joinedDate, role, handle, status, authUid and leave tracks empty
+      await setDoc(doc(seedDb, 'members', memberId), {
+        name: 'Legacy Minimal',
+        tracks: [],
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'legacy_minimal@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Links-only update with portfolio query/fragment and untouched empty tracks succeeds
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'members', memberId), {
+        githubUrl: 'https://github.com/legacy-min',
+        linkedinUrl: 'https://www.linkedin.com/in/legacy.min',
+        portfolioUrl: 'https://legacy-min.dev?ref=dob#work',
+        showLinksPublicly: true,
+      })
+    );
+
+    // Same portfolio URL allowed on users/{uid}; data: URI photoURL rejected on users/{uid}
+    await assertSucceeds(
+      updateDoc(doc(userDb, 'users', uid), {
+        portfolioUrl: 'https://legacy-min.dev?ref=dob#work',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'users', uid), {
+        photoURL: 'data:image/png;base64,iVBORw0KGgo=',
+      })
+    );
+
+    // Tampering with role/handle/status or invalid portfolio URLs is rejected
+    await assertFails(updateDoc(doc(userDb, 'members', memberId), { role: 'President' }));
+    await assertFails(updateDoc(doc(userDb, 'members', memberId), { handle: '@tampered' }));
+    await assertFails(updateDoc(doc(userDb, 'members', memberId), { status: 'Inactive' }));
+    await assertFails(updateDoc(doc(userDb, 'members', memberId), { portfolioUrl: 'http://insecure.dev' }));
+    await assertFails(updateDoc(doc(userDb, 'members', memberId), { portfolioUrl: 'https://localhost?admin=1' }));
+  });
+
+  await test('CRIT-01 (4): publicLeaderboard accepts portfolio query/fragment and untouched legacy fields while blocking handle tampering', async () => {
+    const memberDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'publicLeaderboard', 'mem_active_1'), {
+        id: 'mem_active_1',
+        name: 'Ada Lovelace',
+        handle: '@ada',
+        role: 'Member',
+        totalCheckIns: 3,
+        points: 30,
+        avatarUrl: 'https://lh3.googleusercontent.com/' + 'a'.repeat(550),
+      });
+    });
+
+    await assertSucceeds(
+      updateDoc(doc(memberDb, 'publicLeaderboard', 'mem_active_1'), {
+        portfolioUrl: 'https://adalovelace.dev?track=ai#top',
+        showLinksPublicly: true,
+        lastUpdated: new Date().toISOString(),
+      })
+    );
+
+    await assertFails(
+      updateDoc(doc(memberDb, 'publicLeaderboard', 'mem_active_1'), {
+        handle: '@spoofed_handle',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(memberDb, 'publicLeaderboard', 'mem_active_1'), {
+        portfolioUrl: 'https://localhost?pwn=1',
+      })
+    );
+  });
+
+  await test('CRIT-01 (5): Forged users/{uid} creation with approvedMemberId, memberId, approvedAt, or respondedAt is DENIED', async () => {
+    const nowIso = new Date().toISOString();
+
+    const u1 = testEnv.authenticatedContext('user_forged_approved_1', { email: 'forged1@example.com' }).firestore();
+    await assertFails(
+      setDoc(doc(u1, 'users', 'user_forged_approved_1'), {
+        id: 'user_forged_approved_1',
+        email: 'forged1@example.com',
+        displayName: 'Forged ApprovedMemberId',
+        status: 'pending',
+        approvedMemberId: 'mem_active_1',
+      })
+    );
+
+    const u2 = testEnv.authenticatedContext('user_forged_member_2', { email: 'forged2@example.com' }).firestore();
+    await assertFails(
+      setDoc(doc(u2, 'users', 'user_forged_member_2'), {
+        id: 'user_forged_member_2',
+        email: 'forged2@example.com',
+        displayName: 'Forged MemberId',
+        status: 'pending',
+        memberId: 'mem_active_1',
+      })
+    );
+
+    const u3 = testEnv.authenticatedContext('user_forged_apprv_at_3', { email: 'forged3@example.com' }).firestore();
+    await assertFails(
+      setDoc(doc(u3, 'users', 'user_forged_apprv_at_3'), {
+        id: 'user_forged_apprv_at_3',
+        email: 'forged3@example.com',
+        displayName: 'Forged ApprovedAt',
+        status: 'pending',
+        approvedAt: nowIso,
+      })
+    );
+
+    const u4 = testEnv.authenticatedContext('user_forged_resp_at_4', { email: 'forged4@example.com' }).firestore();
+    await assertFails(
+      setDoc(doc(u4, 'users', 'user_forged_resp_at_4'), {
+        id: 'user_forged_resp_at_4',
+        email: 'forged4@example.com',
+        displayName: 'Forged RespondedAt',
+        status: 'pending',
+        respondedAt: nowIso,
+      })
+    );
+  });
+
+  await test('CRIT-01 (6): Staged member reads require status == approved_waiting_response', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', 'user_stale_pending_1'), {
+        id: 'user_stale_pending_1',
+        email: 'stalepending@example.com',
+        displayName: 'Stale Pending',
+        status: 'pending',
+        approvedMemberId: 'mem_staged_1',
+      });
+      await setDoc(doc(seedDb, 'users', 'user_stale_declined_1'), {
+        id: 'user_stale_declined_1',
+        email: 'staledeclined@example.com',
+        displayName: 'Stale Declined',
+        status: 'declined',
+        approvedMemberId: 'mem_staged_1',
+      });
+    });
+
+    const stalePendingDb = testEnv.authenticatedContext('user_stale_pending_1', { email: 'stalepending@example.com' }).firestore();
+    const staleDeclinedDb = testEnv.authenticatedContext('user_stale_declined_1', { email: 'staledeclined@example.com' }).firestore();
+
+    await assertFails(getDoc(doc(stalePendingDb, 'members', 'mem_staged_1')));
+    await assertFails(getDoc(doc(staleDeclinedDb, 'members', 'mem_staged_1')));
+  });
+
+  await test('CRIT-01 (7): memberPrivate enforces strict field validation, owner scoping, legacy authUid fallback, and admin-only delete', async () => {
+    const uid = 'user_priv_valid_1';
+    const memberId = 'mem_priv_valid_1';
+    const nowIso = new Date().toISOString();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'priv_valid@example.com',
+        displayName: 'Priv Valid',
+        status: 'active',
+        memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        id: memberId,
+        name: 'Priv Valid',
+        handle: '@priv_valid',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, {
+      email: 'priv_valid@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      setDoc(
+        doc(userDb, 'memberPrivate', memberId),
+        {
+          email: 'priv_valid@example.com',
+          phone: '010-2222-3333',
+          studentId: '20260001',
+          university: 'Tongmyong University',
+          department: 'Computer Engineering',
+          major: 'Systems',
+          semester: 'Fall 2026',
+          profileCompleted: true,
+          profileCompletedAt: nowIso,
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      )
+    );
+    await assertSucceeds(getDoc(doc(userDb, 'memberPrivate', memberId)));
+
+    // Reject unwhitelisted key, oversized studentId, and owner delete
+    await assertFails(
+      setDoc(doc(userDb, 'memberPrivate', memberId), { adminOverride: true }, { merge: true })
+    );
+    await assertFails(
+      setDoc(doc(userDb, 'memberPrivate', memberId), { studentId: 'x'.repeat(31) }, { merge: true })
+    );
+    await assertFails(deleteDoc(doc(userDb, 'memberPrivate', memberId)));
+  });
+
+  // ========================================================================
+  // SUITE 19: CRIT-02 NOTIFICATION SECURITY HARDENING
+  // ========================================================================
+  await test('CRIT-02 (1): Super Admin and delegated admins can create valid notifications', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'admins', 'delegated_admin_1'), {
+        email: 'delegated@example.com',
+        grantedBy: 'super_uid',
+        grantedAt: new Date().toISOString(),
+      });
+    });
+
+    const superDb = testEnv.authenticatedContext('super_valid', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const delegatedDb = testEnv.authenticatedContext('delegated_admin_1', {
+      email: 'delegated@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      setDoc(doc(superDb, 'notifications', 'reminder_30m_sess1_user_active_1'), {
+        id: 'reminder_30m_sess1_user_active_1',
+        userId: 'user_active_1',
+        title: 'Workshop starting soon',
+        message: 'Starts in 30 minutes at Room 101.',
+        type: 'meeting_reminder_30m',
+        read: false,
+        dismissed: false,
+        sessionId: 'sess1',
+        createdAt: new Date().toISOString(),
+      })
+    );
+
+    await assertSucceeds(
+      setDoc(doc(delegatedDb, 'notifications', 'notif_delegated_1'), {
+        id: 'notif_delegated_1',
+        userId: 'user_active_1',
+        title: 'Delegated Admin Notice',
+        message: 'Check-in window opened.',
+        type: 'announcement',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      })
+    );
+
+    // Mismatched document ID vs payload id must be rejected even for admin
+    await assertFails(
+      setDoc(doc(delegatedDb, 'notifications', 'notif_id_mismatch'), {
+        id: 'different_id',
+        userId: 'user_active_1',
+        title: 'Mismatch',
+        message: 'Should fail',
+        createdAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  await test('CRIT-02 (2): Non-admin members, pending/declined users, and guests CANNOT create notifications (even for self)', async () => {
+    const memberDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const pendingDb = testEnv.authenticatedContext('user_stale_pending_1', {
+      email: 'stalepending@example.com',
+      email_verified: true,
+    }).firestore();
+    const declinedDb = testEnv.authenticatedContext('user_stale_declined_1', {
+      email: 'staledeclined@example.com',
+      email_verified: true,
+    }).firestore();
+    const guestDb = testEnv.unauthenticatedContext().firestore();
+
+    await assertFails(
+      setDoc(doc(memberDb, 'notifications', 'notif_self_forged_1'), {
+        id: 'notif_self_forged_1',
+        userId: 'user_active_1',
+        title: 'Forged Self Notification',
+        message: 'Attempted self-creation',
+        type: 'system',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      })
+    );
+    await assertFails(
+      setDoc(doc(pendingDb, 'notifications', 'notif_pending_forged_1'), {
+        id: 'notif_pending_forged_1',
+        userId: 'user_stale_pending_1',
+        title: 'Pending Forged',
+        message: 'Attempted pending create',
+        createdAt: new Date().toISOString(),
+      })
+    );
+    await assertFails(
+      setDoc(doc(declinedDb, 'notifications', 'notif_declined_forged_1'), {
+        id: 'notif_declined_forged_1',
+        userId: 'user_stale_declined_1',
+        title: 'Declined Forged',
+        message: 'Attempted declined create',
+        createdAt: new Date().toISOString(),
+      })
+    );
+    await assertFails(
+      setDoc(doc(guestDb, 'notifications', 'notif_guest_forged_1'), {
+        id: 'notif_guest_forged_1',
+        userId: 'user_active_1',
+        title: 'Guest Forged',
+        message: 'Attempted unauthenticated create',
+        createdAt: new Date().toISOString(),
+      })
+    );
+  });
+
+  await test('CRIT-02 (3): Notification owners can read and dismiss own notifications, cannot alter content/ownership, and non-owners are blocked', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'notifications', 'notif_crit02_owner_1'), {
+        id: 'notif_crit02_owner_1',
+        userId: 'user_active_1',
+        title: 'Upcoming Session',
+        message: 'Starts at 18:00.',
+        type: 'meeting_reminder_30m',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    const ownerDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const otherDb = testEnv.authenticatedContext('user_attacker_2', {
+      email: 'attacker@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(getDoc(doc(ownerDb, 'notifications', 'notif_crit02_owner_1')));
+    await assertSucceeds(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_crit02_owner_1'), {
+        dismissed: true,
+        read: true,
+      })
+    );
+
+    // Owner cannot mutate ownership or message/type/title
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_crit02_owner_1'), {
+        userId: 'user_attacker_2',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_crit02_owner_1'), {
+        message: 'Tampered body',
+        type: 'system',
+      })
+    );
+
+    // Non-owner cannot read, dismiss, or delete
+    await assertFails(getDoc(doc(otherDb, 'notifications', 'notif_crit02_owner_1')));
+    await assertFails(
+      updateDoc(doc(otherDb, 'notifications', 'notif_crit02_owner_1'), {
+        dismissed: true,
+      })
+    );
+    await assertFails(deleteDoc(doc(otherDb, 'notifications', 'notif_crit02_owner_1')));
+  });
+
+  // ========================================================================
+  // SUITE 20: PHASE 1 REVISION TARGETED VERIFICATION (FIX-01 THROUGH FIX-05)
+  // ========================================================================
+  await test('FIX-01: memberPrivate fallback uses isLinkedActiveUser when members/{id} is absent and enforces isolation across all user states', async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      // 1. Existing member + matching private record
+      await setDoc(doc(seedDb, 'users', 'fix01_u_exist'), {
+        id: 'fix01_u_exist',
+        email: 'fix01_exist@example.com',
+        displayName: 'Fix01 Existing',
+        status: 'active',
+        memberId: 'mem_fix01_exist',
+      });
+      await setDoc(doc(seedDb, 'members', 'mem_fix01_exist'), {
+        id: 'mem_fix01_exist',
+        name: 'Fix01 Existing',
+        handle: '@fix01_exist',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        authUid: 'fix01_u_exist',
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_exist'), {
+        phone: '010-1000-0001',
+      });
+
+      // 2. Missing member + matching active user link (legacy fallback case)
+      await setDoc(doc(seedDb, 'users', 'fix01_u_missing_match'), {
+        id: 'fix01_u_missing_match',
+        email: 'fix01_match@example.com',
+        displayName: 'Fix01 Missing Member Match',
+        status: 'active',
+        memberId: 'mem_fix01_missing',
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_missing'), {
+        phone: '010-1000-0002',
+      });
+
+      // 3. Missing member + mismatched user link
+      await setDoc(doc(seedDb, 'users', 'fix01_u_mismatch'), {
+        id: 'fix01_u_mismatch',
+        email: 'fix01_mismatch@example.com',
+        displayName: 'Fix01 Mismatch',
+        status: 'active',
+        memberId: 'mem_fix01_other_missing',
+      });
+
+      // 4. Suspended user pointing to missing memberPrivate
+      await setDoc(doc(seedDb, 'users', 'fix01_u_suspended'), {
+        id: 'fix01_u_suspended',
+        email: 'fix01_suspended@example.com',
+        displayName: 'Fix01 Suspended',
+        status: 'suspended',
+        memberId: 'mem_fix01_missing',
+      });
+
+      // 5. Pending user & approved_waiting_response user
+      await setDoc(doc(seedDb, 'users', 'fix01_u_pending'), {
+        id: 'fix01_u_pending',
+        email: 'fix01_pending@example.com',
+        displayName: 'Fix01 Pending',
+        status: 'pending',
+        memberId: 'mem_fix01_missing',
+      });
+
+      // 6. Inactive existing member with stale active user link
+      await setDoc(doc(seedDb, 'users', 'fix01_u_inactive'), {
+        id: 'fix01_u_inactive',
+        email: 'fix01_inactive@example.com',
+        displayName: 'Fix01 Inactive',
+        status: 'active',
+        memberId: 'mem_fix01_inactive',
+      });
+      await setDoc(doc(seedDb, 'members', 'mem_fix01_inactive'), {
+        id: 'mem_fix01_inactive',
+        name: 'Fix01 Inactive',
+        handle: '@fix01_inactive',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Inactive',
+        authUid: 'fix01_u_inactive',
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_inactive'), {
+        phone: '010-1000-0006',
+      });
+    });
+
+    const existDb = testEnv.authenticatedContext('fix01_u_exist', { email: 'fix01_exist@example.com' }).firestore();
+    const missingMatchDb = testEnv.authenticatedContext('fix01_u_missing_match', { email: 'fix01_match@example.com' }).firestore();
+    const mismatchDb = testEnv.authenticatedContext('fix01_u_mismatch', { email: 'fix01_mismatch@example.com' }).firestore();
+    const suspendedDb = testEnv.authenticatedContext('fix01_u_suspended', { email: 'fix01_suspended@example.com' }).firestore();
+    const pendingDb = testEnv.authenticatedContext('fix01_u_pending', { email: 'fix01_pending@example.com' }).firestore();
+    const inactiveDb = testEnv.authenticatedContext('fix01_u_inactive', { email: 'fix01_inactive@example.com' }).firestore();
+
+    // Existing member + matching private record -> ALLOW
+    await assertSucceeds(getDoc(doc(existDb, 'memberPrivate', 'mem_fix01_exist')));
+    // Missing member + matching active user link -> ALLOW read & update
+    await assertSucceeds(getDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_missing')));
+    await assertSucceeds(
+      setDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_missing'), { studentId: '20269999' }, { merge: true })
+    );
+    // Missing member + mismatched user link -> DENY
+    await assertFails(getDoc(doc(mismatchDb, 'memberPrivate', 'mem_fix01_missing')));
+    await assertFails(setDoc(doc(mismatchDb, 'memberPrivate', 'mem_fix01_missing'), { studentId: '20260000' }, { merge: true }));
+    // Suspended user -> DENY
+    await assertFails(getDoc(doc(suspendedDb, 'memberPrivate', 'mem_fix01_missing')));
+    // Pending user -> DENY
+    await assertFails(getDoc(doc(pendingDb, 'memberPrivate', 'mem_fix01_missing')));
+    // Another user's private document (existing) -> DENY
+    await assertFails(getDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_exist')));
+    // Existing Inactive member with stale active user link -> DENY
+    await assertFails(getDoc(doc(inactiveDb, 'memberPrivate', 'mem_fix01_inactive')));
+  });
+
+  await test('FIX-02: settings/appMeta is strictly admin-only while settings/publicMeta allows signed-in reads with strict admin whitelist writes', async () => {
+    const superDb = testEnv.authenticatedContext('super_fix02', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const memberDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const guestDb = testEnv.unauthenticatedContext().firestore();
+
+    // Admin writes whitelisted settings/publicMeta and private settings/appMeta
+    await assertSucceeds(
+      setDoc(doc(superDb, 'settings', 'publicMeta'), {
+        clubName: 'Den of Builders',
+        timezone: 'Asia/Seoul',
+        maintenanceMode: false,
+        schemaVersion: '2026.11.v4',
+      })
+    );
+    await assertSucceeds(
+      setDoc(doc(superDb, 'settings', 'appMeta'), {
+        rulesVersion: '2026.11.v4',
+        internalAdminNote: 'private operational config',
+      })
+    );
+
+    // Unwhitelisted key in settings/publicMeta is rejected even for Super Admin
+    await assertFails(
+      setDoc(doc(superDb, 'settings', 'publicMeta'), {
+        clubName: 'Den of Builders',
+        adminSecretKey: 'forbidden',
+      })
+    );
+
+    // Active non-admin member reads publicMeta, is DENIED appMeta, and cannot write publicMeta
+    await assertSucceeds(getDoc(doc(memberDb, 'settings', 'publicMeta')));
+    await assertFails(getDoc(doc(memberDb, 'settings', 'appMeta')));
+    await assertFails(
+      setDoc(doc(memberDb, 'settings', 'publicMeta'), { maintenanceMode: true }, { merge: true })
+    );
+
+    // Admin can read settings/appMeta; unauthenticated guest cannot read publicMeta or appMeta
+    await assertSucceeds(getDoc(doc(superDb, 'settings', 'appMeta')));
+    await assertFails(getDoc(doc(guestDb, 'settings', 'publicMeta')));
+    await assertFails(getDoc(doc(guestDb, 'settings', 'appMeta')));
+  });
+
+  await test('FIX-03: notifications enforce doc-ID match, existing userId, admin identity preservation on update, and strict owner bool toggles', async () => {
+    const superDb = testEnv.authenticatedContext('super_fix03', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const ownerDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+
+    await assertSucceeds(
+      setDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
+        id: 'notif_fix03_valid_1',
+        userId: 'user_active_1',
+        title: 'Build Night',
+        message: 'Check-in opens at 17:45.',
+        type: 'meeting_reminder_30m',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      })
+    );
+
+    // Reject non-existent target userId, empty createdAt, and doc ID mismatch
+    await assertFails(
+      setDoc(doc(superDb, 'notifications', 'notif_fix03_bad_user'), {
+        id: 'notif_fix03_bad_user',
+        userId: 'nonexistent_uid_999',
+        title: 'Ghost',
+        message: 'Should fail',
+        createdAt: new Date().toISOString(),
+      })
+    );
+    await assertFails(
+      setDoc(doc(superDb, 'notifications', 'notif_fix03_empty_date'), {
+        id: 'notif_fix03_empty_date',
+        userId: 'user_active_1',
+        title: 'Empty Date',
+        message: 'Should fail',
+        createdAt: '',
+      })
+    );
+
+    // Admin update preserving id & userId succeeds; mutating userId or id fails
+    await assertSucceeds(
+      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
+        title: 'Build Night Updated',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
+        userId: 'user_pending_1',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
+        id: 'notif_different_id',
+      })
+    );
+
+    // Owner cannot set non-bool or deleteField() on read/dismissed or alter id
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
+        read: 'yes' as any,
+      })
+    );
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
+        read: deleteField(),
+      })
+    );
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
+        id: 'tampered_id',
+        read: true,
+      })
+    );
+  });
+
+  await test('FIX-04: memberPrivate merge update preserves legacy keys and Timestamp fields while rejecting invalid or unwhitelisted writes', async () => {
+    const uid = 'fix04_user_1';
+    const memberId = 'mem_fix04_1';
+    const nowIso = new Date().toISOString();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'fix04@example.com',
+        displayName: 'Fix04 Builder',
+        status: 'active',
+        memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        id: memberId,
+        name: 'Fix04 Builder',
+        handle: '@fix04',
+        role: 'Member',
+        tracks: ['Hardware & Robotics'],
+        status: 'Active',
+        authUid: uid,
+      });
+      // Seed legacy memberPrivate with unexpected keys + Firestore Timestamp values
+      await setDoc(doc(seedDb, 'memberPrivate', memberId), {
+        email: 'fix04@example.com',
+        legacyNote: 'migrated from 2024 sheet',
+        createdAt: Timestamp.now(),
+        profileCompletedAt: Timestamp.now(),
+      });
+    });
+
+    const userDb = testEnv.authenticatedContext(uid, { email: 'fix04@example.com' }).firestore();
+
+    // Legitimate merge update succeeds without failing on existing legacy keys or Timestamp fields
+    await assertSucceeds(
+      setDoc(
+        doc(userDb, 'memberPrivate', memberId),
+        {
+          phone: '010-5555-6666',
+          studentId: '20265555',
+          updatedAt: nowIso,
+        },
+        { merge: true }
+      )
+    );
+
+    // Reject adding unwhitelisted field, invalid updatedAt type, or deleting updatedAt
+    await assertFails(
+      setDoc(doc(userDb, 'memberPrivate', memberId), { extraKey: 'bad' }, { merge: true })
+    );
+    await assertFails(
+      setDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: 12345 as any }, { merge: true })
+    );
+    await assertFails(
+      updateDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: deleteField() })
+    );
+  });
+
+  await test('FIX-05: users.photoURL accepts Google/Firebase HTTPS URLs and blocks unsafe schemes/hosts while members.avatarUrl keeps raster data URIs', async () => {
+    const createUid = 'fix05_create_user_1';
+    const createDb = testEnv.authenticatedContext(createUid, {
+      email: 'fix05@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Valid Google OAuth photoURL on users create
+    await assertSucceeds(
+      setDoc(doc(createDb, 'users', createUid), {
+        id: createUid,
+        email: 'fix05@example.com',
+        displayName: 'Fix05 Builder',
+        status: 'pending',
+        photoURL: 'https://lh3.googleusercontent.com/a/ACg8ocK_ExampleAvatar=s96-c',
+      })
+    );
+
+    // Valid Firebase Storage photoURL on users update
+    await assertSucceeds(
+      updateDoc(doc(createDb, 'users', createUid), {
+        photoURL: 'https://firebasestorage.googleapis.com/v0/b/dob-hub.appspot.com/o/avatars%2Fme.png?alt=media&token=abc123',
+      })
+    );
+
+    // Invalid photoURL values must be rejected on users create & update
+    const invalidPhotoUrls = [
+      'data:image/png;base64,iVBORw0KGgo=',
+      'javascript:alert(1)',
+      'http://example.com/avatar.png',
+      '   ',
+      'https://',
+      'https://notadomain',
+      'https://localhost/avatar.png',
+      'https://127.0.0.1/avatar.png',
+      'https://user:pass@example.com/avatar.png',
+      'https://example.com/my avatar.png',
+    ];
+    for (let i = 0; i < invalidPhotoUrls.length; i++) {
+      await assertFails(
+        updateDoc(doc(createDb, 'users', createUid), {
+          photoURL: invalidPhotoUrls[i],
+        })
+      );
+      const badCreateUid = `fix05_bad_create_${i}`;
+      const badCreateDb = testEnv.authenticatedContext(badCreateUid, {
+        email: `fix05bad${i}@example.com`,
+      }).firestore();
+      await assertFails(
+        setDoc(doc(badCreateDb, 'users', badCreateUid), {
+          id: badCreateUid,
+          email: `fix05bad${i}@example.com`,
+          displayName: 'Bad Photo Create',
+          status: 'pending',
+          photoURL: invalidPhotoUrls[i],
+        })
+      );
+    }
+
+    // Active member can still save compressed raster data URI in members.avatarUrl, while malformed HTTPS/http/js are rejected
+    const activeDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    await assertSucceeds(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        avatarUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        avatarUrl: 'javascript:alert(1)',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        avatarUrl: 'https://localhost/avatar.png',
+      })
+    );
+  });
+
   console.log('\n========================================');
-  console.log(`PHASE 2-5 RULES TEST SUITE COMPLETE`);
+  console.log(`PHASE 1-5 RULES TEST SUITE COMPLETE`);
   console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);
   console.log('========================================\n');
 
