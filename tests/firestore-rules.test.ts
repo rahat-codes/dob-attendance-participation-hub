@@ -2097,6 +2097,38 @@ async function runRulesTests() {
       await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_inactive'), {
         phone: '010-1000-0006',
       });
+
+      // 7. Properly deleted member (permanentDeleteMember resets users/{uid} to declined and clears memberId)
+      await setDoc(doc(seedDb, 'users', 'fix01_u_deleted_clean'), {
+        id: 'fix01_u_deleted_clean',
+        email: 'fix01_deleted@example.com',
+        displayName: 'Fix01 Deleted Clean',
+        status: 'declined',
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_deleted_clean'), {
+        phone: '010-1000-0007',
+      });
+
+      // 8. Re-created member record linked to a different authUid while old user still holds stale link
+      await setDoc(doc(seedDb, 'users', 'fix01_u_recreated_old'), {
+        id: 'fix01_u_recreated_old',
+        email: 'fix01_old@example.com',
+        displayName: 'Fix01 Old Owner',
+        status: 'active',
+        memberId: 'mem_fix01_recreated',
+      });
+      await setDoc(doc(seedDb, 'members', 'mem_fix01_recreated'), {
+        id: 'mem_fix01_recreated',
+        name: 'Fix01 New Owner',
+        handle: '@fix01_new',
+        role: 'Member',
+        tracks: ['AI & Embedded'],
+        status: 'Active',
+        authUid: 'fix01_u_recreated_new',
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', 'mem_fix01_recreated'), {
+        phone: '010-1000-0008',
+      });
     });
 
     const existDb = testEnv.authenticatedContext('fix01_u_exist', { email: 'fix01_exist@example.com' }).firestore();
@@ -2105,14 +2137,18 @@ async function runRulesTests() {
     const suspendedDb = testEnv.authenticatedContext('fix01_u_suspended', { email: 'fix01_suspended@example.com' }).firestore();
     const pendingDb = testEnv.authenticatedContext('fix01_u_pending', { email: 'fix01_pending@example.com' }).firestore();
     const inactiveDb = testEnv.authenticatedContext('fix01_u_inactive', { email: 'fix01_inactive@example.com' }).firestore();
+    const deletedCleanDb = testEnv.authenticatedContext('fix01_u_deleted_clean', { email: 'fix01_deleted@example.com' }).firestore();
+    const recreatedOldDb = testEnv.authenticatedContext('fix01_u_recreated_old', { email: 'fix01_old@example.com' }).firestore();
 
     // Existing member + matching private record -> ALLOW
     await assertSucceeds(getDoc(doc(existDb, 'memberPrivate', 'mem_fix01_exist')));
-    // Missing member + matching active user link -> ALLOW read & update
+    // Missing member + matching active user link (legacy recovery / orphaned partial delete) -> ALLOW read & update
     await assertSucceeds(getDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_missing')));
     await assertSucceeds(
       setDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_missing'), { studentId: '20269999' }, { merge: true })
     );
+    // Cleanly deleted member (user reset to declined without memberId) -> DENY
+    await assertFails(getDoc(doc(deletedCleanDb, 'memberPrivate', 'mem_fix01_deleted_clean')));
     // Missing member + mismatched user link -> DENY
     await assertFails(getDoc(doc(mismatchDb, 'memberPrivate', 'mem_fix01_missing')));
     await assertFails(setDoc(doc(mismatchDb, 'memberPrivate', 'mem_fix01_missing'), { studentId: '20260000' }, { merge: true }));
@@ -2124,6 +2160,8 @@ async function runRulesTests() {
     await assertFails(getDoc(doc(missingMatchDb, 'memberPrivate', 'mem_fix01_exist')));
     // Existing Inactive member with stale active user link -> DENY
     await assertFails(getDoc(doc(inactiveDb, 'memberPrivate', 'mem_fix01_inactive')));
+    // Re-created member assigned to different authUid with stale active user link -> DENY
+    await assertFails(getDoc(doc(recreatedOldDb, 'memberPrivate', 'mem_fix01_recreated')));
   });
 
   await test('FIX-02: settings/appMeta is strictly admin-only while settings/publicMeta allows signed-in reads with strict admin whitelist writes', async () => {
@@ -2175,7 +2213,7 @@ async function runRulesTests() {
     await assertFails(getDoc(doc(guestDb, 'settings', 'appMeta')));
   });
 
-  await test('FIX-03: notifications enforce doc-ID match, existing userId, admin identity preservation on update, and strict owner bool toggles', async () => {
+  await test('FIX-03: notifications enforce doc-ID match, legacy missing/mismatched ID repair, existing userId, and owner tampering guards', async () => {
     const superDb = testEnv.authenticatedContext('super_fix03', {
       email: SUPER_ADMIN_EMAIL,
       email_verified: true,
@@ -2186,6 +2224,30 @@ async function runRulesTests() {
       email_verified: true,
     }).firestore();
 
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      // Legacy notification missing `id`
+      await setDoc(doc(seedDb, 'notifications', 'notif_fix03_missing_id'), {
+        userId: 'user_active_1',
+        title: 'Legacy No ID',
+        message: 'Missing id field',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      });
+      // Legacy notification with mismatched `id`
+      await setDoc(doc(seedDb, 'notifications', 'notif_fix03_mismatched_id'), {
+        id: 'legacy_wrong_id',
+        userId: 'user_active_1',
+        title: 'Legacy Mismatched ID',
+        message: 'Mismatched id field',
+        read: false,
+        dismissed: false,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    // Matching ID admin create succeeds; mismatched ID, non-existent userId, empty createdAt fail
     await assertSucceeds(
       setDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
         id: 'notif_fix03_valid_1',
@@ -2198,8 +2260,15 @@ async function runRulesTests() {
         createdAt: new Date().toISOString(),
       })
     );
-
-    // Reject non-existent target userId, empty createdAt, and doc ID mismatch
+    await assertFails(
+      setDoc(doc(superDb, 'notifications', 'notif_fix03_bad_id'), {
+        id: 'wrong_id',
+        userId: 'user_active_1',
+        title: 'Mismatch',
+        message: 'Should fail',
+        createdAt: new Date().toISOString(),
+      })
+    );
     await assertFails(
       setDoc(doc(superDb, 'notifications', 'notif_fix03_bad_user'), {
         id: 'notif_fix03_bad_user',
@@ -2219,40 +2288,27 @@ async function runRulesTests() {
       })
     );
 
+    // Owner updates read/dismissed on legacy missing-ID and mismatched-ID docs -> ALLOW without touching id; tampering -> DENY
+    await assertSucceeds(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_missing_id'), { read: true }));
+    await assertSucceeds(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_mismatched_id'), { dismissed: true }));
+    await assertFails(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_missing_id'), { id: 'notif_fix03_missing_id', read: true }));
+    await assertFails(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_mismatched_id'), { id: 'notif_fix03_mismatched_id', read: true }));
+
+    // Admin repairs legacy missing-ID & mismatched-ID docs ONLY by normalizing id == notificationId
+    await assertFails(updateDoc(doc(superDb, 'notifications', 'notif_fix03_missing_id'), { id: 'still_wrong' }));
+    await assertSucceeds(updateDoc(doc(superDb, 'notifications', 'notif_fix03_missing_id'), { id: 'notif_fix03_missing_id' }));
+    await assertFails(updateDoc(doc(superDb, 'notifications', 'notif_fix03_mismatched_id'), { id: 'another_wrong' }));
+    await assertSucceeds(updateDoc(doc(superDb, 'notifications', 'notif_fix03_mismatched_id'), { id: 'notif_fix03_mismatched_id' }));
+
     // Admin update preserving id & userId succeeds; mutating userId or id fails
-    await assertSucceeds(
-      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
-        title: 'Build Night Updated',
-      })
-    );
-    await assertFails(
-      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
-        userId: 'user_pending_1',
-      })
-    );
-    await assertFails(
-      updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), {
-        id: 'notif_different_id',
-      })
-    );
+    await assertSucceeds(updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), { title: 'Build Night Updated' }));
+    await assertFails(updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), { userId: 'user_pending_1' }));
+    await assertFails(updateDoc(doc(superDb, 'notifications', 'notif_fix03_valid_1'), { id: 'notif_different_id' }));
 
     // Owner cannot set non-bool or deleteField() on read/dismissed or alter id
-    await assertFails(
-      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
-        read: 'yes' as any,
-      })
-    );
-    await assertFails(
-      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
-        read: deleteField(),
-      })
-    );
-    await assertFails(
-      updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), {
-        id: 'tampered_id',
-        read: true,
-      })
-    );
+    await assertFails(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), { read: 'yes' as any }));
+    await assertFails(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), { read: deleteField() }));
+    await assertFails(updateDoc(doc(ownerDb, 'notifications', 'notif_fix03_valid_1'), { id: 'tampered_id', read: true }));
   });
 
   await test('FIX-04: memberPrivate merge update preserves legacy keys and Timestamp fields while rejecting invalid or unwhitelisted writes', async () => {
@@ -2302,16 +2358,17 @@ async function runRulesTests() {
       )
     );
 
+    // Verify untouched legacy key and Timestamp values were preserved
+    const afterSnap = await assertSucceeds(getDoc(doc(userDb, 'memberPrivate', memberId)));
+    const afterData = afterSnap.data();
+    if (!afterData || afterData.legacyNote !== 'migrated from 2024 sheet' || !(afterData.createdAt instanceof Timestamp)) {
+      throw new Error('Expected memberPrivate merge update to preserve legacyNote and Timestamp fields');
+    }
+
     // Reject adding unwhitelisted field, invalid updatedAt type, or deleting updatedAt
-    await assertFails(
-      setDoc(doc(userDb, 'memberPrivate', memberId), { extraKey: 'bad' }, { merge: true })
-    );
-    await assertFails(
-      setDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: 12345 as any }, { merge: true })
-    );
-    await assertFails(
-      updateDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: deleteField() })
-    );
+    await assertFails(setDoc(doc(userDb, 'memberPrivate', memberId), { extraKey: 'bad' }, { merge: true }));
+    await assertFails(setDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: 12345 as any }, { merge: true }));
+    await assertFails(updateDoc(doc(userDb, 'memberPrivate', memberId), { updatedAt: deleteField() }));
   });
 
   await test('FIX-05: users.photoURL accepts Google/Firebase HTTPS URLs and blocks unsafe schemes/hosts while members.avatarUrl keeps raster data URIs', async () => {
@@ -2332,7 +2389,7 @@ async function runRulesTests() {
       })
     );
 
-    // Valid Firebase Storage photoURL on users update
+    // Valid Firebase Storage photoURL with query params on users update
     await assertSucceeds(
       updateDoc(doc(createDb, 'users', createUid), {
         photoURL: 'https://firebasestorage.googleapis.com/v0/b/dob-hub.appspot.com/o/avatars%2Fme.png?alt=media&token=abc123',
@@ -2347,17 +2404,17 @@ async function runRulesTests() {
       '   ',
       'https://',
       'https://notadomain',
+      'https:///path.png',
+      'https://example.com./avatar.png',
       'https://localhost/avatar.png',
+      'https://sub.localhost/avatar.png',
       'https://127.0.0.1/avatar.png',
+      'https://[::1]/avatar.png',
       'https://user:pass@example.com/avatar.png',
       'https://example.com/my avatar.png',
     ];
     for (let i = 0; i < invalidPhotoUrls.length; i++) {
-      await assertFails(
-        updateDoc(doc(createDb, 'users', createUid), {
-          photoURL: invalidPhotoUrls[i],
-        })
-      );
+      await assertFails(updateDoc(doc(createDb, 'users', createUid), { photoURL: invalidPhotoUrls[i] }));
       const badCreateUid = `fix05_bad_create_${i}`;
       const badCreateDb = testEnv.authenticatedContext(badCreateUid, {
         email: `fix05bad${i}@example.com`,
@@ -2373,7 +2430,7 @@ async function runRulesTests() {
       );
     }
 
-    // Active member can still save compressed raster data URI in members.avatarUrl, while malformed HTTPS/http/js are rejected
+    // Active member can save compressed raster data URI ONLY on members.avatarUrl and publicLeaderboard.avatarUrl/avatar (not SVG, not portfolioUrl)
     const activeDb = testEnv.authenticatedContext('user_active_1', {
       email: 'ada@example.com',
       email_verified: true,
@@ -2385,12 +2442,60 @@ async function runRulesTests() {
     );
     await assertFails(
       updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        avatarUrl: 'data:image/svg+xml;base64,PHN2Zz4=',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        portfolioUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
         avatarUrl: 'javascript:alert(1)',
       })
     );
     await assertFails(
       updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
         avatarUrl: 'https://localhost/avatar.png',
+      })
+    );
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'publicLeaderboard', 'mem_active_1'), {
+        id: 'mem_active_1',
+        name: 'Ada Lovelace',
+        displayName: 'Ada Lovelace',
+        handle: '@ada',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        totalCheckIns: 1,
+        currentStreak: 1,
+        bestStreak: 1,
+        points: 10,
+        totalPoints: 10,
+      });
+    });
+
+    await assertSucceeds(
+      updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), {
+        avatar: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+        avatarUrl: 'data:image/png;base64,iVBORw0KGgo=',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), {
+        avatar: 'data:image/svg+xml;base64,PHN2Zz4=',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), {
+        avatarUrl: 'https://localhost/avatar.png',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), {
+        portfolioUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
       })
     );
   });
