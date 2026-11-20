@@ -18,7 +18,9 @@
     "test:listener": "tsx tests/listener-error.test.ts",
     "test:motion": "tsx tests/motion.test.ts",
     "test:rules": "tsx tests/firestore-rules.test.ts",
-    "emulators:exec": "npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore \"npx tsx tests/firestore-rules.test.ts\""
+    "test:rules:staging": "FIRESTORE_RULES_PATH=staging/firestore.rules.phase1 tsx tests/firestore-rules.test.ts",
+    "emulators:exec": "npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore \"npx tsx tests/firestore-rules.test.ts\"",
+    "emulators:exec:staging": "FIRESTORE_RULES_PATH=staging/firestore.rules.phase1 npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore \"FIRESTORE_RULES_PATH=staging/firestore.rules.phase1 npx tsx tests/firestore-rules.test.ts\""
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

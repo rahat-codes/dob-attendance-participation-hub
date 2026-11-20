@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - 'firestore.rules'
+      - 'staging/**'
       - 'docs/rules/**'
       - 'tests/firestore-rules.test.ts'
       - '.github/workflows/rules-tests.yml'
   pull_request:
     paths:
       - 'firestore.rules'
+      - 'staging/**'
       - 'docs/rules/**'
       - 'tests/firestore-rules.test.ts'
       - '.github/workflows/rules-tests.yml'
@@ -40,5 +42,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Firestore Security Rules Test Suite
-        run: npx -y firebase-tools@15.36.0 emulators:exec --project demo-dob-hub-test --only firestore "npx tsx tests/firestore-rules.test.ts"
+      - name: Run Firestore Security Rules Test Suite (Staging)
+        run: npm run emulators:exec:staging

@@ -24,10 +24,34 @@ const SUPER_ADMIN_EMAIL = 'rahatmdmahadihasan@gmail.com';
 
 let testEnv: RulesTestEnvironment;
 
-async function setupSuite() {
-  const rulesPath = path.resolve(process.cwd(), 'firestore.rules');
-  const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+export function resolveRulesFilePath(): string {
+  const configuredPath = process.env.FIRESTORE_RULES_PATH;
+  if (configuredPath !== undefined && configuredPath.trim() === '') {
+    throw new Error('FIRESTORE_RULES_PATH was provided as an empty string; refusing to fall back to firestore.rules.');
+  }
+  const targetPath = configuredPath || 'firestore.rules';
+  const resolvedPath = path.resolve(process.cwd(), targetPath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Firestore rules file not found at "${resolvedPath}" (FIRESTORE_RULES_PATH=${configuredPath ?? '<default>'}). Refusing fallback.`);
+  }
+  const stat = fs.statSync(resolvedPath);
+  if (!stat.isFile()) {
+    throw new Error(`Firestore rules path is not a readable regular file: "${resolvedPath}".`);
+  }
+  return resolvedPath;
+}
 
+function loadRulesContent(): { rulesPath: string; rulesContent: string } {
+  const rulesPath = resolveRulesFilePath();
+  const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+  if (!rulesContent.trim()) {
+    throw new Error(`Firestore rules file is empty: "${rulesPath}".`);
+  }
+  console.log(`Loading Firestore security rules from: ${rulesPath} (${Buffer.byteLength(rulesContent, 'utf8')} bytes)`);
+  return { rulesPath, rulesContent };
+}
+
+async function setupSuite(rulesContent: string) {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
@@ -67,14 +91,15 @@ async function setupSuite() {
  */
 async function runRulesTests() {
   console.log('--- Initializing Firestore Rules Test Suite (Phase 2 Hardening) ---');
+  const { rulesContent } = loadRulesContent();
   try {
-    await setupSuite();
+    await setupSuite(rulesContent);
   } catch (err: any) {
     console.error(
-      '❌ Firestore Emulator not running at 127.0.0.1:8080.\nRun tests inside the emulator using: `npm run emulators:exec`'
+      '❌ Firestore Emulator not running at 127.0.0.1:8080.\nRun tests inside the emulator using: `npm run emulators:exec:staging` (or `npm run emulators:exec`)'
     );
     throw new Error(
-      `Firestore Emulator missing at 127.0.0.1:8080. Start emulator with \`npm run emulators:exec\` to execute rules suite. (${err?.message || err})`
+      `Firestore Emulator missing at 127.0.0.1:8080. Start emulator with \`npm run emulators:exec:staging\` to execute rules suite. (${err?.message || err})`
     );
   }
 
@@ -91,12 +116,13 @@ async function runRulesTests() {
     } catch (err: any) {
       failed++;
       testResults.push({ name, status: 'FAIL', note: err?.message || String(err) });
-      console.log(`❌ FAIL: ${name}\n   -> ${err?.message || err}`);
+      console.error(`❌ FAIL: ${name}\n   -> ${err?.message || err}`);
     }
   }
 
-  // Seed baseline helper docs with admin bypass
-  await testEnv.withSecurityRulesDisabled(async (context) => {
+  try {
+    // Seed baseline helper docs with admin bypass
+    await testEnv.withSecurityRulesDisabled(async (context) => {
     const adminDb = context.firestore();
 
     // Super admin authority record
@@ -2500,16 +2526,439 @@ async function runRulesTests() {
     );
   });
 
-  console.log('\n========================================');
-  console.log(`PHASE 1-5 RULES TEST SUITE COMPLETE`);
-  console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);
-  console.log('========================================\n');
+  // ========================================================================
+  // SUITE 21: STAGING RELEASE-GATE NEGATIVE & BOUNDARY COVERAGE (FIX-01..FIX-06)
+  // ========================================================================
+  await test('FIX-01 (Boundary): Blocks unauthorized orphaned memberPrivate create/delete while allowing admin read & delete', async () => {
+    const orphanExistingId = 'mem_orphan_admin_1';
+    const orphanMissingCreateId = 'mem_orphan_unauth_create_1';
 
-  await testEnv.cleanup();
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      // Active user whose members/{id} doc is absent (orphaned memberPrivate scenario)
+      await setDoc(doc(seedDb, 'users', 'fix01_orphan_linked_u'), {
+        id: 'fix01_orphan_linked_u',
+        email: 'orphan_linked@example.com',
+        displayName: 'Orphan Linked',
+        status: 'active',
+        memberId: orphanExistingId,
+      });
+      // Approved-waiting-response and declined users pointing at missing member IDs
+      await setDoc(doc(seedDb, 'users', 'fix01_waiting_u'), {
+        id: 'fix01_waiting_u',
+        email: 'waiting_orphan@example.com',
+        displayName: 'Waiting User',
+        status: 'approved_waiting_response',
+        approvedMemberId: orphanMissingCreateId,
+      });
+      await setDoc(doc(seedDb, 'users', 'fix01_declined_u'), {
+        id: 'fix01_declined_u',
+        email: 'declined_orphan@example.com',
+        displayName: 'Declined User',
+        status: 'declined',
+        memberId: orphanMissingCreateId,
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', orphanExistingId), {
+        email: 'orphan_linked@example.com',
+        phone: '010-7777-8888',
+      });
+    });
+
+    const superDb = testEnv.authenticatedContext('super_fix01_admin', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const orphanOwnerDb = testEnv.authenticatedContext('fix01_orphan_linked_u', {
+      email: 'orphan_linked@example.com',
+      email_verified: true,
+    }).firestore();
+    const mismatchActiveDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const waitingDb = testEnv.authenticatedContext('fix01_waiting_u', {
+      email: 'waiting_orphan@example.com',
+      email_verified: true,
+    }).firestore();
+    const declinedDb = testEnv.authenticatedContext('fix01_declined_u', {
+      email: 'declined_orphan@example.com',
+      email_verified: true,
+    }).firestore();
+    const guestDb = testEnv.unauthenticatedContext().firestore();
+
+    // Unauthorized creation of orphaned memberPrivate (when members/{id} is absent) -> DENY
+    await assertFails(
+      setDoc(doc(mismatchActiveDb, 'memberPrivate', orphanMissingCreateId), {
+        phone: '010-0000-0001',
+      })
+    );
+    await assertFails(
+      setDoc(doc(waitingDb, 'memberPrivate', orphanMissingCreateId), {
+        phone: '010-0000-0002',
+      })
+    );
+    await assertFails(
+      setDoc(doc(declinedDb, 'memberPrivate', orphanMissingCreateId), {
+        phone: '010-0000-0003',
+      })
+    );
+    await assertFails(
+      setDoc(doc(guestDb, 'memberPrivate', orphanMissingCreateId), {
+        phone: '010-0000-0004',
+      })
+    );
+
+    // Non-admin deletion of orphaned memberPrivate (even by linked active user) -> DENY
+    await assertFails(deleteDoc(doc(orphanOwnerDb, 'memberPrivate', orphanExistingId)));
+    await assertFails(deleteDoc(doc(mismatchActiveDb, 'memberPrivate', orphanExistingId)));
+    await assertFails(deleteDoc(doc(guestDb, 'memberPrivate', orphanExistingId)));
+
+    // Admin read and delete of orphaned memberPrivate -> ALLOW
+    await assertSucceeds(getDoc(doc(superDb, 'memberPrivate', orphanExistingId)));
+    await assertSucceeds(deleteDoc(doc(superDb, 'memberPrivate', orphanExistingId)));
+  });
+
+  await test('FIX-02 (Boundary): Enforces strict denial on settings/appMeta writes/deletes, publicMeta deletes, and club writes/deletes', async () => {
+    const superDb = testEnv.authenticatedContext('super_fix02_neg', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const memberDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const pendingDb = testEnv.authenticatedContext('user_crit01_pending_1', {
+      email: 'pending_crit01@example.com',
+      email_verified: true,
+    }).firestore();
+    const guestDb = testEnv.unauthenticatedContext().firestore();
+
+    // Ensure baseline docs exist
+    await assertSucceeds(
+      setDoc(doc(superDb, 'settings', 'appMeta'), {
+        rulesVersion: '2026.11.v4',
+      })
+    );
+    await assertSucceeds(
+      setDoc(doc(superDb, 'settings', 'publicMeta'), {
+        clubName: 'Den of Builders',
+        timezone: 'Asia/Seoul',
+        maintenanceMode: false,
+        schemaVersion: '2026.11.v4',
+      })
+    );
+
+    // Non-admin access (read, write, delete) to settings/appMeta -> DENY
+    for (const db of [memberDb, pendingDb, guestDb]) {
+      await assertFails(getDoc(doc(db, 'settings', 'appMeta')));
+      await assertFails(setDoc(doc(db, 'settings', 'appMeta'), { rulesVersion: 'pwned' }));
+      await assertFails(updateDoc(doc(db, 'settings', 'appMeta'), { rulesVersion: 'pwned' }));
+      await assertFails(deleteDoc(doc(db, 'settings', 'appMeta')));
+    }
+
+    // Unauthorized deletion of settings/publicMeta -> DENY (admin delete -> ALLOW)
+    await assertFails(deleteDoc(doc(memberDb, 'settings', 'publicMeta')));
+    await assertFails(deleteDoc(doc(pendingDb, 'settings', 'publicMeta')));
+    await assertFails(deleteDoc(doc(guestDb, 'settings', 'publicMeta')));
+    await assertSucceeds(deleteDoc(doc(superDb, 'settings', 'publicMeta')));
+
+    // Pending, guest, and non-admin active member writes/deletes to settings/club -> DENY
+    await assertSucceeds(getDoc(doc(memberDb, 'settings', 'club')));
+    await assertFails(getDoc(doc(pendingDb, 'settings', 'club')));
+    await assertFails(getDoc(doc(guestDb, 'settings', 'club')));
+    for (const db of [memberDb, pendingDb, guestDb]) {
+      await assertFails(setDoc(doc(db, 'settings', 'club'), { name: 'Hijacked' }));
+      await assertFails(updateDoc(doc(db, 'settings', 'club'), { name: 'Hijacked' }));
+      await assertFails(deleteDoc(doc(db, 'settings', 'club')));
+    }
+  });
+
+  await test('FIX-03 (Task 4): Notification deletion scoping and narrowly scoped admin legacy ID repair preserving historical fields', async () => {
+    const superDb = testEnv.authenticatedContext('super_fix03_neg', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+    const ownerDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const otherDb = testEnv.authenticatedContext('user_attacker_2', {
+      email: 'attacker@example.com',
+      email_verified: true,
+    }).firestore();
+    const guestDb = testEnv.unauthenticatedContext().firestore();
+
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'notifications', 'notif_del_owner_1'), {
+        id: 'notif_del_owner_1',
+        userId: 'user_active_1',
+        title: 'Owner Delete Test',
+        message: 'Allowed for owner',
+        createdAt: new Date().toISOString(),
+      });
+      await setDoc(doc(seedDb, 'notifications', 'notif_del_admin_1'), {
+        id: 'notif_del_admin_1',
+        userId: 'user_active_1',
+        title: 'Admin Delete Test',
+        message: 'Allowed for admin',
+        createdAt: new Date().toISOString(),
+      });
+      // Legacy notifications with historical extra fields (missing id and mismatched id)
+      await setDoc(doc(seedDb, 'notifications', 'notif_legacy_hist_missing'), {
+        userId: 'user_active_1',
+        title: 'Legacy Imported Alert',
+        message: 'Imported without id field',
+        legacySource: 'sheet_2025_q1',
+        legacyBatch: 42,
+      });
+      await setDoc(doc(seedDb, 'notifications', 'notif_legacy_hist_mismatch'), {
+        id: 'old_unmatched_id',
+        userId: 'user_active_1',
+        title: 'Legacy Mismatched Alert',
+        message: 'Imported with mismatched id',
+        createdAt: new Date().toISOString(),
+        legacySource: 'sheet_2025_q2',
+        legacyFlag: true,
+      });
+    });
+
+    // Non-owner and guest deletion denied; owner and admin deletion allowed
+    await assertFails(deleteDoc(doc(otherDb, 'notifications', 'notif_del_owner_1')));
+    await assertFails(deleteDoc(doc(guestDb, 'notifications', 'notif_del_owner_1')));
+    await assertSucceeds(deleteDoc(doc(ownerDb, 'notifications', 'notif_del_owner_1')));
+    await assertSucceeds(deleteDoc(doc(superDb, 'notifications', 'notif_del_admin_1')));
+
+    // Invalid legacy repair attempts must be DENIED even for admin
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_missing'), {
+        id: 'wrong_path_id',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_missing'), {
+        id: 'notif_legacy_hist_missing',
+        title: 'Tampered Title During Repair',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_mismatch'), {
+        id: 'notif_legacy_hist_mismatch',
+        message: 'Tampered Message During Repair',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_mismatch'), {
+        id: 'notif_legacy_hist_mismatch',
+        userId: 'user_attacker_2',
+      })
+    );
+    await assertFails(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_mismatch'), {
+        id: 'notif_legacy_hist_mismatch',
+        injectedField: 'not_allowed',
+      })
+    );
+    // Non-admin owner cannot perform ID repair either
+    await assertFails(
+      updateDoc(doc(ownerDb, 'notifications', 'notif_legacy_hist_missing'), {
+        id: 'notif_legacy_hist_missing',
+      })
+    );
+
+    // Valid scoped admin legacy ID repair succeeds and preserves userId + historical fields
+    await assertSucceeds(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_missing'), {
+        id: 'notif_legacy_hist_missing',
+      })
+    );
+    await assertSucceeds(
+      updateDoc(doc(superDb, 'notifications', 'notif_legacy_hist_mismatch'), {
+        id: 'notif_legacy_hist_mismatch',
+      })
+    );
+
+    const repairedMissing = (
+      await assertSucceeds(getDoc(doc(superDb, 'notifications', 'notif_legacy_hist_missing')))
+    ).data();
+    const repairedMismatch = (
+      await assertSucceeds(getDoc(doc(superDb, 'notifications', 'notif_legacy_hist_mismatch')))
+    ).data();
+    if (
+      repairedMissing?.id !== 'notif_legacy_hist_missing' ||
+      repairedMissing?.userId !== 'user_active_1' ||
+      repairedMissing?.legacySource !== 'sheet_2025_q1' ||
+      repairedMissing?.legacyBatch !== 42
+    ) {
+      throw new Error('Expected legacy missing-id repair to preserve userId and historical fields');
+    }
+    if (
+      repairedMismatch?.id !== 'notif_legacy_hist_mismatch' ||
+      repairedMismatch?.userId !== 'user_active_1' ||
+      repairedMismatch?.legacySource !== 'sheet_2025_q2' ||
+      repairedMismatch?.legacyFlag !== true
+    ) {
+      throw new Error('Expected legacy mismatched-id repair to preserve userId and historical fields');
+    }
+  });
+
+  await test('FIX-04 (Boundary): Admin delete allowed on memberPrivate; owner deleteField() blocked while empty-string clear succeeds', async () => {
+    const uid = 'fix04_boundary_u1';
+    const memberId = 'mem_fix04_boundary_1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uid), {
+        id: uid,
+        email: 'fix04_boundary@example.com',
+        displayName: 'Fix04 Boundary',
+        status: 'active',
+        memberId,
+      });
+      await setDoc(doc(seedDb, 'members', memberId), {
+        id: memberId,
+        name: 'Fix04 Boundary',
+        handle: '@fix04_b',
+        role: 'Member',
+        tracks: ['Software & Systems'],
+        status: 'Active',
+        authUid: uid,
+      });
+      await setDoc(doc(seedDb, 'memberPrivate', memberId), {
+        email: 'fix04_boundary@example.com',
+        phone: '010-1234-5678',
+        studentId: '20269001',
+        university: 'Tongmyong University',
+        department: 'CS',
+        major: 'Software',
+        semester: 'Fall 2026',
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    const ownerDb = testEnv.authenticatedContext(uid, {
+      email: 'fix04_boundary@example.com',
+      email_verified: true,
+    }).firestore();
+    const superDb = testEnv.authenticatedContext('super_fix04_admin', {
+      email: SUPER_ADMIN_EMAIL,
+      email_verified: true,
+      firebase: { sign_in_provider: 'google.com' },
+    }).firestore();
+
+    // Owner deleting optional fields with deleteField() is rejected
+    await assertFails(updateDoc(doc(ownerDb, 'memberPrivate', memberId), { studentId: deleteField() }));
+    await assertFails(updateDoc(doc(ownerDb, 'memberPrivate', memberId), { phone: deleteField() }));
+
+    // Valid clearing with empty strings succeeds
+    await assertSucceeds(
+      updateDoc(doc(ownerDb, 'memberPrivate', memberId), {
+        studentId: '',
+        phone: '',
+        university: '',
+        department: '',
+        major: '',
+        semester: '',
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    // Admin deletion of memberPrivate succeeds
+    await assertSucceeds(deleteDoc(doc(superDb, 'memberPrivate', memberId)));
+  });
+
+  await test('FIX-06 (Boundary): Blocks member ID mutation, member publicLeaderboard creation, and score tampering', async () => {
+    const uidNoLb = 'fix06_nolb_u1';
+    const memberNoLbId = 'mem_fix06_nolb_1';
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const seedDb = context.firestore();
+      await setDoc(doc(seedDb, 'users', uidNoLb), {
+        id: uidNoLb,
+        email: 'fix06_nolb@example.com',
+        displayName: 'Fix06 NoLB',
+        status: 'active',
+        memberId: memberNoLbId,
+      });
+      await setDoc(doc(seedDb, 'members', memberNoLbId), {
+        id: memberNoLbId,
+        name: 'Fix06 NoLB',
+        handle: '@fix06_nolb',
+        role: 'Member',
+        tracks: ['Hardware & Robotics'],
+        status: 'Active',
+        authUid: uidNoLb,
+      });
+    });
+
+    const activeDb = testEnv.authenticatedContext('user_active_1', {
+      email: 'ada@example.com',
+      email_verified: true,
+    }).firestore();
+    const noLbMemberDb = testEnv.authenticatedContext(uidNoLb, {
+      email: 'fix06_nolb@example.com',
+      email_verified: true,
+    }).firestore();
+
+    // Member cannot mutate an existing members/{id}.id field
+    await assertFails(
+      updateDoc(doc(activeDb, 'members', 'mem_active_1'), {
+        id: 'mem_mutated_other',
+      })
+    );
+
+    // Member cannot create publicLeaderboard documents (own missing doc or arbitrary doc)
+    await assertFails(
+      setDoc(doc(noLbMemberDb, 'publicLeaderboard', memberNoLbId), {
+        id: memberNoLbId,
+        name: 'Fix06 NoLB',
+        handle: '@fix06_nolb',
+        role: 'Member',
+        points: 999,
+        totalCheckIns: 99,
+      })
+    );
+    await assertFails(
+      setDoc(doc(activeDb, 'publicLeaderboard', 'mem_forged_new_entry'), {
+        id: 'mem_forged_new_entry',
+        name: 'Forged Entry',
+        handle: '@forged',
+        role: 'Member',
+        points: 500,
+      })
+    );
+
+    // Member cannot alter protected score fields on existing publicLeaderboard/{myMemberId()}
+    await assertFails(updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), { points: 9999 }));
+    await assertFails(updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), { totalPoints: 9999 }));
+    await assertFails(updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), { totalCheckIns: 100 }));
+    await assertFails(updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), { currentStreak: 50 }));
+    await assertFails(updateDoc(doc(activeDb, 'publicLeaderboard', 'mem_active_1'), { bestStreak: 50 }));
+  });
+  } finally {
+    console.log('\n========================================');
+    console.log(`PHASE 1-5 RULES TEST SUITE COMPLETE`);
+    console.log(`Total: ${testResults.length} | Passed: ${passed} | Failed: ${failed}`);
+    console.log('========================================\n');
+    await testEnv.cleanup();
+  }
+
+  if (failed > 0) {
+    throw new Error(`Firestore Security Rules suite failed: ${failed} of ${testResults.length} test(s) failed.`);
+  }
   return { passed, failed, testResults };
 }
 
-runRulesTests().catch((err) => {
-  console.error('Fatal test error:', err);
-  process.exit(1);
-});
+runRulesTests()
+  .then(({ passed, failed }) => {
+    if (failed > 0) {
+      process.exit(1);
+    }
+    console.log(`All ${passed} Firestore security rules test(s) passed.`);
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Fatal test error:', err);
+    process.exit(1);
+  });

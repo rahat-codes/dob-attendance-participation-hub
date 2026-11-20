@@ -1,0 +1,692 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny-all catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==========================================
+    // Security & Identity Helper Functions
+    // ==========================================
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Super Admin: Enforces email_verified and Google OAuth provider
+    function isSuper() {
+      return signedIn() &&
+             request.auth.token.email != null &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.firebase.sign_in_provider == 'google.com' &&
+             request.auth.token.email.lower() == 'rahatmdmahadihasan@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSuper() || (
+        signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function myMemberId() {
+      return me().memberId;
+    }
+
+    function isActiveMember() {
+      return signedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             me().get('status', null) == 'active' &&
+             me().get('memberId', null) is string &&
+             exists(/databases/$(database)/documents/members/$(me().memberId)) &&
+             get(/databases/$(database)/documents/members/$(me().memberId)).data.get('status', 'Active') != 'Inactive';
+    }
+
+    // FIX-01: Dedicated legacy fallback helper for memberPrivate when members/{memberId} is absent.
+    // Does not require members/{memberId} to exist; never used when members/{memberId} exists.
+    function isLinkedActiveUser(memberId) {
+      return signedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             me().get('status', null) == 'active' &&
+             me().get('memberId', null) is string &&
+             me().get('memberId', null) == memberId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function sessionOpen(sid) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      let mode = s.get('checkInMode', 'auto');
+      let openMins = s.get('openMinutesBefore', 15);
+      let graceMins = s.get('graceMinutesAfter', 30);
+      return s.status != 'cancelled' && s.status != 'completed' && mode != 'closed' && (
+        mode == 'open' ||
+        (request.time >= s.startAt - duration.value(openMins, 'm') &&
+         request.time <= s.endAt + duration.value(graceMins, 'm'))
+      );
+    }
+
+    function tokenValid(sid, t) {
+      let k = get(/databases/$(database)/documents/sessionTokens/$(sid)).data;
+      return t is string &&
+             t.size() == 8 &&
+             t.matches('^[A-Z0-9]{8}$') && (
+               (t == k.token && request.time <= k.rotatedAt + duration.value(75, 's')) ||
+               (k.prevToken is string && k.prevToken.size() == 8 && k.prevToken.matches('^[A-Z0-9]{8}$') && t == k.prevToken && request.time <= k.rotatedAt + duration.value(30, 's'))
+             );
+    }
+
+    function isMatchingMonthKey(sid, monthKey) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      return monthKey is string &&
+             monthKey.matches('^[0-9]{4}-[0-9]{2}$') &&
+             s.date is string &&
+             s.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             monthKey == s.date.split('-')[0] + '-' + s.date.split('-')[1];
+    }
+
+    function isValidCheckInStatus(sid, status) {
+      let s = get(/databases/$(database)/documents/sessions/$(sid)).data;
+      let lateMins = s.get('lateAfterMinutes', 10);
+      let lateAt = s.startAt + duration.value(lateMins, 'm');
+      return (status == 'present' && request.time <= lateAt + duration.value(15, 's')) ||
+             (status == 'late' && request.time >= lateAt - duration.value(15, 's'));
+    }
+
+    // FIX-05: Strict HTTPS URL validator for users.photoURL (blocks data URIs, HTTP, localhost, IPs, userinfo, whitespace)
+    function isValidPhotoUrl(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 500 &&
+        url.matches('^https://[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?)*\\.[a-zA-Z]{2,}([/?#][^\\s]*)?$') &&
+        !url.lower().matches('^https://([^/?#]+\\.)?localhost([/?#].*)?$') &&
+        !url.lower().matches('^https://([0-9]{1,3}\\.){3}[0-9]{1,3}([/?#:].*)?$')
+      );
+    }
+
+    // FIX-05: Avatar validator for members.avatarUrl & publicLeaderboard.avatar/avatarUrl (HTTPS photo URL or raster base64 data URI)
+    function isValidAvatarUrl(url) {
+      return isValidPhotoUrl(url) || (
+        url is string &&
+        url.size() <= 150000 &&
+        url.matches('^data:image/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$')
+      );
+    }
+
+    function isMemberOwner(memberId, memberData) {
+      return isActiveMember() &&
+             myMemberId() == memberId && (
+               !('authUid' in memberData) ||
+               memberData.authUid == null ||
+               memberData.authUid == '' ||
+               memberData.authUid == request.auth.uid
+             );
+    }
+
+    function isValidGitHub(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 100 &&
+        url.matches('^https://github\\.com/[a-zA-Z0-9]([a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$')
+      );
+    }
+
+    function isValidLinkedIn(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 150 &&
+        !url.matches('.*\\.\\..*') &&
+        url.matches('^https://(www\\.)?linkedin\\.com/in/[a-zA-Z0-9._%-]{3,100}/?$')
+      );
+    }
+
+    function isValidPortfolio(url) {
+      return url == null || url == '' || (
+        url is string &&
+        url.size() <= 200 &&
+        url.matches('^https://[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?(\\.[a-zA-Z0-9]([a-zA-Z0-9\\-]*[a-zA-Z0-9])?)*\\.[a-zA-Z]{2,}([/?#][^\\s]*)?$') &&
+        !url.lower().matches('^https://([^/?#]+\\.)?localhost([/?#].*)?$')
+      );
+    }
+
+    // ==========================================
+    // Entity Schema Validators (Phase 1 Staging)
+    // ==========================================
+
+    function isValidUserFields(data) {
+      return (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 150)) &&
+             (!('id' in data) || (data.id is string && data.id.size() > 0 && data.id.size() <= 128)) &&
+             (!('displayName' in data) || data.displayName == null || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || isValidPhotoUrl(data.photoURL)) &&
+             (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
+             (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
+             (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
+             (!('applicantName' in data) || data.applicantName == null || (data.applicantName is string && data.applicantName.size() <= 100)) &&
+             (!('applicantHandle' in data) || data.applicantHandle == null || (data.applicantHandle is string && data.applicantHandle.size() <= 50)) &&
+             (!('applicantStudentId' in data) || data.applicantStudentId == null || (data.applicantStudentId is string && data.applicantStudentId.size() <= 20)) &&
+             (!('applicantTrack' in data) || data.applicantTrack == null || data.applicantTrack == '' || data.applicantTrack in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo']) &&
+             (!('applicantNote' in data) || data.applicantNote == null || (data.applicantNote is string && data.applicantNote.size() <= 300)) &&
+             (!('requestedNotes' in data) || data.requestedNotes == null || (data.requestedNotes is string && data.requestedNotes.size() <= 1000)) &&
+             (!('showLinksPublicly' in data) || data.showLinksPublicly == null || data.showLinksPublicly is bool) &&
+             (!('readAnnouncementIds' in data) || data.readAnnouncementIds == null || (data.readAnnouncementIds is list && data.readAnnouncementIds.size() <= 100)) &&
+             (!('notificationPrefs' in data) || data.notificationPrefs == null || data.notificationPrefs is map) &&
+             (!('notificationPreferences' in data) || data.notificationPreferences == null || data.notificationPreferences is map) &&
+             data.status in ['pending', 'approved_waiting_response', 'active', 'declined', 'suspended'];
+    }
+
+    function isValidUserUpdate(newData, oldData) {
+      let changed = newData.diff(oldData).affectedKeys();
+      return (!changed.hasAny(['email']) || newData.email == null || (newData.email is string && newData.email.size() <= 150)) &&
+             (!changed.hasAny(['id']) || (newData.id is string && newData.id.size() > 0 && newData.id.size() <= 128)) &&
+             (!changed.hasAny(['displayName']) || newData.displayName == null || (newData.displayName is string && newData.displayName.size() <= 100)) &&
+             (!changed.hasAny(['photoURL']) || isValidPhotoUrl(newData.photoURL)) &&
+             (!changed.hasAny(['githubUrl']) || isValidGitHub(newData.githubUrl)) &&
+             (!changed.hasAny(['linkedinUrl']) || isValidLinkedIn(newData.linkedinUrl)) &&
+             (!changed.hasAny(['portfolioUrl']) || isValidPortfolio(newData.portfolioUrl)) &&
+             (!changed.hasAny(['applicantName']) || newData.applicantName == null || (newData.applicantName is string && newData.applicantName.size() <= 100)) &&
+             (!changed.hasAny(['applicantHandle']) || newData.applicantHandle == null || (newData.applicantHandle is string && newData.applicantHandle.size() <= 50)) &&
+             (!changed.hasAny(['applicantStudentId']) || newData.applicantStudentId == null || (newData.applicantStudentId is string && newData.applicantStudentId.size() <= 20)) &&
+             (!changed.hasAny(['applicantTrack']) || newData.applicantTrack == null || newData.applicantTrack == '' || newData.applicantTrack in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo']) &&
+             (!changed.hasAny(['applicantNote']) || newData.applicantNote == null || (newData.applicantNote is string && newData.applicantNote.size() <= 300)) &&
+             (!changed.hasAny(['requestedNotes']) || newData.requestedNotes == null || (newData.requestedNotes is string && newData.requestedNotes.size() <= 1000)) &&
+             (!changed.hasAny(['showLinksPublicly']) || newData.showLinksPublicly == null || newData.showLinksPublicly is bool) &&
+             (!changed.hasAny(['readAnnouncementIds']) || newData.readAnnouncementIds == null || (newData.readAnnouncementIds is list && newData.readAnnouncementIds.size() <= 100)) &&
+             (!changed.hasAny(['notificationPrefs']) || newData.notificationPrefs == null || newData.notificationPrefs is map) &&
+             (!changed.hasAny(['notificationPreferences']) || newData.notificationPreferences == null || newData.notificationPreferences is map) &&
+             ((!changed.hasAny(['status']) && !('status' in oldData)) || newData.status in ['pending', 'approved_waiting_response', 'active', 'declined', 'suspended']);
+    }
+
+    function isValidUserCreate(data) {
+      return data.keys().hasAll(['id', 'email', 'displayName', 'status']) &&
+             !('memberId' in data) &&
+             !('approvedMemberId' in data) &&
+             !('approvedAt' in data) &&
+             !('respondedAt' in data) &&
+             data.keys().hasOnly([
+               'id', 'email', 'displayName', 'photoURL', 'status',
+               'requestedNotes', 'readAnnouncementIds', 'notificationPrefs', 'notificationPreferences',
+               'createdAt', 'updatedAt', 'membershipRequestedAt',
+               'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+               'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+             ]) &&
+             isValidUserFields(data);
+    }
+
+    function isValidMember(data) {
+      return data.keys().hasAll(['id', 'name', 'handle', 'role', 'tracks', 'joinedDate', 'status']) &&
+             data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.handle is string && data.handle.size() > 0 && data.handle.size() <= 50 &&
+             data.role in ['Member', 'Project Leader', 'Vice President', 'President', 'Founder', 'Lead', 'Builder', 'Apprentice'] &&
+             data.tracks is list && data.tracks.size() > 0 && data.tracks.size() <= 10 &&
+             (!('avatarUrl' in data) || isValidAvatarUrl(data.avatarUrl)) &&
+             (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 500)) &&
+             (!('leaderboardOptOut' in data) || data.leaderboardOptOut == null || data.leaderboardOptOut is bool) &&
+             (!('showLinksPublicly' in data) || data.showLinksPublicly == null || data.showLinksPublicly is bool) &&
+             (!('readAnnouncementIds' in data) || data.readAnnouncementIds == null || (data.readAnnouncementIds is list && data.readAnnouncementIds.size() <= 100)) &&
+             (!('githubUrl' in data) || isValidGitHub(data.githubUrl)) &&
+             (!('linkedinUrl' in data) || isValidLinkedIn(data.linkedinUrl)) &&
+             (!('portfolioUrl' in data) || isValidPortfolio(data.portfolioUrl)) &&
+             (!('joinedDate' in data) || (data.joinedDate is string && data.joinedDate.size() <= 50)) &&
+             data.status in ['Active', 'Probationary', 'Inactive'];
+    }
+
+    function isValidMemberSelfUpdate(newData, oldData) {
+      let changed = newData.diff(oldData).affectedKeys();
+      return (!changed.hasAny(['id']) || (newData.id is string && isValidId(newData.id))) &&
+             (!changed.hasAny(['name']) || (newData.name is string && newData.name.size() > 0 && newData.name.size() <= 100)) &&
+             (!changed.hasAny(['tracks']) || (newData.tracks is list && newData.tracks.size() > 0 && newData.tracks.size() <= 10)) &&
+             (!changed.hasAny(['avatarUrl']) || !('avatarUrl' in newData) || isValidAvatarUrl(newData.avatarUrl)) &&
+             (!changed.hasAny(['bio']) || !('bio' in newData) || newData.bio == null || (newData.bio is string && newData.bio.size() <= 500)) &&
+             (!changed.hasAny(['leaderboardOptOut']) || !('leaderboardOptOut' in newData) || newData.leaderboardOptOut == null || newData.leaderboardOptOut is bool) &&
+             (!changed.hasAny(['showLinksPublicly']) || !('showLinksPublicly' in newData) || newData.showLinksPublicly == null || newData.showLinksPublicly is bool) &&
+             (!changed.hasAny(['readAnnouncementIds']) || !('readAnnouncementIds' in newData) || newData.readAnnouncementIds == null || (newData.readAnnouncementIds is list && newData.readAnnouncementIds.size() <= 100)) &&
+             (!changed.hasAny(['githubUrl']) || !('githubUrl' in newData) || isValidGitHub(newData.githubUrl)) &&
+             (!changed.hasAny(['linkedinUrl']) || !('linkedinUrl' in newData) || isValidLinkedIn(newData.linkedinUrl)) &&
+             (!changed.hasAny(['portfolioUrl']) || !('portfolioUrl' in newData) || isValidPortfolio(newData.portfolioUrl)) &&
+             (!changed.hasAny(['studentId']) || !('studentId' in newData) || newData.studentId == null || (newData.studentId is string && newData.studentId.size() <= 30)) &&
+             (!changed.hasAny(['university']) || !('university' in newData) || newData.university == null || (newData.university is string && newData.university.size() <= 120)) &&
+             (!changed.hasAny(['profileCompleted']) || !('profileCompleted' in newData) || newData.profileCompleted is bool) &&
+             (!changed.hasAny(['profileCompletedAt']) || !('profileCompletedAt' in newData) || (newData.profileCompletedAt is string && newData.profileCompletedAt.size() <= 50)) &&
+             (!changed.hasAny(['updatedAt']) || !('updatedAt' in newData) || (newData.updatedAt is string && newData.updatedAt.size() <= 50));
+    }
+
+    // FIX-04: Strict create validator & merge-safe update validator for memberPrivate
+    function isValidMemberPrivateCreate(data) {
+      return data.keys().hasOnly([
+               'email', 'phone', 'studentId', 'university', 'department', 'major', 'semester',
+               'profileCompleted', 'profileCompletedAt', 'createdAt', 'updatedAt'
+             ]) &&
+             (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 150)) &&
+             (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30)) &&
+             (!('studentId' in data) || data.studentId == null || (data.studentId is string && data.studentId.size() <= 30)) &&
+             (!('university' in data) || data.university == null || (data.university is string && data.university.size() <= 120)) &&
+             (!('department' in data) || data.department == null || (data.department is string && data.department.size() <= 100)) &&
+             (!('major' in data) || data.major == null || (data.major is string && data.major.size() <= 100)) &&
+             (!('semester' in data) || data.semester == null || (data.semester is string && data.semester.size() <= 40)) &&
+             (!('profileCompleted' in data) || data.profileCompleted is bool) &&
+             (!('profileCompletedAt' in data) || data.profileCompletedAt == null || (data.profileCompletedAt is string && data.profileCompletedAt.size() <= 50)) &&
+             (!('createdAt' in data) || data.createdAt == null || (data.createdAt is string && data.createdAt.size() <= 50)) &&
+             (!('updatedAt' in data) || data.updatedAt == null || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    function isValidMemberPrivateUpdate(newData, oldData) {
+      let changed = newData.diff(oldData).affectedKeys();
+      return changed.hasOnly([
+               'email', 'phone', 'studentId', 'university', 'department', 'major', 'semester',
+               'profileCompleted', 'profileCompletedAt', 'createdAt', 'updatedAt'
+             ]) &&
+             (!changed.hasAny(['email']) || ('email' in newData && (newData.email == null || (newData.email is string && newData.email.size() <= 150)))) &&
+             (!changed.hasAny(['phone']) || ('phone' in newData && (newData.phone == null || (newData.phone is string && newData.phone.size() <= 30)))) &&
+             (!changed.hasAny(['studentId']) || ('studentId' in newData && (newData.studentId == null || (newData.studentId is string && newData.studentId.size() <= 30)))) &&
+             (!changed.hasAny(['university']) || ('university' in newData && (newData.university == null || (newData.university is string && newData.university.size() <= 120)))) &&
+             (!changed.hasAny(['department']) || ('department' in newData && (newData.department == null || (newData.department is string && newData.department.size() <= 100)))) &&
+             (!changed.hasAny(['major']) || ('major' in newData && (newData.major == null || (newData.major is string && newData.major.size() <= 100)))) &&
+             (!changed.hasAny(['semester']) || ('semester' in newData && (newData.semester == null || (newData.semester is string && newData.semester.size() <= 40)))) &&
+             (!changed.hasAny(['profileCompleted']) || ('profileCompleted' in newData && newData.profileCompleted is bool)) &&
+             (!changed.hasAny(['profileCompletedAt']) || ('profileCompletedAt' in newData && (newData.profileCompletedAt == null || (newData.profileCompletedAt is string && newData.profileCompletedAt.size() <= 50)))) &&
+             (!changed.hasAny(['createdAt']) || ('createdAt' in newData && (newData.createdAt == null || (newData.createdAt is string && newData.createdAt.size() <= 50)))) &&
+             (!changed.hasAny(['updatedAt']) || ('updatedAt' in newData && (newData.updatedAt == null || (newData.updatedAt is string && newData.updatedAt.size() <= 50))));
+    }
+
+    function isValidSessionFull(data) {
+      return data.keys().hasAll(['id', 'title', 'track', 'date', 'status', 'location', 'host', 'startAt', 'endAt', 'timezone', 'checkInMode', 'openMinutesBefore', 'graceMinutesAfter', 'lateAfterMinutes', 'points']) &&
+             data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.track in ['Hardware & Robotics', 'Software & Systems', 'AI & Embedded', 'Open Hack & Demo'] &&
+             data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.status in ['scheduled', 'completed', 'cancelled', 'active', 'upcoming'] &&
+             data.location is string && data.location.size() <= 150 &&
+             data.host is string && data.host.size() > 0 && data.host.size() <= 100 &&
+             data.startAt is timestamp &&
+             data.endAt is timestamp &&
+             data.endAt > data.startAt &&
+             data.timezone is string && data.timezone.size() <= 50 &&
+             data.checkInMode in ['auto', 'open', 'closed'] &&
+             data.openMinutesBefore is int && data.openMinutesBefore >= 0 && data.openMinutesBefore <= 240 &&
+             data.graceMinutesAfter is int && data.graceMinutesAfter >= 0 && data.graceMinutesAfter <= 240 &&
+             data.lateAfterMinutes is int && data.lateAfterMinutes >= 0 && data.lateAfterMinutes <= 240 &&
+             data.points is int && data.points >= 0 && data.points <= 1000 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+             (!('startTime' in data) || (data.startTime is string && data.startTime.size() <= 20)) &&
+             (!('endTime' in data) || (data.endTime is string && data.endTime.size() <= 20)) &&
+             (!('sessionCode' in data) || (data.sessionCode is string && data.sessionCode.size() <= 20)) &&
+             (!('maxCapacity' in data) || (data.maxCapacity is int && data.maxCapacity >= 0 && data.maxCapacity <= 5000)) &&
+             (!('deletedAt' in data) || (data.deletedAt is string && data.deletedAt.size() <= 50));
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'message', 'createdAt']) &&
+             data.keys().hasOnly([
+               'id', 'userId', 'title', 'message', 'type', 'read', 'dismissed',
+               'createdAt', 'sessionId', 'sessionDate', 'sessionLocation', 'sessionTime'
+             ]) &&
+             isValidId(data.id) &&
+             isValidId(data.userId) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 150 &&
+             data.message is string && data.message.size() > 0 && data.message.size() <= 1000 &&
+             data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 50 &&
+             (!('type' in data) || data.type in ['announcement', 'reminder', 'system', 'meeting_published', 'meeting_reminder_30m', 'meeting_rescheduled', 'meeting_cancelled']) &&
+             (!('read' in data) || data.read is bool) &&
+             (!('dismissed' in data) || data.dismissed is bool) &&
+             (!('sessionId' in data) || (data.sessionId is string && data.sessionId.size() <= 128)) &&
+             (!('sessionDate' in data) || (data.sessionDate is string && data.sessionDate.size() <= 50)) &&
+             (!('sessionLocation' in data) || (data.sessionLocation is string && data.sessionLocation.size() <= 150)) &&
+             (!('sessionTime' in data) || (data.sessionTime is string && data.sessionTime.size() <= 50));
+    }
+
+    // FIX-03 / Task 4: Narrowly scoped admin legacy notification ID repair.
+    // Allows normalizing missing or mismatched `id` strictly to `notificationId` while preserving
+    // `userId` and any historical extra fields, and blocking edits to title/message/recipient/other fields.
+    function isValidLegacyNotificationIdRepair(notificationId, newData, oldData) {
+      return isAdmin() &&
+             isValidId(notificationId) &&
+             (!('id' in oldData) || oldData.id != notificationId) &&
+             newData.id == notificationId &&
+             'userId' in oldData &&
+             oldData.userId is string &&
+             isValidId(oldData.userId) &&
+             newData.userId == oldData.userId &&
+             exists(/databases/$(database)/documents/users/$(oldData.userId)) &&
+             newData.diff(oldData).affectedKeys().hasOnly(['id']);
+    }
+
+    // FIX-02: Strict 4-key allowlist for public non-sensitive app metadata
+    function isValidPublicMeta(data) {
+      return data.keys().hasOnly(['clubName', 'timezone', 'maintenanceMode', 'schemaVersion']) &&
+             (!('clubName' in data) || (data.clubName is string && data.clubName.size() > 0 && data.clubName.size() <= 120)) &&
+             (!('timezone' in data) || (data.timezone is string && data.timezone.size() > 0 && data.timezone.size() <= 50)) &&
+             (!('maintenanceMode' in data) || data.maintenanceMode is bool) &&
+             (!('schemaVersion' in data) || (data.schemaVersion is string && data.schemaVersion.size() > 0 && data.schemaVersion.size() <= 50));
+    }
+
+    // ==========================================
+    // Rules Match Blocks
+    // ==========================================
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+
+      allow create: if signedIn() &&
+                       request.auth.uid == userId &&
+                       request.resource.data.id == userId &&
+                       request.auth.token.email is string &&
+                       request.resource.data.email == request.auth.token.email.lower() &&
+                       request.resource.data.status == 'pending' &&
+                       !('memberId' in request.resource.data) &&
+                       !('approvedMemberId' in request.resource.data) &&
+                       !('approvedAt' in request.resource.data) &&
+                       !('respondedAt' in request.resource.data) &&
+                       isValidUserCreate(request.resource.data);
+
+      allow update: if signedIn() &&
+                       (!('email' in resource.data) || request.resource.data.email == resource.data.email) && (
+        (isAdmin() && isValidUserUpdate(request.resource.data, resource.data)) ||
+        (
+          request.auth.uid == userId &&
+          isValidUserUpdate(request.resource.data, resource.data) &&
+          (!('id' in request.resource.data) || request.resource.data.id == userId) &&
+          (
+            (
+              ((!('status' in resource.data) && (!('status' in request.resource.data) || request.resource.data.status == 'pending')) || (('status' in resource.data) && request.resource.data.status == resource.data.status)) &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'id', 'status', 'displayName', 'photoURL', 'requestedNotes', 'membershipRequestedAt',
+                'notificationPrefs', 'notificationPreferences', 'readAnnouncementIds', 'updatedAt',
+                'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+                'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+              ])
+            ) ||
+            (
+              resource.data.status == 'approved_waiting_response' &&
+              request.resource.data.status == 'active' &&
+              'approvedMemberId' in resource.data &&
+              request.resource.data.memberId == resource.data.approvedMemberId &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'id', 'status', 'memberId', 'respondedAt', 'updatedAt'
+              ])
+            ) ||
+            (
+              resource.data.status == 'approved_waiting_response' &&
+              request.resource.data.status == 'declined' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'id', 'status', 'respondedAt', 'updatedAt'
+              ])
+            ) ||
+            (
+              (resource.data.status == 'declined' || (resource.data.status == 'active' && !isActiveMember())) &&
+              request.resource.data.status == 'pending' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'id', 'status', 'displayName', 'requestedNotes', 'membershipRequestedAt', 'updatedAt',
+                'applicantName', 'applicantHandle', 'applicantStudentId', 'applicantTrack',
+                'applicantNote', 'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+              ])
+            )
+          )
+        )
+      );
+
+      allow delete: if isSuper();
+    }
+
+    match /admins/{adminUid} {
+      allow read: if isAdmin();
+      allow write: if isSuper() && isValidId(adminUid);
+    }
+
+    match /members/{memberId} {
+      allow read: if isAdmin() || isActiveMember() || (
+        signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', null) == 'approved_waiting_response' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('approvedMemberId', null) == memberId
+      );
+
+      allow create: if isAdmin() && isValidId(memberId) && isValidMember(request.resource.data);
+      allow delete: if isAdmin() && isValidId(memberId);
+
+      allow update: if (isAdmin() && isValidMember(request.resource.data)) || (
+        signedIn() &&
+        request.auth.uid == request.resource.data.authUid &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('status', null) == 'approved_waiting_response' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('approvedMemberId', null) == memberId &&
+        (!('authUid' in resource.data) || resource.data.authUid == null || resource.data.authUid == '' || resource.data.authUid == request.auth.uid) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authUid'])
+      ) || (
+        isMemberOwner(memberId, resource.data) &&
+        isValidMemberSelfUpdate(request.resource.data, resource.data) &&
+        (
+          (!('id' in resource.data) && (!('id' in request.resource.data) || request.resource.data.id == memberId)) ||
+          ('id' in resource.data && request.resource.data.id == resource.data.id)
+        ) &&
+        (
+          (!('authUid' in resource.data) && !('authUid' in request.resource.data)) ||
+          request.resource.data.get('authUid', null) == resource.data.get('authUid', null) ||
+          (
+            (!('authUid' in resource.data) || resource.data.authUid == null || resource.data.authUid == '') &&
+            request.resource.data.authUid == request.auth.uid
+          )
+        ) &&
+        request.resource.data.get('handle', null) == resource.data.get('handle', null) &&
+        request.resource.data.get('role', null) == resource.data.get('role', null) &&
+        request.resource.data.get('status', null) == resource.data.get('status', null) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'id', 'name', 'avatarUrl', 'bio', 'tracks', 'leaderboardOptOut', 'studentId', 'university',
+          'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly', 'authUid',
+          'profileCompleted', 'profileCompletedAt', 'updatedAt'
+        ])
+      );
+    }
+
+    // FIX-01 & FIX-04: Member Private Details with separated legacy fallback & merge-safe validation
+    match /memberPrivate/{memberId} {
+      allow read: if isAdmin() || (
+        exists(/databases/$(database)/documents/members/$(memberId))
+          ? isMemberOwner(memberId, get(/databases/$(database)/documents/members/$(memberId)).data)
+          : isLinkedActiveUser(memberId)
+      );
+      allow create: if (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/members/$(memberId))
+            ? isMemberOwner(memberId, get(/databases/$(database)/documents/members/$(memberId)).data)
+            : isLinkedActiveUser(memberId)
+        )
+      ) && isValidMemberPrivateCreate(request.resource.data);
+      allow update: if (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/members/$(memberId))
+            ? isMemberOwner(memberId, get(/databases/$(database)/documents/members/$(memberId)).data)
+            : isLinkedActiveUser(memberId)
+        )
+      ) && isValidMemberPrivateUpdate(request.resource.data, resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /sessions/{sessionId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow create: if isAdmin() && isValidId(sessionId) && isValidSessionFull(request.resource.data);
+      allow update: if isAdmin() && isValidId(sessionId) && (
+        isValidSessionFull(request.resource.data) ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'checkInMode', 'closedAt', 'updatedAt', 'cancelledAt', 'deletedAt'])
+      );
+      allow delete: if isAdmin() && isValidId(sessionId);
+    }
+
+    match /sessionTokens/{sessionId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() &&
+                              isValidId(sessionId) &&
+                              request.resource.data.rotatedAt == request.time &&
+                              request.resource.data.token is string &&
+                              request.resource.data.token.matches('^[A-Z0-9]{8}$') &&
+                              request.resource.data.prevToken is string &&
+                              request.resource.data.prevToken.matches('^[A-Z0-9]{8}$') &&
+                              request.resource.data.keys().hasOnly(['token', 'prevToken', 'rotatedAt']);
+      allow delete: if isAdmin() && isValidId(sessionId);
+    }
+
+    match /checkIns/{checkInId} {
+      allow read: if isAdmin() || (
+        isActiveMember() && (
+          resource == null
+            ? checkInId.matches('^.*_' + myMemberId() + '$')
+            : resource.data.memberId == myMemberId()
+        )
+      );
+
+      allow create: if (
+        (
+          isAdmin() &&
+          checkInId == request.resource.data.sessionId + '_' + request.resource.data.memberId &&
+          request.resource.data.id == checkInId &&
+          request.resource.data.method == 'manual_entry' &&
+          request.resource.data.verifiedBy == request.auth.uid &&
+          request.resource.data.checkedInAt == request.time &&
+          exists(/databases/$(database)/documents/members/$(request.resource.data.memberId)) &&
+          exists(/databases/$(database)/documents/sessions/$(request.resource.data.sessionId)) &&
+          isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
+          request.resource.data.status in ['present', 'late'] &&
+          request.resource.data.keys().hasAll([
+            'id', 'sessionId', 'memberId', 'method', 'status', 'monthKey', 'checkedInAt', 'verifiedBy'
+          ]) &&
+          request.resource.data.keys().hasOnly([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token',
+            'checkedInAt', 'status', 'monthKey', 'notes', 'verifiedBy'
+          ])
+        ) ||
+        (
+          isActiveMember() &&
+          checkInId == request.resource.data.sessionId + '_' + myMemberId() &&
+          request.resource.data.id == checkInId &&
+          request.resource.data.memberId == myMemberId() &&
+          request.resource.data.authUid == request.auth.uid &&
+          request.resource.data.checkedInAt == request.time &&
+          request.resource.data.method in ['camera_scan', 'code_input'] &&
+          isMatchingMonthKey(request.resource.data.sessionId, request.resource.data.monthKey) &&
+          request.resource.data.keys().hasAll([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token', 'checkedInAt', 'status', 'monthKey'
+          ]) &&
+          request.resource.data.keys().hasOnly([
+            'id', 'sessionId', 'memberId', 'authUid', 'method', 'token', 'checkedInAt', 'status', 'monthKey'
+          ]) &&
+          sessionOpen(request.resource.data.sessionId) &&
+          tokenValid(request.resource.data.sessionId, request.resource.data.token) &&
+          isValidCheckInStatus(request.resource.data.sessionId, request.resource.data.status)
+        )
+      );
+
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isAdmin() || isActiveMember();
+      allow write: if isAdmin() && isValidId(announcementId);
+    }
+
+    // FIX-03 & CRIT-02: Admin-only creation with doc-ID & user existence checks; safe legacy repair; owner isolation
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAdmin() &&
+                       isValidId(notificationId) &&
+                       request.resource.data.id == notificationId &&
+                       isValidNotification(request.resource.data) &&
+                       exists(/databases/$(database)/documents/users/$(request.resource.data.userId));
+      allow update: if signedIn() && (
+        (
+          isAdmin() &&
+          isValidId(notificationId) &&
+          request.resource.data.id == notificationId &&
+          request.resource.data.userId == resource.data.userId &&
+          exists(/databases/$(database)/documents/users/$(request.resource.data.userId)) &&
+          (
+            isValidNotification(request.resource.data) ||
+            isValidLegacyNotificationIdRepair(notificationId, request.resource.data, resource.data)
+          )
+        ) ||
+        (
+          resource.data.userId == request.auth.uid &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.get('id', null) == resource.data.get('id', null) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'dismissed']) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['read']) || ('read' in request.resource.data && request.resource.data.read is bool)) &&
+          (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['dismissed']) || ('dismissed' in request.resource.data && request.resource.data.dismissed is bool))
+        )
+      );
+      allow delete: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /publicLeaderboard/{memberId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(memberId);
+      allow delete: if isAdmin() || (isActiveMember() && memberId == myMemberId());
+      allow update: if (isAdmin() && isValidId(memberId)) || (
+        isActiveMember() &&
+        memberId == myMemberId() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName', 'name', 'avatar', 'avatarUrl', 'handle', 'lastUpdated',
+          'githubUrl', 'linkedinUrl', 'portfolioUrl', 'showLinksPublicly'
+        ]) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['displayName']) || (request.resource.data.displayName is string && request.resource.data.displayName.size() > 0 && request.resource.data.displayName.size() <= 100)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['name']) || (request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['handle']) || (request.resource.data.handle is string && request.resource.data.handle.size() > 0 && request.resource.data.handle.size() <= 50 && (!('handle' in resource.data) || request.resource.data.handle == resource.data.handle))) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastUpdated']) || (request.resource.data.lastUpdated is string && request.resource.data.lastUpdated.size() > 0 && request.resource.data.lastUpdated.size() <= 50)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['showLinksPublicly']) || request.resource.data.showLinksPublicly == null || request.resource.data.showLinksPublicly is bool) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['avatar']) || isValidAvatarUrl(request.resource.data.avatar)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['avatarUrl']) || isValidAvatarUrl(request.resource.data.avatarUrl)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['githubUrl']) || isValidGitHub(request.resource.data.githubUrl)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['linkedinUrl']) || isValidLinkedIn(request.resource.data.linkedinUrl)) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['portfolioUrl']) || isValidPortfolio(request.resource.data.portfolioUrl))
+      );
+    }
+
+    // FIX-02: Isolate admin-only appMeta from signed-in readable publicMeta
+    match /settings/appMeta {
+      allow read, write: if isAdmin();
+    }
+
+    match /settings/publicMeta {
+      allow read: if signedIn();
+      allow write: if isAdmin() && isValidPublicMeta(request.resource.data);
+    }
+
+    match /settings/{settingId} {
+      allow read: if settingId != 'appMeta' && settingId != 'publicMeta' && (isAdmin() || isActiveMember());
+      allow write: if settingId != 'appMeta' && settingId != 'publicMeta' && isAdmin() && isValidId(settingId);
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+                       isValidId(logId) &&
+                       request.resource.data.id == logId &&
+                       request.resource.data.performedBy == request.auth.uid &&
+                       request.resource.data.timestamp == request.time &&
+                       request.resource.data.keys().hasAll([
+                         'id', 'action', 'performedBy', 'details', 'timestamp'
+                       ]) &&
+                       request.resource.data.keys().hasOnly([
+                         'id', 'action', 'performedBy', 'performedByEmail',
+                         'targetId', 'targetName', 'details', 'timestamp', 'metadata'
+                       ]) &&
+                       request.resource.data.action is string &&
+                       request.resource.data.action.size() > 0 &&
+                       request.resource.data.action.size() <= 60 &&
+                       request.resource.data.details is string &&
+                       request.resource.data.details.size() > 0 &&
+                       request.resource.data.details.size() <= 1000 &&
+                       (!('performedByEmail' in request.resource.data) || (request.resource.data.performedByEmail is string && request.resource.data.performedByEmail.size() <= 150)) &&
+                       (!('targetId' in request.resource.data) || (request.resource.data.targetId is string && request.resource.data.targetId.size() <= 128)) &&
+                       (!('targetName' in request.resource.data) || (request.resource.data.targetName is string && request.resource.data.targetName.size() <= 150)) &&
+                       (!('metadata' in request.resource.data) || request.resource.data.metadata is map);
+      allow update, delete: if false;
+    }
+  }
+}
